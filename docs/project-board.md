@@ -1,6 +1,8 @@
 # Method validation board
 
-Updated 2026-10-10. Repository board linked to GitHub issues. A native GitHub Projects board has not been created because the connected tools do not expose Projects operations.
+Updated 2026-10-10. The authoritative board is [@UM-NLP's When Should Go — Project 2](https://github.com/users/UM-NLP/projects/2), as designated by the user. The table below is a repository snapshot, not a replacement for that Project.
+
+Project synchronization is pending: the GitHub connector exposes no Projects operations, no browser is connected, and Windows Computer Use reports its native pipe unavailable. Issues #1–#3 exist in the repository; their membership and statuses in Project 2 have not been verified.
 
 | Done | In progress | Ready | Blocked / deferred |
 |---|---|---|---|
