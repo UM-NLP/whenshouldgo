@@ -1,5 +1,7 @@
 # Decisions
 
+2026-10-10: User paused the arrival-deadline work and requested a plan for a different feature: choose a same-day home departure for a fixed-duration visit while returning home by a deadline and minimizing total predicted driving time. Project 2 now has an On Hold column containing issues #1–#3. No new feature issue or implementation was created pending user approval of the plan and defaults.
+
 Record date, decision, evidence, alternatives and consequences.
 
 Initial: project-scoped Codex agents; inherit parent model and permissions; at most three concurrent subagents. Application stack and product idea remain undecided.
@@ -29,4 +31,6 @@ Initial: project-scoped Codex agents; inherit parent model and permissions; at m
 2026-10-07: User supplied explicit origin/destination map coordinates. Saved only in ignored .local/benchmark-locations-user.json, labeled user-selected points; benchmark now bypasses geocoding and passes identical points to both providers. Ten offline tests rerun successfully. Future October 8 09:30 EDT live plan remains to execute locally. Printed watch command made independent of current working directory.
 
 2026-10-10: Both Oct 8 live checks completed. Early zero-buffer recommendations failed later estimated deadline feasibility; actual journey accuracy remains unmeasured. Preserve incomplete prototype in existing private UM-NLP/whenshouldgo with sanitized results and issue-linked repo board. Native Projects operations unavailable. Full app deferred. Ten benchmark tests, six scheduled comparison checks and JavaScript suite passed during documentation preparation. No new paid calls made. Earlier entries are historical snapshots; experiment-results.md and backlog.md hold current status.
+
+2026-10-10: User designated GitHub user Project 2 as authoritative board. Repository snapshot now links it. Native Project synchronization remains pending: no Projects connector, no connected browser, Windows native pipe unavailable. Issues #1–#3 exist but Project membership/statuses are unverified.
 
