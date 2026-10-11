@@ -1,5 +1,7 @@
 # Web quality, security, and operations plan
 
+> Historical planner-centered plan. Superseded on 2026-10-10 by the [agent evaluation](agent-evaluation-plan.md), [security](trip-assistant-security.md), and [roadmap](trip-assistant-roadmap.md) documents. Preserve for reusable requirements and decision history.
+
 Status: proposed controls and release gates for an invite-only pre-seed pilot. No checks described as runtime monitoring have been deployed, and no real-web validation has been executed.
 
 ## Quality strategy
@@ -22,9 +24,9 @@ The planner is tested independently from the provider and UI. Live provider test
 | Privacy/security | Secret/build-context scan, dependency audit, CSP/session/header tests, log-redaction and local-data isolation tests | Inspect browser bundle/network/logs/IndexedDB/cache/image layers | No credential/location leak; no provider-derived result persisted; another session sees no prior input |
 | Cost | Assert provider-call caps and retry accounting | Reconcile estimated usage with billing after 5, 10 and 20 plans | Median <=20, p95 <=24 route estimates; spend inside pilot cap |
 
-Planner fixtures include constant, rising, falling, sharply nonmonotonic and multi-peak traffic; route changes; tight/loose and exact-boundary deadlines; 15–180 minute visits; one-to-eight-hour windows; exact score ties; partial/missing return legs; all access allowances; toll policies; visit windows; maximum-wait constraints; DST folds/gaps; and no-solution cases. Runtime `SEARCH_INCOMPLETE` is limited to a failed required sample or the fixed schedule failing to finish within its hard call/time cap. Every successful result remains **best evaluated**, not globally optimal.
+Planner fixtures include constant, rising, falling, sharply nonmonotonic and multi-peak traffic; route changes; tight/loose and exact-boundary deadlines; 15â€“180 minute visits; one-to-eight-hour windows; exact score ties; partial/missing return legs; all access allowances; toll policies; visit windows; maximum-wait constraints; DST folds/gaps; and no-solution cases. Runtime `SEARCH_INCOMPLETE` is limited to a failed required sample or the fixed schedule failing to finish within its hard call/time cap. Every successful result remains **best evaluated**, not globally optimal.
 
-Interview fixtures cover flexible friend visits, fixed reservations/appointments, latest arrival, enter-before versus finish-before closing, latest destination departure, latest home arrival, flexible windows, multiple hard constraints, conflicting times, “by” and “at” ambiguity, exact/minimum/range durations, corrections, saved defaults, DST/midnight, address ambiguity, unsupported modes/stops, parser failure, and hostile input. Measure question turns and fields answered separately so a dense screen cannot appear minimal merely because it contains many fields.
+Interview fixtures cover flexible friend visits, fixed reservations/appointments, latest arrival, enter-before versus finish-before closing, latest destination departure, latest home arrival, flexible windows, multiple hard constraints, conflicting times, â€œbyâ€ and â€œatâ€ ambiguity, exact/minimum/range durations, corrections, saved defaults, DST/midnight, address ambiguity, unsupported modes/stops, parser failure, and hostile input. Measure question turns and fields answered separately so a dense screen cannot appear minimal merely because it contains many fields.
 
 ## Acceptance traceability
 
