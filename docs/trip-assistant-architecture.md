@@ -8,7 +8,9 @@ flowchart LR
   Client --> Auth[Silent guest or registered Firebase identity]
   Auth --> API[Cloud Run modular monolith]
   API --> Entitlement[Capabilities quota and cost ledger]
+  API --> Gate[Travel domain and token gate]
   API --> Orchestrator[Agent orchestrator]
+  Gate --> Orchestrator
   Orchestrator --> Context[Context and permission compiler]
   Context --> Model[Model gateway]
   Model --> MapsGrounding[Gemini Maps grounding]
@@ -30,18 +32,19 @@ flowchart LR
 
 ## Orchestration loop
 
-1. Classify the turn as discovery, composition, change, question, active recovery or action request.
-2. Compile only relevant workspace state, confirmed facts, permissions, fresh evidence, memory and remaining budget.
-3. Expose the minimum tool set for the turn.
-4. Gather independent read evidence in parallel.
-5. Require a strict `WorkspacePatch`, candidate action or grounded response from the model.
-6. Validate schema, tenant, permissions, provenance, freshness, hard constraints, arithmetic and cost.
-7. Ask one focused question only when the missing answer materially changes the result; otherwise show assumptions and options.
-8. Create an immutable proposed plan version with evidence and tradeoffs.
-9. Execute an external write only through a confirmed `PendingAction`.
-10. Allow domain events to trigger bounded refresh or replan; never start an unrestricted autonomous loop.
+1. Enforce size, rate, identity, domain and token policy before the planning model or paid tools.
+2. Classify an allowed turn as discovery, composition, change, question, active recovery or action request.
+3. Compile only relevant workspace state, confirmed facts, permissions, fresh evidence, memory and remaining budget.
+4. Expose the minimum tool set for the validated travel intent.
+5. Gather independent read evidence in parallel.
+6. Require a strict `WorkspacePatch`, candidate action or grounded response from the model.
+7. Validate schema, domain, tenant, permissions, provenance, freshness, hard constraints, arithmetic, finish reason, tokens and cost.
+8. Ask one focused question only when the missing answer materially changes the result; otherwise show assumptions and options.
+9. Create an immutable proposed plan version with evidence and tradeoffs.
+10. Execute an external write only through a confirmed `PendingAction`.
+11. Allow domain events to trigger bounded refresh or replan; never start an unrestricted autonomous loop.
 
-An interactive run initially allows six model turns, twelve tool calls, one stronger-model escalation, a wall-clock deadline and a dollar ceiling. At the limit, return the best partial result and unresolved choices.
+An interactive run initially allows six model calls, twelve tool calls, one stronger-model escalation, 40,000 input tokens, 4,000 output tokens, a wall-clock deadline and a dollar ceiling. A user message is capped at 2,000 tokens; each planning call is capped at 12,000 compiled input and 1,200 output tokens. At a limit, return the best validated partial result and unresolved choices. Provider `MAX_TOKENS`, malformed schemas and truncated tool calls cannot update state or execute an action.
 
 ## Identity and access tiers
 
@@ -132,6 +135,8 @@ A monitoring policy defines evidence to refresh, timing, material-change thresho
 
 Android uses Kotlin, Compose, Room, DataStore, FCM, foreground location and local alarms. Web uses React/TypeScript, IndexedDB and a service worker. Both render chat plus an editable Trip Board from generated OpenAPI contracts.
 
+Android voice begins with an in-app press-and-hold microphone control. Capture lasts at most 60 seconds, remains visibly active, and is discarded after transcription or cancellation. The microphone is off outside that interaction. Widget or Quick Settings entry may open the same screen later; wake-word, volume-key AccessibilityService and default-assistant modes are deferred.
+
 Offline mode shows the latest approved plan, evidence timestamps and Maps handoffs; queues edits in an idempotent outbox; labels traffic, availability and weather stale; and keeps the structured editor usable when the model is unavailable.
 
 ## Cheap deployment
@@ -145,5 +150,4 @@ Avoid Redis, Kubernetes, microservices, a vector database, a continuously runnin
 Cost controls search many/fetch few/route finalists, minimal field masks, Places session tokens where applicable, route-matrix caps, per-user/provider quotas, idempotency on paid calls, proactive refresh only near actionable times, a workspace cost ledger, model/tool kill switches and Cloud Run maximum instances.
 
 Official references: [Grounding with Google Maps](https://ai.google.dev/gemini-api/docs/maps-grounding), [Maps Grounding terms](https://ai.google.dev/gemini-api/terms), [Places Text Search](https://developers.google.com/maps/documentation/places/web-service/text-search), [Gemini tools](https://ai.google.dev/gemini-api/docs/tools), [Routes](https://developers.google.com/maps/documentation/routes) and [Calendar push](https://developers.google.com/workspace/calendar/api/guides/push).
-
 

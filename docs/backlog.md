@@ -1,6 +1,6 @@
 # Backlog
 
-Updated 2026-10-10. The product has been redesigned as an agent-first personal trip assistant centered on a Trip Workspace. The active validating release is a low-cost mobile web agent for vague or named same-day local outings. Android, Calendar, proactive assistance, multi-stop and multi-day capabilities are gated by evidence. The coordinator maintains this backlog and the [Project 2 snapshot](project-board.md).
+Updated 2026-10-11. The product has been redesigned as an agent-first personal trip assistant centered on a Trip Workspace. The active validating release is a low-cost mobile web agent for vague or named same-day local outings. Android, Calendar, proactive assistance, multi-stop and multi-day capabilities are gated by evidence. The coordinator maintains this backlog and the [Project 2 snapshot](project-board.md).
 
 | Item | Status | Dependency / completion evidence |
 |---|---|---|
@@ -9,6 +9,7 @@ Updated 2026-10-10. The product has been redesigned as an agent-first personal t
 | [#13 VISION-01: Full personal trip assistant](https://github.com/UM-NLP/whenshouldgo/issues/13) | Active epic | Agent-first direction and phased children |
 | [#14 AGENT-01: Trip Workspace and agent runtime](https://github.com/UM-NLP/whenshouldgo/issues/14) | Todo | Workspace/belief contracts, model gateway, typed tools, evidence validator, pending actions and cost ledger |
 | [#22 ACCESS-01: Anonymous guest and registered-free tiers](https://github.com/UM-NLP/whenshouldgo/issues/22) | Todo with #14 | Silent Firebase guest, 50-turn/10-trip policy, local-first retention, free account linking/merge, quota ledger and access-tier evaluation; [specification](access-tiers.md) |
+| [#23 GUARD-01: Push-to-talk, travel-only scope and token budgets](https://github.com/UM-NLP/whenshouldgo/issues/23) | Todo with #14 | In-app hold-to-talk, fixed domain gate, server-owned tool allowlist, token reservation/accounting, truncation recovery and boundary evaluation; [specification](voice-and-domain-controls.md) |
 | [#20 AGENT-MVP-01: Same-day local outing web concierge](https://github.com/UM-NLP/whenshouldgo/issues/20) | Todo after #14 | Vague/named discovery, grounded shortlist, Trip Board, finalist route checks, Maps handoff and outcome capture |
 | [#21 AGENT-EVAL-01: Quality, safety, cost and pilot](https://github.com/UM-NLP/whenshouldgo/issues/21) | Blocked by #20 | 300 reviewed dialogues, 2,000 variants, 150 adversarial cases, then 30+ real goals and evidence-gated decision |
 | [#11 EXPAND-01: PWA/Android gate](https://github.com/UM-NLP/whenshouldgo/issues/11) | On hold | Starts only after #21 demonstrates repeat use and a surface-specific need |
@@ -29,9 +30,10 @@ Updated 2026-10-10. The product has been redesigned as an agent-first personal t
 - Guest allowance begins at 50 successful user turns or 10 activated trips, lifetime. Registered free begins at 100 turns and 10 trips per rolling 30 days. These are versioned validation hypotheses, not pricing promises.
 - One Cloud Run service with minimum instances zero and maximum one.
 - Per interactive workspace: at most six model turns, twelve tool calls, one stronger-model escalation, and frozen caps for Maps-grounding queries, place-detail calls, route finalists, elapsed time and estimated dollars.
+- Per accepted user input: at most 2,000 tokens. Per planning call: at most 12,000 compiled input and 1,200 output tokens. Per run: at most 40,000 input and 4,000 output tokens. Provider-reported cached, tool-use and thinking tokens enter the cost ledger.
+- Out-of-scope requests use a fixed response and no planning tools; they do not consume the public turn allowance but do enter abuse rate limits.
 - Freeze account, per-user/day and whole-pilot spend caps only after a one-user live smoke test reconciles actual provider billing. Stop live calls through model and provider kill switches when cost, quota, grounding or quality controls fail.
 - Search broadly, fetch details for a shortlist and route finalists only. Do not build route matrices for raw discovery candidates.
 - Precise trip data stays out of Git, URLs and analytics. Phase 0 session data is local/ephemeral; Google Maps Grounded Results follow their specific display, provider-processing and chat-history retention terms.
 
 Status meanings: **Todo** can begin; **Blocked** awaits listed work; **On hold** is intentionally excluded from the active web MVP. Documentation completion does not mean the method or market is validated.
-

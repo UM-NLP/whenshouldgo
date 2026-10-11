@@ -16,6 +16,8 @@ Updated 2026-10-10. Durations are estimates for a small pre-seed team. A phase s
 
 Support same-day driving in Toronto/GTA, one vague or named destination and optional return. Accept natural language and show an editable Trip Board. Use official Maps grounding for discovery, one recommendation plus up to two alternatives, structured place/route tools for finalists, optional deadline/visit validation, manual refresh, reminder proposal, Maps handoff and lightweight feedback.
 
+Voice entry in the Android phase starts with an in-app press-and-hold button and a 60-second maximum capture; wake words, background microphone services and hardware-key interception stay deferred. Before web or Android pilot traffic, enforce the travel-only domain gate, fixed out-of-scope response, server-owned tool allowlist and versioned token budgets in [voice-and-domain-controls.md](voice-and-domain-controls.md).
+
 The prototype must exercise the real agent loop and tools. Founder assistance may observe and recover failures but cannot secretly make recommendations.
 
 Start with a silent anonymous Firebase identity and no sign-up screen. Implement the configurable 50-user-turn/10-activated-trip guest allowance, benefit-led notices, free Google/email-link upgrade, local-first guest storage, seven-day server workspace expiry, atomic quota reservation, read/export/delete after exhaustion and resumable account linking. Registered-free allowances reset every 30 days; no paid tier or billing system is built in this phase. Phase 0 cannot exit until anonymous isolation, quota races, account linking and interrupted merge recovery pass the gates in [access-tiers.md](access-tiers.md).
@@ -23,7 +25,7 @@ Start with a silent anonymous Firebase identity and no sign-up screen. Implement
 ## Foundation sequence
 
 1. Freeze `TripWorkspace`, fact/provenance, evidence, plan-version, permission, `PendingAction`, identity, entitlement, usage-reservation and cost-ledger contracts.
-2. Build silent guest bootstrap, provider-neutral model gateway, strict patch validator and typed tool registry.
+2. Build silent guest bootstrap, travel-domain gate, provider-neutral model gateway, token accounting, strict patch validator and typed tool registry.
 3. Implement Maps-grounded discovery with compliant rendering and retention controls.
 4. Implement structured Places lookup, route estimate, optional feasibility validator and Maps handoff.
 5. Build chat plus Trip Board with editable assumptions and recovery states.
@@ -40,5 +42,4 @@ Pause expansion when the agent invents a material fact, uses an unconfirmed hard
 Web is the cheapest way to validate the agent loop and recommendation value. Android becomes the first product after this gate because daily assistance depends on sharing, reminders, widgets, offline state and voice entry. Multi-day composition remains web-first even after Android launch.
 
 Use one scale-to-zero Cloud Run service, Firestore, Cloud Tasks and FCM. Avoid GPU hosting, Kubernetes, vector storage, SMS, continuous background location, embedded navigation and autonomous transactions during early validation.
-
 

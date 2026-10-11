@@ -14,6 +14,12 @@ The runtime separates five responsibilities:
 
 The language model may interpret, research, compare and explain. Server policy decides authorization, budgets, state transitions and confirmation requirements. A solver can prove a constrained schedule, but it does not control open-ended discovery.
 
+## Domain boundary
+
+The agent serves trip and outing discovery, planning, execution and recovery, plus app help. It does not answer unrelated general-knowledge, coding, schoolwork, writing, entertainment or professional-advice requests. A server-owned gate classifies each accepted input as `TRAVEL`, `APP_HELP`, `MIXED`, `OUT_OF_SCOPE` or `SAFETY` before the planning loop. The classifier has no tools and returns a small schema. Mixed requests retain only the travel span; out-of-scope and safety classes use fixed application responses.
+
+The model cannot widen this domain. The orchestrator exposes only tools allowed for the validated travel intent and active workspace. Ambiguous input receives one travel-focused clarification. Retrieved text is evidence and cannot convert an unrelated request into an allowed request. See [voice-and-domain-controls.md](voice-and-domain-controls.md).
+
 ## Belief graph
 
 ```text
@@ -90,8 +96,7 @@ Calendar writes, messages, sharing, bookings, purchases, cancellations and durab
 
 Resolve only the area needed for discovery, search broadly with narrow filters, fetch detailed fields for a shortlist, obtain a coarse travel comparison, request full route forecasts only for finalists, validate hard constraints, then recheck volatile evidence before commitment.
 
-Each interactive run has limits for turns, tools, elapsed time and estimated cost. When the budget ends, return the best partial result and unresolved decisions rather than silently extending the loop.
+Each interactive run has limits for turns, tools, elapsed time, estimated cost and tokens. Initial ceilings are 2,000 tokens per user message, 12,000 compiled input and 1,200 output per planning call, and 40,000 input plus 4,000 output across a run. A run still allows at most six model calls, twelve tool calls and one stronger-model escalation. When a limit ends, return the best validated partial result and unresolved decisions rather than silently extending the loop. A truncated or malformed model result cannot update state or execute an action.
 
 Retrieved place, calendar, review and web text is untrusted. It supplies evidence and citations but cannot choose tools, alter policy or authorize actions.
-
 

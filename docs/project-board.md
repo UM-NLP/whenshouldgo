@@ -1,6 +1,6 @@
 # Method validation board
 
-## Active web-first plan — 2026-10-10
+## Active web-first plan — 2026-10-11
 
 Authoritative board: [@UM-NLP's When Should Go — Project 2](https://github.com/users/UM-NLP/projects/2).
 
@@ -18,9 +18,9 @@ Authoritative board: [@UM-NLP's When Should Go — Project 2](https://github.com
 
 Browser verification on 2026-10-10 confirmed issues #4–#12 are present in Todo and issues #1–#3 are in On Hold. The board has no Blocked column; dependency order is therefore maintained in each issue and in the [backlog](backlog.md). Issue #11 remains Todo on the live board but is logically On hold in the backlog until the pilot gate is met.
 
-Issues [#13](https://github.com/UM-NLP/whenshouldgo/issues/13)–[#21](https://github.com/UM-NLP/whenshouldgo/issues/21) now record the agent-first vision, runtime, MVP, evaluation and gated future phases. Their repository creation is verified. Project 2 placement has not been verified because no authenticated browser or GitHub Projects connector was available in this session; do not treat them as board members until that check is completed. The intended active order is #14, #20 and #21, followed by the Android gate #11. Issues #4–#10 and #12 are logically On hold because their planner-centered sequence was superseded; reusable requirements remain preserved.
+Issues [#13](https://github.com/UM-NLP/whenshouldgo/issues/13)–[#23](https://github.com/UM-NLP/whenshouldgo/issues/23) record the agent-first vision, runtime, access model, push-to-talk and model guardrails, MVP, evaluation and gated future phases. Their repository creation is verified. The intended active order is [#14](https://github.com/UM-NLP/whenshouldgo/issues/14) plus [#22](https://github.com/UM-NLP/whenshouldgo/issues/22) plus [#23](https://github.com/UM-NLP/whenshouldgo/issues/23), then [#20](https://github.com/UM-NLP/whenshouldgo/issues/20) and [#21](https://github.com/UM-NLP/whenshouldgo/issues/21), followed by the Android gate [#11](https://github.com/UM-NLP/whenshouldgo/issues/11). Issues #4–#10 and #12 are logically On hold because their planner-centered sequence was superseded; reusable requirements remain preserved.
 
-Issue [#22](https://github.com/UM-NLP/whenshouldgo/issues/22) records the anonymous guest and registered-free access contract. Build it alongside #14 and before #20 pilot traffic; #21 validates conversion, migration reliability, abuse and actual cost. The intended active order is #14 plus #22, then #20 and #21, followed by the Android gate #11. Repository issue creation is verified. Project 2 placement remains unverified because no authenticated Projects surface is available through the current connector.
+Project 2 placement for issues #13–#23 remains unverified because the current GitHub connector does not expose Projects mutations or membership reads. Repository issue creation and content are verified; do not treat those issues as board members until the Projects surface is checked.
 
 The following section is the historical one-way-method snapshot and is superseded by the active table above.
 
@@ -34,4 +34,3 @@ Recorded earlier on 2026-10-10. Authoritative board: [@UM-NLP’s When Should Go
 | Offline verification | | | Full app, billing, deployment and monitoring |
 
 Done means an experiment or documentation was completed, not that the method succeeded. Recorded zero-buffer recommendations did not retain on-time live estimated arrivals. See [results](experiment-results.md). Issues define scope, dependencies, acceptance criteria and expected artifacts.
-

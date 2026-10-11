@@ -16,6 +16,7 @@ The earlier one-way “arrive by” experiment is preserved but On Hold. Its pre
 - [Full trip assistant architecture](docs/trip-assistant-architecture.md)
 - [Anonymous access and free account tiers](docs/access-tiers.md)
 - [Conversation and decision policy](docs/agent-conversation-policy.md)
+- [Push-to-talk, travel scope and token controls](docs/voice-and-domain-controls.md)
 - [Agent evaluation plan](docs/agent-evaluation-plan.md)
 - [Model and hosting decision](docs/model-hosting-decision.md)
 - [Assistant privacy and security](docs/trip-assistant-security.md)
@@ -26,4 +27,3 @@ The earlier one-way “arrive by” experiment is preserved but On Hold. Its pre
 - [Historical experiment results](docs/experiment-results.md)
 
 The existing scripts in `tools/` are historical research code until they are frozen and moved under `experiments/arrival_deadline/`. Keys, private trip inputs, raw responses and geometry stay outside Git in `.env.local` and `.local/`; explicit cloud/Docker ignore files also keep them out of build contexts. The web MVP persists input drafts locally but keeps provider-derived route results in memory. Provider calls can incur charges; every live stage must enforce atomic quotas and verify actual billing.
-

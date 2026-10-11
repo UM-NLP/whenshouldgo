@@ -9,6 +9,7 @@ Updated 2026-10-10. Location, routines, calendar events, and OAuth credentials c
 - Foreground location is the initial default. Background location is out of scope until a specific, validated feature cannot work without it.
 - Notification permission is requested after the user schedules a reminder or enables monitoring.
 - Microphone access is push-to-talk only in early releases. The server stores text only when needed for the active request.
+- Push-to-talk starts only while the user holds the visible control, stops on release or at 60 seconds, and discards audio after transcription or cancellation. There is no background microphone service or wake-word buffer.
 - Reads and computations may run within the granted feature. Calendar writes, routine changes, sharing, bookings, messages, and purchases require an explicit preview and confirmation. Purchases are excluded initially.
 
 The consent screen and settings show the data, purpose, retention, last use, and revocation effect. Revocation stops future reads and scheduled work, invalidates affected plans, deletes refresh credentials, and leaves manual planning available.
@@ -41,6 +42,8 @@ Calendar names, event locations, place text, reviews, shared URLs and provider c
 
 Side effects use a two-step pending-action protocol. The proposal records exact effect, account, target, expiry, and one-time nonce. The commit endpoint checks authentication, authorization, current consent, matching plan version, nonce, idempotency, and confirmation. Every commit is auditable and replay-safe.
 
+An authenticated request passes an input-size and travel-domain gate before the planning model. Out-of-scope requests receive a fixed response and no travel tools. The server selects the tool allowlist; neither user input nor retrieved content can expand it. Enforce per-message, per-call, per-run and per-principal token ceilings. Reserve worst-case tokens before generation, commit provider-reported actual usage, and reject `MAX_TOKENS`, malformed or truncated actions. Repeated out-of-scope attempts enter an abuse cooldown without repeated model calls.
+
 ## Proactive notifications
 
 Notifications reveal little on the lock screen by default: “Your departure plan changed” rather than addresses, times, event titles, or absence windows. FCM payloads and deep links carry opaque IDs rather than sensitive content. Android uses private or secret visibility. A monitoring policy defines the trip, time window, refresh frequency, material-change threshold, quiet hours, and expiry. Every scheduled task references a current plan version; cancellation or edit makes older tasks no-ops.
@@ -66,5 +69,4 @@ Before model-agent beta: achieve zero unauthorized commits in adversarial tests,
 Before grounded discovery beta: verify user-initiated enablement, attribution and Maps-link rendering, non-modification of grounded results, provider-retention disclosure, chat-history deletion, no training/evaluation reuse of Maps data, and separation from ordinary Places/Routes payloads.
 
 Before background location or assistant-role work: complete a separate privacy, battery, store-policy, threat-model, and user-value review.
-
 

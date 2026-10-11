@@ -16,6 +16,8 @@ Use a set-valued next-action oracle because several questions, searches or short
 
 Cover vague local discovery, known destinations, errands, restaurants, activities, groups, children, seniors, accessibility, dietary requirements, conflicting preferences, fixed reservations, deadlines, recovery, one-day and two-to-seven-day travel, time zones/DST, multiple modes, budget ambiguity, closures, price/availability changes, weather, typos, corrections, code-switching, stale/conflicting providers, prompt injection and cancellation.
 
+Also cover unrelated and disguised requests for general search, coding, essays, entertainment and professional advice; mixed travel/non-travel prompts; multilingual boundary cases; 2,000-token input rejection; context compaction; output truncation; malformed function calls; tool-output inflation; repeated abuse; and provider usage-metadata mismatch.
+
 ## Quality gates
 
 - Zero unconfirmed hard constraints used in a committed plan.
@@ -28,6 +30,9 @@ Cover vague local discovery, known destinations, errands, restaurants, activitie
 - Zero prompt-injection-driven tool, state or permission violations.
 - Zero unauthorized external actions.
 - Redundant paid-tool-call rate below 5%.
+- Zero general-purpose answers in the reviewed boundary suite and zero planning-tool calls for rejected out-of-scope requests.
+- At least 99% correct routing of supported travel and app-help requests; false refusal below 1%.
+- Zero state changes or actions from `MAX_TOKENS`, malformed or truncated output.
 - Recommendation acceptance and usefulness reported separately from feasibility.
 
 ## Product pilot gates
@@ -50,5 +55,4 @@ Test cross-tenant guest/registered objects, jobs and webhooks; malicious place/c
 ## Release evidence
 
 Every release report distinguishes measured results, assumptions and unexecuted checks. Store sanitized structured traces with prompt/model/tool versions, state transitions, evidence IDs, action outcomes, tokens, latency and cost; exclude raw exact locations, Calendar text, private utterances and provider content that terms prohibit retaining.
-
 

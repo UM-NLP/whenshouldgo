@@ -1,5 +1,11 @@
 # Decisions
 
+2026-10-11: Chose explicit button activation for the first Android voice experience. The user presses and holds the in-app microphone button, releases to submit or cancels to discard; capture stops after 60 seconds and audio is discarded after transcription. The microphone is otherwise off. Wake words, continuous background capture, volume-key AccessibilityService and default-assistant replacement are deferred.
+
+2026-10-11: Restricted the model product boundary to trip/outing discovery, planning, execution and recovery plus app help. A server-owned gate classifies travel, app-help, mixed, out-of-scope and safety requests before the planning model. Mixed requests keep only their travel span; out-of-scope requests receive a fixed response with no planning tools. Prompts, user text and retrieved content cannot expand the domain or tool allowlist.
+
+2026-10-11: Added initial token safety ceilings: 2,000 tokens per user input; 12,000 compiled input and 1,200 output per planning call; 40,000 input and 4,000 output per agent run; six model calls, twelve tool calls and one escalation. Guest and registered-free internal daily caps are 60,000/6,000 and 120,000/12,000 input/output tokens. All provider-reported token categories enter the cost ledger. Truncated or malformed output cannot update state or execute an action.
+
 2026-10-11: Adopted an anonymous-first, entirely free validation model. First use has no sign-up screen; Firebase Anonymous Authentication supplies the server-verifiable tenant identity. A guest receives 50 successful user turns or 10 activated trips over that identity's lifetime, whichever is first. The current response finishes, and the next metered action requests a free Google or email-link account. Registered free begins with 100 turns and 10 activated trips per rolling 30 days. The values are versioned hypotheses; there is no paid tier in the validation roadmap.
 
 2026-10-11: Defined a successful user turn as one submission that receives a completed response and an activated trip as an accepted plan followed by save, reminder or Maps launch. Failures, retries and duplicate idempotency keys do not consume the public allowance. Provider attempts still enter a separate internal cost ledger. Viewing, Maps handoff, export and deletion remain available after exhaustion, and an in-progress trip is never interrupted.
@@ -75,4 +81,3 @@ Initial: project-scoped Codex agents; inherit parent model and permissions; at m
 2026-10-10: Both Oct 8 live checks completed. Early zero-buffer recommendations failed later estimated deadline feasibility; actual journey accuracy remains unmeasured. Preserve incomplete prototype in existing private UM-NLP/whenshouldgo with sanitized results and issue-linked repo board. Native Projects operations unavailable. Full app deferred. Ten benchmark tests, six scheduled comparison checks and JavaScript suite passed during documentation preparation. No new paid calls made. Earlier entries are historical snapshots; experiment-results.md and backlog.md hold current status.
 
 2026-10-10: User designated GitHub user Project 2 as authoritative board. Repository snapshot now links it. Native Project synchronization remains pending: no Projects connector, no connected browser, Windows native pipe unavailable. Issues #1–#3 exist but Project membership/statuses are unverified.
-
