@@ -1,5 +1,7 @@
 # Web-first product plan
 
+> Historical planner-centered plan. Superseded on 2026-10-10 by the [agent-first product plan](trip-assistant-product-plan.md). Preserve for reusable requirements and decision history.
+
 Status: approved direction on 2026-10-10. Planning is complete; implementation has not started.
 
 ## Product decision
@@ -91,16 +93,16 @@ Supported timeline constraints are:
 
 | User meaning | Typed constraint |
 |---|---|
-| “Be there by 2” | `READY_AT_DESTINATION <= 14:00` |
-| “My reservation is at 2” | `ACTIVITY_START = 14:00`, with a confirmed arrival allowance |
-| “Finish before the store closes at 6” | `ACTIVITY_END <= 18:00` |
-| “Leave there by 5” | `DEPART_DESTINATION <= 17:00` |
-| “Be home by 6” | `HOME_ARRIVAL <= 18:00` |
-| “Visit between 1 and 3” | Confirmed activity-start/end window |
-| “Stay at least one hour” | `ACTIVITY_DURATION >= 60 minutes` |
+| â€œBe there by 2â€ | `READY_AT_DESTINATION <= 14:00` |
+| â€œMy reservation is at 2â€ | `ACTIVITY_START = 14:00`, with a confirmed arrival allowance |
+| â€œFinish before the store closes at 6â€ | `ACTIVITY_END <= 18:00` |
+| â€œLeave there by 5â€ | `DEPART_DESTINATION <= 17:00` |
+| â€œBe home by 6â€ | `HOME_ARRIVAL <= 18:00` |
+| â€œVisit between 1 and 3â€ | Confirmed activity-start/end window |
+| â€œStay at least one hourâ€ | `ACTIVITY_DURATION >= 60 minutes` |
 | Several requirements | Intersection of every hard constraint; none is silently relaxed |
 
-“Arrive” means parked and ready to begin after any confirmed access allowance. The review timeline makes this interpretation visible.
+â€œArriveâ€ means parked and ready to begin after any confirmed access allowance. The review timeline makes this interpretation visible.
 
 After each answer, the deterministic question policy chooses the highest-value unresolved item:
 
@@ -111,13 +113,13 @@ After each answer, the deterministic question policy chooses the highest-value u
 5. ask about a default only when changing it could change the recommendation;
 6. group remaining visible assumptions into one editable confirmation.
 
-Trip purpose is optional and contextual. “Restaurant reservation” usually leads to a fixed-start confirmation; “walk-in restaurant” may require a seating cutoff; “lunch at a friend's house” may be flexible. If the timing words are already clear, the app does not ask the purpose.
+Trip purpose is optional and contextual. â€œRestaurant reservationâ€ usually leads to a fixed-start confirmation; â€œwalk-in restaurantâ€ may require a seating cutoff; â€œlunch at a friend's houseâ€ may be flexible. If the timing words are already clear, the app does not ask the purpose.
 
-Visit duration is asked only when it affects a finish, return, or return leg. The app asks the earliest time the user can leave; preparation duration is requested only when the user wants a “start getting ready” time. Return questions are skipped for outbound-only plans. Route preferences are loaded from visible local defaults and asked only if missing or consequential.
+Visit duration is asked only when it affects a finish, return, or return leg. The app asks the earliest time the user can leave; preparation duration is requested only when the user wants a â€œstart getting readyâ€ time. Return questions are skipped for outbound-only plans. Route preferences are loaded from visible local defaults and asked only if missing or consequential.
 
 The interview stops and enables calculation only when locations are confirmed, date/timezone/readiness are known, every required duration has known semantics, at least one hard time anchor bounds the search, all feasibility-changing ambiguity is resolved, constraints are consistent, and the user confirms one editable summary. Impossible arithmetic is rejected before any paid route call.
 
-If the user selects **No fixed time**, the next question asks how late the outing may finish. “Sometime today” never silently becomes midnight. If more than five follow-ups are required, the interface offers **Review all details** as a structured recovery path.
+If the user selects **No fixed time**, the next question asks how late the outing may finish. â€œSometime todayâ€ never silently becomes midnight. If more than five follow-ups are required, the interface offers **Review all details** as a structured recovery path.
 
 Safe visible defaults are today, the displayed local timezone, driving, return to origin when a return constraint is present, minimize total forecast driving seconds, saved route preferences, and ready now. The app never silently guesses duration, whether a stated time is exact, what a closing time means, business hours, or whether a preference is a hard requirement.
 
@@ -127,7 +129,7 @@ Safe visible defaults are today, the displayed local timezone, driving, return t
 2. **Describe trip:** Accept one natural-language answer plus optional quick replies; parse all supported facts without making a route call.
 3. **Clarify:** Ask one high-value question at a time. Explain why a purpose or timing distinction matters when it is not obvious.
 4. **Confirm places:** Resolve the full address or pin. Request browser location only after **Use my location**.
-5. **Review:** Show an editable “Here’s what I understood” timeline with every hard constraint, timezone, allowance, and default. Edits invalidate affected results.
+5. **Review:** Show an editable â€œHereâ€™s what I understoodâ€ timeline with every hard constraint, timezone, allowance, and default. Edits invalidate affected results.
 6. **Calculate:** Preserve inputs while the server checks the required leg or legs. Do not show a fake percentage.
 7. **Recommend:** Lead with **Leave at [time]** and **Best forecasted option we checked**.
 8. **Act:** Keep the input template locally, refresh, copy a privacy-safe summary, or explicitly open the relevant Maps URL.
@@ -138,10 +140,10 @@ The result shows only relevant milestones: start preparing when requested, leave
 
 ### Example question paths
 
-- **Friend visit:** “Visit a friend for an hour and be home by 6.” Ask only for missing destination and earliest departure; confirm the timeline.
-- **Business closing:** “The pharmacy closes at 6.” Ask whether the user must enter, start service, or finish by 6, then ask how long is needed if finish time matters.
-- **Reservation:** “Restaurant reservation at 7.” Ask the destination and acceptable arrival allowance. Do not ask whether 7 is flexible.
-- **Fully specified:** “Reservation at 1, stay 90 minutes, home by 4, leaving from home after 11.” If places are known, proceed directly to one confirmation.
+- **Friend visit:** â€œVisit a friend for an hour and be home by 6.â€ Ask only for missing destination and earliest departure; confirm the timeline.
+- **Business closing:** â€œThe pharmacy closes at 6.â€ Ask whether the user must enter, start service, or finish by 6, then ask how long is needed if finish time matters.
+- **Reservation:** â€œRestaurant reservation at 7.â€ Ask the destination and acceptable arrival allowance. Do not ask whether 7 is flexible.
+- **Fully specified:** â€œReservation at 1, stay 90 minutes, home by 4, leaving from home after 11.â€ If places are known, proceed directly to one confirmation.
 
 ## Required states
 
@@ -171,7 +173,7 @@ The original concierge proposal was a cost-control experiment: manually help a f
 
 The new stage is an **assisted web pilot**:
 
-- 5–8 invited users;
+- 5â€“8 invited users;
 - at least 20 real plans over roughly two weeks;
 - the working web app performs the calculation;
 - the founder observes failures, interviews users, and manually fixes input or support problems;
@@ -183,7 +185,7 @@ This retains the learning value of concierge testing while producing reusable so
 
 ### Problem check
 
-Conduct 8–12 interviews while the thin MVP is being built. A proposed gate is at least six people reporting two or more eligible trips per month and a concrete cost from mistiming. Ask directly whether they would wait 30–60 minutes to save 10–20 road minutes.
+Conduct 8â€“12 interviews while the thin MVP is being built. A proposed gate is at least six people reporting two or more eligible trips per month and a concrete cost from mistiming. Ask directly whether they would wait 30â€“60 minutes to save 10â€“20 road minutes.
 
 ### Assisted web pilot
 
