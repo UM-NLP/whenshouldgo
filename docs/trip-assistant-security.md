@@ -29,11 +29,11 @@ Firebase Authentication identifies users. Use the verified OpenID Connect `(issu
 
 Keep only provider fields allowed by applicable terms. Do not persist raw Google route responses or polylines pending a written policy review. Store the minimal plan decision record, forecast age, selected provider, permitted identifiers, and user-authored constraints.
 
-Current Google Maps Platform terms expressly restrict Maps content with text-to-speech and restrict creating content from Maps content and specified AI uses. Pending a written determination, keep Google durations, ETAs, geometry, and computed recommendations out of LLM context, TTS, history, and AI evaluation data. Confirm that the intended derived leave-time recommendation is permitted before the first external test. Deterministically render allowed results with required attribution or select a provider/license that permits the intended agent and voice processing. See [Maps terms](https://cloud.google.com/maps-platform/terms) and [Routes policies](https://developers.google.com/maps/documentation/routes/policies).
+Use two separate Maps data paths. For open-ended place discovery, the official Gemini Grounding with Google Maps feature may generate a Maps Grounded Result under its additional terms. Display that result with its associated Maps links without modification or interspersed content; do not scrape, export or train on it; disclose its 30-day provider processing and configured chat-history retention. For ordinary Places and Routes APIs, current Maps terms restrict text-to-speech, creating content from Maps content and specified AI uses. Pending a written determination, keep those API durations, ETAs, geometry and derived recommendations out of LLM context, TTS, durable history and AI evaluation data. See [Maps grounding terms](https://ai.google.dev/gemini-api/terms), [Maps terms](https://cloud.google.com/maps-platform/terms) and [Routes policies](https://developers.google.com/maps/documentation/routes/policies).
 
 ## Agent and tool safety
 
-Calendar names, event locations, place text, shared URLs, and provider content are untrusted. Do not send calendar/provider text to the LLM in the initial architecture. Tool responses are delimited and cannot change system policy or tool permissions. The orchestrator selects a narrow tool set, validates JSON Schema, removes unexpected fields, caps lengths and counts, and rejects arbitrary URLs.
+Calendar names, event locations, place text, reviews, shared URLs and provider content are untrusted. Official grounding runs only through the provider's bounded tool. Custom tool results are reduced to typed fields and citations before model use. Tool responses cannot change system policy or tool permissions. The orchestrator selects a narrow tool set, validates JSON Schema, removes unexpected fields, caps lengths and counts, and rejects arbitrary URLs.
 
 Side effects use a two-step pending-action protocol. The proposal records exact effect, account, target, expiry, and one-time nonce. The commit endpoint checks authentication, authorization, current consent, matching plan version, nonce, idempotency, and confirmation. Every commit is auditable and replay-safe.
 
@@ -56,6 +56,8 @@ Before persistent accounts: test cross-tenant reads/writes across direct object 
 Before proactive beta: verify task authentication, cancellation, idempotency, plan-version suppression, quiet hours, lock-screen privacy, duplicate suppression, and notification opt-out.
 
 Before model-agent beta: achieve zero unauthorized commits in adversarial tests, preserve all hard constraints in critical fixtures, block instructions embedded in tool data, and demonstrate deterministic-form fallback.
+
+Before grounded discovery beta: verify user-initiated enablement, attribution and Maps-link rendering, non-modification of grounded results, provider-retention disclosure, chat-history deletion, no training/evaluation reuse of Maps data, and separation from ordinary Places/Routes payloads.
 
 Before background location or assistant-role work: complete a separate privacy, battery, store-policy, threat-model, and user-value review.
 
