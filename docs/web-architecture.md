@@ -314,7 +314,6 @@ Hosting is expected to remain near zero at pilot volume, but it is not guarantee
 - Maps project daily quota: 650 Routes units;
 - paid location-resolution cap: 100 calls, tracked separately;
 - per-session cap: 3 full plans/day and 10/week during pilot;
-- project Maps daily quota sized to the invited cohort;
 - Cloud Run maximum instances `1`;
 - provider kill switch that returns a friendly maintenance state before making a call;
 - record billable units and pricing-table version per plan;
@@ -330,7 +329,7 @@ Cloud Billing warns that alerts-only budgets do not stop usage. Transactional re
 ## Migration and expansion
 
 1. Freeze and move the historical one-way experiment.
-2. Create the pure planner, fake provider, and dense-oracle tests.
+2. Create the pure planner, fake provider, and independent dense-oracle tests.
 3. Add the versioned API and Google adapter with a local fake mode.
 4. Build the responsive web vertical slice and local input persistence.
 5. Deploy the invite-only Cloud Run pilot and enforce quotas/kill switch.
