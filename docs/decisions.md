@@ -1,5 +1,11 @@
 # Decisions
 
+2026-10-10: The user allowed a web start when it reduces pre-seed cost. Chose a mobile-first responsive web application before native Android. The pilot will use one React/FastAPI container on scale-to-zero Cloud Run, local browser plan storage, a small Firestore footprint for invite sessions/quotas/idempotency, server-side routing credentials, and Google Maps handoff. PWA installability follows the core journey; native Android is gated by measured demand for reminders, sharing, widgets, Assistant actions, or app-store distribution. No cloud resource has been deployed.
+
+2026-10-10: Replaced the manual concierge stage with an assisted web pilot. The working web app will perform calculations for 5–8 invited users and at least 20 plan attempts; founder assistance is limited to observing and recovering failures. This preserves cheap behavioral validation without building native surfaces or operating a manual route service.
+
+2026-10-10: The planner remains deterministic. A future language model may parse chat/voice into a typed request but cannot decide feasibility or calculate schedules. Production search is capped at 24 route estimates per plan; live expansion stops if the quality gate cannot fit that cost budget. Result language is “best evaluated” or “best forecasted option checked,” never exact or guaranteed.
+
 2026-10-10: User paused the arrival-deadline work and requested a plan for a different feature: choose a same-day home departure for a fixed-duration visit while returning home by a deadline and minimizing total predicted driving time. Project 2 now has an On Hold column containing issues #1–#3. No new feature issue or implementation was created pending user approval of the plan and defaults.
 
 Record date, decision, evidence, alternatives and consequences.
