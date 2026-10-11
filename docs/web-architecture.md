@@ -24,6 +24,7 @@ flowchart LR
     User[Invited pilot user]
     Browser[Mobile browser or installed PWA]
     Service[Single Cloud Run web service]
+    Interview[Deterministic interview engine]
     Planner[Deterministic planner]
     Routes[Google Routes API]
     Geocode[Location resolver]
@@ -34,7 +35,8 @@ flowchart LR
     User --> Browser
     Browser -->|Same-origin HTTPS| Service
     Browser --> IndexedDB
-    Service --> Planner
+    Service --> Interview
+    Interview --> Planner
     Planner --> Routes
     Service --> Geocode
     Service --> Firestore
@@ -50,7 +52,8 @@ web/
   src/
     app/                       # Router, providers and global error boundary
     features/
-      planner/                 # Guided form, review, loading and result
+      interview/               # Composer, adaptive questions and editable timeline
+      planner/                 # Loading, recommendation and alternatives
       locations/               # Manual/current location confirmation
       active-plan/             # Refresh, leaving-now and Maps handoff
       pilot-feedback/
@@ -67,6 +70,7 @@ backend/
     api/v1/                    # Session, locations, plans and outcomes
     api/middleware/            # Session, CSRF, rate limit and idempotency
     domain/                    # Strict request/result/error models
+    interview/                 # Constraint state, parser and next-question policy
     planner/                   # Pure round-trip search and scoring
     providers/                 # Protocol, Google adapter and fake provider
     persistence/               # Firestore session/quota/idempotency/outcomes only
@@ -79,7 +83,10 @@ backend/
 
 contracts/
   openapi.yaml
+  interview-policy.yaml       # Versioned questions, prerequisites and reasons
+  acceptance.yaml
   examples/
+  dialogues/                  # Authored minimal-question benchmark
 
 experiments/
   arrival_deadline/            # Existing work preserved as historical evidence
@@ -100,7 +107,7 @@ The current `tools/` experiment moves only after its existing tests and derived 
 ```mermaid
 flowchart TB
     subgraph Browser
-        Form[Guided planner]
+        InterviewUI[Adaptive trip interview]
         Review[Editable review]
         Result[Plan and alternatives]
         Local[(IndexedDB)]
@@ -108,6 +115,7 @@ flowchart TB
 
     subgraph SameOriginService[Cloud Run service]
         Edge[Invite session, CSRF, validation, quota]
+        InterviewEngine[Constraint state and question policy]
         Location[Location resolver]
         PlanService[Planning service]
         Core[Pure planner core]
@@ -115,14 +123,17 @@ flowchart TB
         Telemetry[Redacted telemetry]
     end
 
-    Form --> Review
+    InterviewUI --> Edge
+    Edge --> InterviewEngine
+    InterviewEngine --> Edge
+    InterviewUI --> Review
     Review --> Edge
     Edge --> Location
     Edge --> PlanService --> Core --> Provider
     Edge --> Telemetry
     Provider --> Telemetry
     PlanService --> Result
-    Form -->|User-entered constraints only| Local
+    InterviewUI -->|User-entered constraints only| Local
 ```
 
 All precise address/coordinate inputs are sensitive. They may appear in the TLS request body and transient process memory, but never in this application's URLs or history, application logs, analytics, trace attributes, Firestore quota documents, or error reports. A user-triggered Google Maps handoff necessarily sends the selected endpoints to Google and may add them to browser or Maps history. The handoff uses a fixed HTTPS Maps host, `URLSearchParams`, `noopener`, `noreferrer`, and `Referrer-Policy: no-referrer`.
@@ -135,13 +146,39 @@ The private pilot does not need a full account system.
 2. `POST /api/v1/session:exchange` atomically consumes the invite after a timing-safe keyed-hash comparison, creates an opaque random session, and returns a `__Host-` cookie with `Secure`, `HttpOnly`, `SameSite=Strict`, and `Path=/`.
 3. Firestore stores the tester pseudonym, session hash, expiry, consent version, atomic quota/idempotency state, and optional structured outcomes.
 4. State-changing requests also require a CSRF token bound to the session.
-5. Logging out or pilot removal invalidates the server session. Local records are bound to a non-secret session owner handle and are cleared on logout, session replacement, owner mismatch, pilot-data deletion, or no later than 24 hours after `homeBy`.
+5. Logging out or pilot removal invalidates the server session. Local records are bound to a non-secret session owner handle and are cleared on logout, session replacement, owner mismatch, pilot-data deletion, or no later than 24 hours after the final hard time anchor.
 
 The cookie cannot outlive the server session. The service validates the exact canonical host and Origin, disables CORS, throttles invite exchange before authentication, derives every Firestore owner from the session, and exposes no Firestore web-client access. Invite issuance/revocation remains an IAM-controlled operator action.
 
 Do not put invite codes, sessions, addresses, or coordinates in query strings. Follow [OWASP session guidance](https://cheatsheetseries.owasp.org/cheatsheets/Session_Management_Cheat_Sheet.html).
 
 ## Planning model
+
+### Interview state and authority
+
+The browser holds the draft conversation. The same-origin service turns each answer into typed candidate facts, then a deterministic policy returns either one next question or `READY_TO_CONFIRM`. It does not call the route provider during intake.
+
+```text
+InterviewState
+  locations: origin, destination, optional return location
+  trip: date, timezone, travel mode, readyAt
+  activity: purposeHint?, duration {kind, minimum, maximum?}
+  constraints[]: {event, operator, instant/window, hardness, cushion}
+  assumptions[]: {field, value, source, confirmed}
+  facts[]: {field, status, source, sourceSpan?}
+
+FactStatus = UNKNOWN | CANDIDATE | CONFIRMED | DEFAULTED | NOT_APPLICABLE
+ConstraintEvent = READY_AT_DESTINATION | ACTIVITY_START | ACTIVITY_END |
+                  DEPART_DESTINATION | HOME_ARRIVAL
+```
+
+The initial parser is a bounded rule-based component for documented time, duration, place, and purpose phrases. It returns candidates with source spans and never mutates confirmed values. The policy resolves contradictions first, then missing hard anchors and required facts, then feasibility-changing ambiguity, and finally groups consequential defaults for confirmation. Identical confirmed state produces the same next question.
+
+A future `IntentParser` adapter may call a schema-constrained language model, but its output remains untrusted candidate data. It cannot confirm a hard constraint, select a route, decide feasibility, or rank schedules. Raw utterances and purpose text stay in browser/session memory and are excluded from persistence, logs, traces, analytics, and model training datasets. The route planner accepts only the final typed, confirmed `TripRequest`.
+
+The interview reaches `READY_TO_PLAN` only after the user confirms one editable timeline containing every hard constraint and material assumption. Server validation independently recomputes readiness and rejects contradictions or unconfirmed consequential values before quota reservation. Arithmetic impossibility fails before paid provider access.
+
+### Schedule evaluation
 
 For a candidate home-door departure `t`:
 
@@ -154,12 +191,11 @@ visitEnd             = visitStart + visitDuration
 routeBackDepart      = visitEnd + destinationDoorToCar
 return               = provider(destination, origin, routeBackDepart)
 homeArrival          = routeBackDepart + return.duration + homeParkingToDoor
-safeHomeDeadline     = homeBy - safetyCushion
 roadTime             = outbound.duration + return.duration
 startPreparingAt     = t - preparationDuration
 ```
 
-A candidate is feasible only when `t >= readyAt`, `homeArrival <= safeHomeDeadline`, the complete visit fits any supplied visit window, and both legs returned valid estimates under the same provider/model/preferences.
+A candidate includes only the legs required by the confirmed trip shape. Outbound-only plans stop after `readyAtDestination`; round trips derive the return departure from the actual activity end. A candidate is feasible only when `t >= readyAt`, every confirmed timeline constraint is satisfied after its stated cushion/access allowance, the activity duration fits its window, and every required leg returned a valid estimate under the same provider/model/preferences.
 
 Rank by exact provider seconds of total road time, then later departure only when the exact score is equal, then timestamp. Round only for display. Label the winner **best evaluated**.
 
@@ -167,7 +203,7 @@ Traffic is nonmonotonic and the second leg depends on the first, so the search u
 
 Pilot budgets:
 
-- maximum 12 candidate chains and 24 paid route estimates for a normal plan, including a reserved leave-when-ready baseline;
+- maximum 24 outbound-only candidates or 12 round-trip candidate chains, with at most 24 paid route estimates total and a reserved leave-when-ready baseline;
 - maximum four concurrent provider calls across the service, not per request;
 - four-second per-call timeout and 15-second overall timeout;
 - at most one retry for timeout, 429, or 5xx when the same hard budget permits;
@@ -214,11 +250,17 @@ All responses include `schemaVersion`, `requestId`, and a stable result or error
 
 Accept a manually entered address or browser coordinate. Return at most five display candidates and encrypted or server-referenced short-lived confirmation tokens. Tokens are bound to session, purpose, schema version, and expiry. The user confirms both endpoints before any optimization. Server-side resolution avoids exposing a geocoding credential.
 
+### Adaptive interview
+
+- `POST /api/v1/interviews:advance`
+
+Accept the current typed facts plus the latest bounded answer. Return an updated `InterviewDecision` containing candidate facts with provenance, contradictions, one stable question ID/reason with answer schema, or `READY_TO_CONFIRM`. The operation is stateless from the server's perspective, makes no route-provider call, and rejects unknown or unconfirmed hard values. The browser keeps the draft; raw utterances are never written to Firestore or telemetry.
+
 ### Compute and refresh
 
-- `POST /api/v1/round-trip-plans:compute`
-- `POST /api/v1/round-trip-plans:refresh`
-- `POST /api/v1/round-trip-plans:leaving-now`
+- `POST /api/v1/plans:compute`
+- `POST /api/v1/plans:refresh`
+- `POST /api/v1/plans:leaving-now`
 
 Required headers include the session cookie, custom CSRF header, and `Idempotency-Key`. Refresh and leaving-now requests use purpose-specific, session-bound, expiring constraint tokens so the server does not need permanent trip storage. Every operation consumes its documented quota; leaving-now is one bounded route estimate.
 
@@ -254,15 +296,23 @@ sequenceDiagram
     participant R as Route provider
     participant M as Google Maps
 
-    U->>W: Enter and confirm all constraints
+    U->>W: Describe trip
+    loop Only while planner-relevant facts are unresolved
+        W->>A: Typed state + latest bounded answer
+        A-->>W: Candidate facts + one next question or ready-to-confirm
+        U->>W: Answer, edit, or accept visible assumptions
+    end
+    U->>W: Confirm editable timeline
     W->>A: Session + CSRF + idempotent compute request
     A->>A: Validate and atomically reserve quota/idempotency lease
     A->>P: Typed planning problem
     loop Bounded candidate departures
         P->>R: Outbound estimate
         R-->>P: Duration or typed failure
-        P->>R: Return estimate at derived time
-        R-->>P: Duration or typed failure
+        opt Round trip
+            P->>R: Return estimate at derived time
+            R-->>P: Duration or typed failure
+        end
     end
     P-->>A: Ranked candidates or explicit no-plan
     A-->>W: Versioned result and evidence
@@ -273,10 +323,12 @@ sequenceDiagram
 
 ## Browser behavior
 
-- Use a responsive single-column flow at phone widths and a form/summary split on larger screens.
+- Use one prominent adaptive question and a collapsible **Trip so far** timeline at phone widths. At 768px and wider, use interview/timeline columns. Never show fixed “step N of M” progress because the question count is adaptive.
+- Offer quick-start branches for home-by, arrive-by, reservation/appointment, finish-before-closing, and no-fixed-time; every common path remains usable without typing.
+- Quick replies use semantic radio/checkbox groups, selection does not auto-advance, each new question receives heading focus, and a structured **Review all details** escape hatch appears after five follow-ups.
 - Store versioned user-entered constraints, original input strings, and permitted location identifiers in IndexedDB. Do not persist provider-derived route content or use query strings for trip data.
 - On reload, restore inputs and require a new calculation. If the tab remains loaded while offline, the in-memory result is visibly stale; reloading offline is not supported until the PWA stage.
-- Bind local data to the bootstrapped session owner handle, purge it on logout/session change/deletion, and expire it no later than 24 hours after `homeBy`. Fall back to memory with a visible **Not saved on this device** state when IndexedDB is unavailable or corrupt.
+- Bind local data to the bootstrapped session owner handle, purge it on logout/session change/deletion, and expire it no later than 24 hours after the plan's final hard time anchor. Fall back to memory with a visible **Not saved on this device** state when IndexedDB is unavailable or corrupt.
 - Mark API responses `Cache-Control: no-store` and keep `/api/` outside every future service-worker cache.
 - Geolocation is requested only after a user action and has a manual fallback.
 - Maps URL construction occurs only after an explicit user action, is excluded from telemetry, and opens in a new tab/app context; Google may select a different live route.
