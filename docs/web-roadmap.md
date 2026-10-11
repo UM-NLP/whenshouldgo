@@ -1,5 +1,7 @@
 # Web-first delivery roadmap
 
+> Historical planner-centered roadmap. Superseded on 2026-10-10 by the [agent-first roadmap](trip-assistant-roadmap.md). Preserve for reusable requirements and decision history.
+
 Status: proposed execution roadmap for one founder/developer working with the nine-role AI product team. Ranges are planning estimates, not delivery promises. No external tester recruitment or paid service purchase has been executed.
 
 ## Operating constraints
@@ -8,7 +10,7 @@ Status: proposed execution roadmap for one founder/developer working with the ni
 - One complete web journey before companion features.
 - One Cloud Run service, minimum instances zero, maximum one during the pilot; atomic Firestore quotas remain authoritative because the instance maximum may be exceeded briefly.
 - Hard cap of 24 paid route estimates per full plan, 1,200 Routes units for the whole pilot, 650 Routes units per day, and 100 paid location-resolution calls.
-- Invite-only cohort of 5–8 users and at least 20 real plan attempts.
+- Invite-only cohort of 5â€“8 users and at least 20 real plan attempts.
 - Native Android, widget, voice, embedded navigation, and iOS remain gated.
 - Old one-way exact-departure work stays On Hold as historical evidence.
 
@@ -16,25 +18,25 @@ Status: proposed execution roadmap for one founder/developer working with the ni
 
 | Stage | Effort assumption | Deliverable | Exit gate |
 |---|---:|---|---|
-| 0. Interview/product contract | 3–4 focused days | Typed intent/constraint state, versioned question policy, acceptance IDs, search/cost budgets, pilot consent and stop/go thresholds | Every supported phrase maps to confirmed timeline semantics; the stopping rule and minimal-question benchmark are frozen |
-| 1. Interview and planner core | 6–9 days | Rule parser, deterministic next-question engine, generalized Python planner, fake provider, interview oracle, route-search oracle and typed explanations | Zero missed hard constraints or false-feasible fixtures; interview p95 question regret <=1; route p95 regret <=5 road min; production <=24 estimates |
-| 2. Provider and API | 4–6 days | Interview endpoint, Google adapter, location confirmation, session/quota/idempotency middleware, OpenAPI and fake/live modes | Intake makes no route call; missing leg fails closed; credentials server-side; bounded live smoke passes |
-| 3. Responsive web journey | 6–9 days | Adaptive composer/questions, editable timeline, in-memory result, refresh, local input recovery, Maps handoff and all recovery states | Typical saved-home scenario reaches review in <=3 follow-ups; full fake journey passes at 360px, keyboard-only and selected browsers |
-| 4. Cheap pilot deployment | 2–3 days | One scale-to-zero Cloud Run service, invite access, kill switch, metrics, quotas, alerts and rollback | Release checklist passes; first five plans reconciled with billing data |
-| 5. Assisted web pilot | About 2 weeks elapsed | 5–8 invited users, 20+ real plan attempts, interviews, outcome check-ins and evidence report | Adoption, repeat-use, deadline, accuracy, latency and cost gates reported with counts |
-| 6. Decision and focused iteration | 1–3 days | Explicit stop, revise, or continue decision; prioritized evidence gaps | No expansion without a passed value/cost gate |
+| 0. Interview/product contract | 3â€“4 focused days | Typed intent/constraint state, versioned question policy, acceptance IDs, search/cost budgets, pilot consent and stop/go thresholds | Every supported phrase maps to confirmed timeline semantics; the stopping rule and minimal-question benchmark are frozen |
+| 1. Interview and planner core | 6â€“9 days | Rule parser, deterministic next-question engine, generalized Python planner, fake provider, interview oracle, route-search oracle and typed explanations | Zero missed hard constraints or false-feasible fixtures; interview p95 question regret <=1; route p95 regret <=5 road min; production <=24 estimates |
+| 2. Provider and API | 4â€“6 days | Interview endpoint, Google adapter, location confirmation, session/quota/idempotency middleware, OpenAPI and fake/live modes | Intake makes no route call; missing leg fails closed; credentials server-side; bounded live smoke passes |
+| 3. Responsive web journey | 6â€“9 days | Adaptive composer/questions, editable timeline, in-memory result, refresh, local input recovery, Maps handoff and all recovery states | Typical saved-home scenario reaches review in <=3 follow-ups; full fake journey passes at 360px, keyboard-only and selected browsers |
+| 4. Cheap pilot deployment | 2â€“3 days | One scale-to-zero Cloud Run service, invite access, kill switch, metrics, quotas, alerts and rollback | Release checklist passes; first five plans reconciled with billing data |
+| 5. Assisted web pilot | About 2 weeks elapsed | 5â€“8 invited users, 20+ real plan attempts, interviews, outcome check-ins and evidence report | Adoption, repeat-use, deadline, accuracy, latency and cost gates reported with counts |
+| 6. Decision and focused iteration | 1â€“3 days | Explicit stop, revise, or continue decision; prioritized evidence gaps | No expansion without a passed value/cost gate |
 | 7. PWA or Android expansion | Gated | Installability/offline shell first; native Android only if native capabilities are demanded | Surface-specific interest and retention gate met |
 
 The stages are sequential where evidence is required. UX and fake-provider frontend work can overlap with planner-core work after the API contract is frozen.
 
-## Stage 0 — product and evaluation contract
+## Stage 0 â€” product and evaluation contract
 
 ### Work
 
 - Freeze the MVP and non-goals in [web-product-plan.md](web-product-plan.md).
 - Define `InterviewState`, `InterviewDecision`, `TripRequest`, `TimeConstraint`, `DurationConstraint`, `PlanResult`, `Alternative`, `NoPlanReason`, and error schemas.
 - Freeze stable question IDs, prerequisites, reasons, quick replies, default provenance, ambiguity branches, and the `READY_TO_PLAN` stopping rule in `contracts/interview-policy.yaml`.
-- Author gold dialogues for all supported intents, ambiguous “by/at/closing” wording, several simultaneous constraints, corrections, unsupported requests, and fully specified requests.
+- Author gold dialogues for all supported intents, ambiguous â€œby/at/closingâ€ wording, several simultaneous constraints, corrections, unsupported requests, and fully specified requests.
 - Assign acceptance IDs to every P0 requirement.
 - Freeze baseline: leave as soon as ready under the same provider and route policy.
 - Freeze exact-second ranking, the deterministic search schedule and required samples, independent-oracle quality thresholds, a reserved leave-when-ready baseline, and the 24-estimate production cap.
@@ -50,7 +52,7 @@ The stages are sequential where evidence is required. UX and fake-provider front
 - Cost worksheet with pricing-table date and a 20-plan worst-case pilot estimate.
 - Written stop conditions.
 
-## Stage 1 — interview and planner core
+## Stage 1 â€” interview and planner core
 
 ### Work
 
@@ -83,7 +85,7 @@ The stages are sequential where evidence is required. UX and fake-provider front
 
 If quality misses the gate, do not hide it by increasing paid calls. Change the search, provider, objective, or product promise.
 
-## Stage 2 — provider and API
+## Stage 2 â€” provider and API
 
 ### Work
 
@@ -104,7 +106,7 @@ If quality misses the gate, do not hide it by increasing paid calls. Change the 
 - Fallback/malformed/missing provider responses fail closed.
 - No canary address or coordinate appears in logs.
 
-## Stage 3 — responsive web journey
+## Stage 3 â€” responsive web journey
 
 ### Work
 
@@ -129,7 +131,7 @@ If quality misses the gate, do not hide it by increasing paid calls. Change the 
 - Every accepted input maps to a visible review field and typed API field.
 - Common paths work through quick replies without typing; a complete initial answer is never fragmented into redundant questions.
 
-## Stage 4 — deployment within a small budget
+## Stage 4 â€” deployment within a small budget
 
 ### Work
 
@@ -160,13 +162,13 @@ Twenty plans with one full refresh each have a hard maximum near 960 route estim
 
 At the currently documented first paid band for Compute Routes Pro, US$10 per 1,000 events, a 24-estimate full optimization has about US$0.24 marginal routing cost after the free cap; a second full optimization doubles that. This is why refreshes are explicit and bounded. Location resolution, hosting, tax and currency conversion are separate. Recheck the [official price list](https://developers.google.com/maps/billing-and-pricing/pricing) before every pilot or pricing decision.
 
-## Stage 5 — assisted web pilot
+## Stage 5 â€” assisted web pilot
 
-“Assisted” means the product computes plans while the founder observes problems and helps users recover. It is not a manually operated route service.
+â€œAssistedâ€ means the product computes plans while the founder observes problems and helps users recover. It is not a manually operated route service.
 
 ### Cohort
 
-- 5–8 GTA drivers with at least two eligible monthly outings;
+- 5â€“8 GTA drivers with at least two eligible monthly outings;
 - priority segment: parents/caregivers with a firm pickup or home deadline;
 - exclude emergency, commercial, safety-critical medical, multi-stop, and unsupported-mode trips.
 
@@ -214,7 +216,7 @@ Revise when users value an earlier finish more than minimum road time, waiting i
 
 Stop this segment if fewer than four interviewees have recurring demand, repeat planning remains below 20% after one focused iteration, or marginal cost cannot support any plausible price.
 
-## Stage 6 — evidence decision
+## Stage 6 â€” evidence decision
 
 Publish a sanitized pilot report containing counts, denominators, limitations, measured invoice cost, observed latency, provider failures, prediction error, adoption, repeat use, and unresolved risks. Keep raw locations out of Git.
 
@@ -226,7 +228,7 @@ Decision options:
 
 Do not implement payment until repeat use and willingness to pay are demonstrated. Do not implement native Android merely because the web pilot is technically successful.
 
-## Stage 7 — gated expansion
+## Stage 7 â€” gated expansion
 
 ### PWA first
 
