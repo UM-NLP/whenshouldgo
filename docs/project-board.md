@@ -6,14 +6,15 @@ Authoritative board: [@UM-NLP's When Should Go — Project 2](https://github.com
 
 | Todo | Blocked by active work | On hold |
 |---|---|---|
-| [#4 WEB-01 contract](https://github.com/UM-NLP/whenshouldgo/issues/4) | [#5 CORE-01 planner](https://github.com/UM-NLP/whenshouldgo/issues/5) | [#1 Adaptive one-way updates](https://github.com/UM-NLP/whenshouldgo/issues/1) |
-| | [#6 API-01 provider/API](https://github.com/UM-NLP/whenshouldgo/issues/6) | [#2 Route comparability](https://github.com/UM-NLP/whenshouldgo/issues/2) |
-| | [#7 WEB-02 journey](https://github.com/UM-NLP/whenshouldgo/issues/7) | [#3 Actual-arrival evidence](https://github.com/UM-NLP/whenshouldgo/issues/3) |
-| | [#8 TEST-01 verification](https://github.com/UM-NLP/whenshouldgo/issues/8) | [#11 EXPAND-01 PWA/Android gate](https://github.com/UM-NLP/whenshouldgo/issues/11) |
-| | [#9 OPS-01 deployment](https://github.com/UM-NLP/whenshouldgo/issues/9) | Native Android, embedded navigation and payment |
+| [#4 WEB-01 adaptive contract](https://github.com/UM-NLP/whenshouldgo/issues/4) | [#12 INTAKE-01 interview engine](https://github.com/UM-NLP/whenshouldgo/issues/12) | [#1 Adaptive one-way updates](https://github.com/UM-NLP/whenshouldgo/issues/1) |
+| | [#5 CORE-01 generalized planner](https://github.com/UM-NLP/whenshouldgo/issues/5) | [#2 Route comparability](https://github.com/UM-NLP/whenshouldgo/issues/2) |
+| | [#6 API-01 interview/provider API](https://github.com/UM-NLP/whenshouldgo/issues/6) | [#3 Actual-arrival evidence](https://github.com/UM-NLP/whenshouldgo/issues/3) |
+| | [#7 WEB-02 adaptive journey](https://github.com/UM-NLP/whenshouldgo/issues/7) | [#11 EXPAND-01 PWA/Android gate](https://github.com/UM-NLP/whenshouldgo/issues/11) |
+| | [#8 TEST-01 verification](https://github.com/UM-NLP/whenshouldgo/issues/8) | Native Android, embedded navigation and payment |
+| | [#9 OPS-01 deployment](https://github.com/UM-NLP/whenshouldgo/issues/9) | |
 | | [#10 PILOT-01 validation](https://github.com/UM-NLP/whenshouldgo/issues/10) | |
 
-Issues #4–#11 were created in the repository. Project membership/status synchronization could not be reverified in this session because the browser-control runtime failed to initialize; the table above is the intended Project 2 state. The repository issues and [backlog](backlog.md) remain the verified source until the board is synchronized.
+Issues #4–#12 were created in the repository. Project membership/status synchronization could not be reverified in this session because the GitHub connector exposes repository issues but not Projects mutations; the table above is the intended Project 2 state. The repository issues and [backlog](backlog.md) remain the verified source until the board is synchronized.
 
 The following section is the historical one-way-method snapshot and is superseded by the active table above.
 
