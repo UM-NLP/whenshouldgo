@@ -8,12 +8,14 @@ The planner is tested independently from the provider and UI. Live provider test
 
 | Layer | Automated checks | Manual checks | Pilot gate |
 |---|---|---|---|
+| Adaptive interview | Gold dialogues plus generated permutations compared with an independent minimum-safe-question oracle; contradiction, correction, termination and no-repeat properties | Review friend, reservation, closing, arrive-by, home-by and combined flows | 100% correct curated P0 `TripRequest`; >=99% generated; median question regret 0, p95 <=+1, max +2; no route call before confirmation |
+| Rule parser | Exact-source-span fixtures for time, relation, duration, purpose hint, relative time, typo, unsupported and injection inputs | Inspect every parser miss that could alter a hard constraint | 100% hard-slot precision; misses become questions; no parser candidate is auto-confirmed |
 | Planner arithmetic | Unit and property tests for all derived times, feasibility and tie-breaks | Review representative timelines | 100% pass; zero false-feasible result |
 | Search quality | At least 1,000 versioned authored/synthetic nonmonotonic surfaces compared with an independent exhaustive one-minute oracle that shares no feasibility/scoring helpers | Inspect retained worst-regret fixtures and the reserved leave-when-ready baseline | Median regret <=2 road min; p95 <=5; p99 <=10; <=24 production estimates |
 | Time handling | UTC instant calculations plus IANA display-zone tests, DST gaps/overlaps and midnight boundaries | Verify Toronto DST examples in browser | No silent time correction or ambiguous repeated time |
 | Provider contract | Fake server and schema fixtures for valid, fallback, partial, timeout, 429, 4xx, 5xx and malformed replies | One bounded live smoke test in pilot project | Missing/invalid leg never produces a plan; key absent from output |
 | API | Schema bounds, session, CSRF, transactional quota, two-process idempotency race/restart, retry budget, cancellation and safe-error tests | Replay pending/completed/mismatched requests from browser dev tools | Stable codes; duplicates make zero provider calls; uncertain crash reservation remains spent |
-| Web domain/UI | Component tests for every form and state; IndexedDB migration/unavailable/corrupt/quota failure | 360px, 200% text and loaded-tab offline review | Every field editable; reload restores inputs and requires recalculation; memory fallback is visible |
+| Web domain/UI | Component tests for every adaptive question, quick reply, timeline and state; IndexedDB migration/unavailable/corrupt/quota failure | 360px, 200% text and loaded-tab offline review | Every fact editable; common flows need no typing; reload restores inputs and requires recalculation; memory fallback is visible |
 | End to end | Full fake-provider journey in frozen Playwright Chromium, Firefox and WebKit versions, including impossible plan, outage, denied location, loaded-tab offline behavior and user-triggered Maps URL construction | Full journey and Maps handoff on physical Android Chrome and iPhone Safari | Automated engine matrix passes; physical handoff evidence recorded; offline-shell reload waits for PWA gate |
 | Accessibility | Semantic queries, automated scan, focus order/restoration and live-region tests | Keyboard-only, mobile/desktop screen readers, contrast, 200% text and 320 CSS-pixel reflow | No critical/serious automated finding; all actions reachable/named; WCAG 2.2 AA reflow passes |
 | Performance | Bundle budget, API latency test with fake provider, bounded concurrency | Cold-start measurement on pilot Cloud Run | Web interaction remains responsive; full-plan p95 <=12 sec in pilot |
@@ -21,6 +23,8 @@ The planner is tested independently from the provider and UI. Live provider test
 | Cost | Assert provider-call caps and retry accounting | Reconcile estimated usage with billing after 5, 10 and 20 plans | Median <=20, p95 <=24 route estimates; spend inside pilot cap |
 
 Planner fixtures include constant, rising, falling, sharply nonmonotonic and multi-peak traffic; route changes; tight/loose and exact-boundary deadlines; 15–180 minute visits; one-to-eight-hour windows; exact score ties; partial/missing return legs; all access allowances; toll policies; visit windows; maximum-wait constraints; DST folds/gaps; and no-solution cases. Runtime `SEARCH_INCOMPLETE` is limited to a failed required sample or the fixed schedule failing to finish within its hard call/time cap. Every successful result remains **best evaluated**, not globally optimal.
+
+Interview fixtures cover flexible friend visits, fixed reservations/appointments, latest arrival, enter-before versus finish-before closing, latest destination departure, latest home arrival, flexible windows, multiple hard constraints, conflicting times, “by” and “at” ambiguity, exact/minimum/range durations, corrections, saved defaults, DST/midnight, address ambiguity, unsupported modes/stops, parser failure, and hostile input. Measure question turns and fields answered separately so a dense screen cannot appear minimal merely because it contains many fields.
 
 ## Acceptance traceability
 
@@ -42,6 +46,8 @@ Real-trip accuracy, willingness to reuse, and provider invoices remain unexecute
 | P0 | Routing credential copied from frontend or repository | Dedicated least-privilege Cloud Run identity with ADC/OAuth, no service-account key, separate Secret Manager values for invite/token signing, explicit build-context scanning | Search upload manifest, image layers, built assets/history and browser requests; no credential appears |
 | P0 | Public endpoint used to generate paid calls | Invite-only session, transactional per-session/global reservations, 24-call plan cap, Maps quota, service-wide semaphore and kill switches; max one instance only reduces exposure | Missing/expired session gets zero provider calls; two-process races cannot exceed reserved quotas |
 | P0 | Precise locations leak through logs/analytics/errors | Allowlisted telemetry schema, request-body logging disabled, redaction tests, no free text in error tracking | Seed canary address never appears in captured logs or events |
+| P0 | Free-text interview leaks purpose, names, times, or places | Raw utterances and purpose text remain in active memory only; analytics allowlist stable question/reason/ambiguity codes | Seed utterance, name, purpose and exact time never appear in logs, traces, Firestore or analytics |
+| P0 | Parser invents or changes a hard deadline | Parser output is candidate-only with exact source span; deterministic confirmation and final server validation | Injection/malformed/parser-error cases cannot reach planner with an unconfirmed hard fact |
 | P0 | Planner returns unsafe false-feasible result | Typed models, deterministic feasibility invariant, missing-leg fail-closed behavior | Property tests and injected provider failures produce no false feasible result |
 | P0 | XSS steals session or trip data | No raw HTML rendering, strict CSP, dependency review, output encoding, `HttpOnly` session | Stored/reflected payload tests cannot execute; CSP blocks inline script |
 | P0 | CSRF spends quota or modifies outcomes | Strict same-site cookie, CSRF token, Origin validation, JSON-only mutation endpoints | Cross-origin requests fail before provider call |
@@ -65,6 +71,7 @@ The exact trip payload is operational data, not analytics. It is processed in me
 - CSRF token and strict Origin check for state-changing routes.
 - Exact canonical host validation, no CORS, and a custom CSRF header for mutations.
 - Strict JSON-only Pydantic schemas, a small body limit, length/range limits, unknown-field rejection, no multipart/uploads, and opaque client-safe errors.
+- Bound interview text to 500 characters, render it as text only, and never include it in telemetry or error reports.
 - Separate service identity with only permissions required for Routes/Firestore/monitoring.
 - No service-account key file; Cloud Run uses workload identity/Application Default Credentials.
 - No precise trip in this application's URLs/history, log attributes, analytics, crash reports, or support screenshots. User-triggered Maps handoff is the disclosed exception that sends selected endpoints to Google.
@@ -92,6 +99,10 @@ Production-style Terraform, multiple cloud environments, continuous canaries, pa
 
 These are pilot targets, not measured performance:
 
+- zero missed or invented hard constraints in the curated suite and supported pilot requests;
+- at least 80% of users complete a supported adaptive interview without founder intervention;
+- median <=3 follow-ups and p90 <=5 after the opening description for saved-home scenarios;
+- fully specified requests require no data question beyond location resolution and one grouped confirmation;
 - at least 18 of the first 20 eligible supported requests receive `FEASIBLE` or a correct `NO_FEASIBLE_PLAN`; invalid/unsupported input is excluded, while provider/search/timeout/app failure remains in the denominator;
 - zero app-caused task failures in those first 20 attempts; external provider/search failures are reported as counts and rates rather than hidden by the sample size;
 - p50 end-to-end plan latency <=8 seconds and p95 <=12 seconds;
@@ -106,6 +117,7 @@ At this scale, a percentage can hide the sample size. Every scorecard shows both
 
 Allowlisted plan metrics:
 
+- stable question ID and reason, answer/skip/edit event, follow-up count, time-to-confirmation bucket, request-shape category and whether structured fallback was used;
 - result category;
 - candidate and provider-call count;
 - retry count and provider status category;
@@ -123,7 +135,7 @@ Scorecard definitions:
 - estimated/actual cost per success: all provider cost, including failures, retries, location resolution, refresh, leaving-now, and smoke calls, divided by `task_success` count;
 - actual cost comes only from invoice reconciliation and remains separate from the real-time estimated ledger. Record SKU, USD price-table date, billing-account currency, and numerator/denominator counts.
 
-Do not record addresses, coordinates, place names, route descriptions, geometry, full request/response bodies, exact trip timestamps, invite codes, session cookies, or feedback text in telemetry.
+Do not record utterances, purpose text, addresses, coordinates, place names, route descriptions, geometry, full request/response bodies, exact trip timestamps, invite codes, session cookies, or feedback text in telemetry.
 
 Proposed alerts:
 
@@ -198,7 +210,7 @@ Proposed retention:
 - Cloud Logging `_Default` operational logs: 30 days unless deployment verification records a shorter configured retention; `_Required` audit-log retention follows Google Cloud policy and is disclosed;
 - structured voluntary outcomes: 90 days or immediate authenticated deletion;
 - precise trip requests/provider responses: never persisted by the application;
-- browser user-entered inputs: session-scoped and no later than 24 hours after `homeBy`; provider-derived plan results: never persisted.
+- browser user-entered typed inputs: session-scoped and no later than 24 hours after the final hard time anchor; raw utterances/purpose text and provider-derived plan results: never persisted.
 
 Every Firestore collection has a versioned schema and `expireAt` TTL field. Application authorization rejects logical expiry immediately because Firestore TTL deletion is asynchronous. User deletion is synchronous at the application layer. Retention and deletion behavior must be verified before the first external tester.
 
@@ -208,6 +220,7 @@ Every Firestore collection has a versioned schema and `expireAt` TTL field. Appl
 - [ ] Worst oracle-regret fixtures reviewed and production search stays within 24 estimates.
 - [ ] Oracle is implementation-independent, baseline capacity is reserved, exact-second ranking matches the contract, and every `SEARCH_INCOMPLETE` reason is deterministic.
 - [ ] No false-feasible or missing-leg recommendation in tests.
+- [ ] Curated interview cases produce the correct confirmed `TripRequest`; minimal-question and termination gates pass; no intake request invokes Routes.
 - [ ] Provider credential absent from code, image history, web bundle and browser requests.
 - [ ] Session, token purpose/expiry, CSRF, two-process transactional quota/idempotency, cancellation and kill-switch tests pass.
 - [ ] Location redaction canary absent from logs and analytics.
