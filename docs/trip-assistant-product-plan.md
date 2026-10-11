@@ -4,7 +4,7 @@ Updated 2026-10-10. This document replaces the earlier planner-centered product 
 
 ## Product promise
 
-WhenShouldGo accompanies a user from an uncertain desire to a completed trip. It can start with â€œI want to eat something,â€ â€œfind something to do with the kids,â€ â€œcan I fit groceries in before pickup?â€, a known appointment, a Calendar event, a multi-stop day, or a multi-day road trip.
+WhenShouldGo accompanies a user from an uncertain desire to a completed trip. It can start with “I want to eat something,” “find something to do with the kids,” “can I fit groceries in before pickup?”, a known appointment, a Calendar event, a multi-stop day, or a multi-day road trip.
 
 The assistant discovers intent, researches possibilities, recommends a small number of meaningful options, turns the selected option into an editable plan, monitors accepted commitments, and helps recover when conditions change. Routing, traffic, place search, Calendar, weather, reminders, reservations and schedule solvers are tools; none is the product by itself.
 
@@ -37,7 +37,7 @@ TripWorkspace
   cost ledger
 ```
 
-Unknown destination, activity, date or time is valid state. For example, destination may mean â€œan inexpensive vegetarian restaurant within 20 minutes,â€ and date may mean â€œone weekend in November.â€ The agent progressively narrows these domains instead of treating them as missing form fields.
+Unknown destination, activity, date or time is valid state. For example, destination may mean “an inexpensive vegetarian restaurant within 20 minutes,” and date may mean “one weekend in November.” The agent progressively narrows these domains instead of treating them as missing form fields.
 
 Each fact records its value or range, source, confidence, confirmation state, whether it is hard or soft, scope, freshness and dependencies. Unconfirmed inferences may diversify exploration; they cannot become hard commitments.
 
@@ -65,7 +65,7 @@ CONFIRMED -> ARMED -> ACTIVE -> ADAPTING -> COMPLETED
 
 Other final states are `CANCELLED`, `EXPIRED` and `UNSUPPORTED`. Expired or changed evidence invalidates dependent proposals. Approved and active plans are immutable versions; a change creates a proposal that explains what changed and why.
 
-## Example: â€œI want to eat somethingâ€
+## Example: “I want to eat something”
 
 1. Use the current area and likely time only with permission and show those assumptions.
 2. Check whether a known hard need exists, such as an allergy, wheelchair access or a fixed return time.
@@ -103,11 +103,17 @@ It supports:
 
 It excludes Calendar sync, inferred routines, continuous background location, autonomous booking/purchase, multi-stop and multi-day planning. These enter through evidence-gated phases.
 
+## Access model
+
+First use requires no visible login or personal information. The client silently establishes an anonymous tenant identity so the service can isolate data and control provider cost. A guest receives 50 successful user turns or 10 activated trips over the lifetime of that guest identity, whichever is reached first. The current response always finishes; the next metered action asks the person to create a free Google or email-link account.
+
+Registration remains free. It preserves the current identity when possible and adds account recovery, cross-device sync, opted-in cloud history and, after their own release gates, Calendar, durable memory and bounded proactive monitoring. Guest use stays local-first and excludes those account capabilities. Existing plans remain viewable, exportable, deletable and usable for Maps handoff after the gate. The exact counting, retention and merge rules are defined in [access-tiers.md](access-tiers.md).
+
 ## Success
 
 The north-star candidate is **completed assisted travel goals per retained user**: the user accepted a grounded recommendation and took an execution action.
 
-Measure goal success by initial vagueness, turns to first useful proposal, corrections, grounded-claim rate, hard-constraint confirmation, tool recovery, plan freshness, recommendation acceptance, execution action, second goal on another day, provider/model cost and user-rated control.
+Measure goal success by initial vagueness, turns to first useful proposal, corrections, grounded-claim rate, hard-constraint confirmation, tool recovery, plan freshness, recommendation acceptance, execution action, second goal on another day, guest-to-free-account conversion, provider/model cost by tier and user-rated control.
 
 The assistant succeeds when it reduces decision effort and earns action and repeat use. A technically feasible route alone is not success.
 

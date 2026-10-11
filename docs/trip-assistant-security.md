@@ -17,7 +17,7 @@ OAuth permission alone is not consent for model processing, routine inference, s
 
 ## Memory policy
 
-Memory is a user-owned structured profile: saved place IDs/labels, preparation duration, parking and walking allowances, route preferences, reminder lead time, confirmed routines, and outcome summaries. The assistant asks â€œRemember this?â€ and lets the user choose fields. It never silently derives a routine from location history.
+Memory is a user-owned structured profile: saved place IDs/labels, preparation duration, parking and walking allowances, route preferences, reminder lead time, confirmed routines, and outcome summaries. The assistant asks “Remember this?” and lets the user choose fields. It never silently derives a routine from location history.
 
 Each remembered value carries provenance, confirmation time, last use, and an optional expiry. Candidates decay and are removed if not confirmed. Users can inspect, edit, export, forget one item, clear history, disconnect a calendar, or delete the account.
 
@@ -25,7 +25,11 @@ Do not keep detailed movement traces or a permanent raw calendar mirror. Current
 
 ## Storage and credentials
 
-Firebase Authentication identifies users. Use the verified OpenID Connect `(issuer, sub)` pair as the stable identity, never email. Every read and write is authorized against that server-derived tenant; the model and request body cannot supply it. Firestore server libraries bypass client Security Rules, so application authorization and IAM must cover every record, cache, job, webhook channel, and device token. Use App Check as an abuse signal, server-side quotas as the control, Secret Manager for application credentials, and Cloud KMS envelope encryption for per-user OAuth refresh tokens. Separate production and development projects and credentials.
+Firebase Authentication identifies both guests and registered users. The client silently creates an anonymous Firebase account before its first server tool call, so the person sees no login flow while the backend still receives a verifiable tenant. Use the verified OpenID Connect `(issuer, sub)` pair as the stable identity, never email, installation ID or a client-supplied owner. Every read and write is authorized against that server-derived tenant; the model and request body cannot supply it. Firestore server libraries bypass client Security Rules, so application authorization and IAM must cover every record, cache, job, webhook channel, and device token. Use App Check as an abuse signal, server-side quotas as the control, Secret Manager for application credentials, and Cloud KMS envelope encryption for per-user OAuth refresh tokens. Separate production and development projects and credentials.
+
+Guest storage is local-first. Server-side guest workspace summaries expire after seven inactive days; anonymous identities may be automatically cleaned up after 30 days of inactivity. Guests cannot connect Calendar, create durable inferred routines, schedule server monitoring or perform external writes. Registration does not silently upload local precise-location history. The user chooses which trips to copy. Clearing app/browser data can make guest state unrecoverable; do not recreate it through fingerprinting.
+
+Link a new credential to the active anonymous UID with a one-time, App-Check-bound intent. If the credential already belongs to an account, authenticate both identities and use a previewed, idempotent merge. Never merge by email alone, overwrite registered preferences silently or delete the guest until migration completes. Preserve read, export and deletion access when a usage limit is reached. See [access-tiers.md](access-tiers.md).
 
 Keep only provider fields allowed by applicable terms. Do not persist raw Google route responses or polylines pending a written policy review. Store the minimal plan decision record, forecast age, selected provider, permitted identifiers, and user-authored constraints.
 
@@ -39,11 +43,11 @@ Side effects use a two-step pending-action protocol. The proposal records exact 
 
 ## Proactive notifications
 
-Notifications reveal little on the lock screen by default: â€œYour departure plan changedâ€ rather than addresses, times, event titles, or absence windows. FCM payloads and deep links carry opaque IDs rather than sensitive content. Android uses private or secret visibility. A monitoring policy defines the trip, time window, refresh frequency, material-change threshold, quiet hours, and expiry. Every scheduled task references a current plan version; cancellation or edit makes older tasks no-ops.
+Notifications reveal little on the lock screen by default: “Your departure plan changed” rather than addresses, times, event titles, or absence windows. FCM payloads and deep links carry opaque IDs rather than sensitive content. Android uses private or secret visibility. A monitoring policy defines the trip, time window, refresh frequency, material-change threshold, quiet hours, and expiry. Every scheduled task references a current plan version; cancellation or edit makes older tasks no-ops.
 
 ## Abuse and failure controls
 
-Use per-user and global limits for model tokens, route elements, place searches, weather calls, calendar sync, and notifications. Add idempotency to expensive and mutating operations, bounded retries, circuit breakers, daily budget alerts, and provider/model kill switches. Detect token theft and repeated place probing. Rate-limit account creation and sensitive exports.
+Use per-user and global limits for model tokens, route elements, place searches, weather calls, calendar sync, and notifications. The friendly guest allowance is a conversion rule, not an abuse control. Also enforce per-UID sliding windows, coarse short-retention IP buckets, per-run provider ceilings, App Check or Play Integrity risk signals, daily project quotas and global cost kill switches. Do not use advertising IDs, persistent hardware identifiers, exact IP history or location history to prevent resets. Add idempotency to expensive and mutating operations, bounded retries, circuit breakers and budget alerts. Detect token theft and repeated place probing. Rate-limit identity creation and sensitive exports without treating a shared network or inconclusive integrity signal as proof of abuse.
 
 An incident runbook must cover OAuth token exposure, provider-key exposure, calendar overcollection, notification leakage, model prompt injection, unauthorized tool commits, quota runaway, and deletion failure. Backups must not defeat deletion promises; record and test the deletion window.
 
@@ -52,6 +56,8 @@ An incident runbook must cover OAuth token exposure, provider-key exposure, cale
 Before calendar beta: verify least-privilege scopes, PKCE/state, encrypted refresh tokens, selected-calendar enforcement, incremental-sync recovery, revocation, export, deletion, and redacted logs.
 
 Before persistent accounts: test cross-tenant reads/writes across direct object access, scheduled jobs, webhook channels, caches, device tokens, and model-memory retrieval. Account deletion must stop Calendar channels and scheduled work, revoke tokens, delete histories/routines/memories/device tokens/exports, prevent late jobs from recreating the user, and have both in-app and web entry points before Play distribution.
+
+Before anonymous beta: test quota races, duplicate idempotency keys, guest expiry, lost local identity, read/export/delete after the gate, no paid endpoint without verified identity, same-UID account linking, existing-account merge, interrupted/resumed migration, no implicit local-history upload and zero cross-tenant access across guest and registered principals.
 
 Before proactive beta: verify task authentication, cancellation, idempotency, plan-version suppression, quiet hours, lock-screen privacy, duplicate suppression, and notification opt-out.
 

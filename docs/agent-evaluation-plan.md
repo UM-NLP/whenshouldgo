@@ -40,10 +40,12 @@ For the first 30+ supported goals:
 - vague requests reach useful options within four median follow-ups;
 - at least 30% of participants create a second goal on another day within 14 days;
 - report correction, abandonment, latency, tool calls, grounding calls, provider/model cost and failure recovery by vagueness class.
+- report guest activation, allowance reach, registration start/completion, hard-gate abandonment, migration recovery, registered repeat use and actual cost by access tier;
+- require at least 99.5% successful or resumable guest-to-account transfer and fewer than 0.1% duplicate allowance increments before broadening the pilot.
 
 ## Security and privacy tests
 
-Test cross-tenant objects/jobs/webhooks, malicious place/calendar/review text, altered/expired/replayed approvals, spoofed notifications, exact-location canaries in logs/model traces, consent withdrawal, grounded-result deletion, Calendar disconnect, complete account deletion, quota attacks and permission denial.
+Test cross-tenant guest/registered objects, jobs and webhooks; malicious place/calendar/review text; altered/expired/replayed approvals; spoofed notifications; exact-location canaries in logs/model traces; consent withdrawal; grounded-result deletion; Calendar disconnect; complete account deletion; quota races; duplicate submissions; anonymous expiry; identity loss; interrupted account linking and merge; read/export/delete after exhaustion; quota attacks and permission denial.
 
 ## Release evidence
 

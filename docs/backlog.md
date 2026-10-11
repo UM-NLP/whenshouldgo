@@ -8,6 +8,7 @@ Updated 2026-10-10. The product has been redesigned as an agent-first personal t
 | Agent-first product, architecture, policy, model, security, evaluation and roadmap | Done | [Product](trip-assistant-product-plan.md), [architecture](trip-assistant-architecture.md), [conversation policy](agent-conversation-policy.md), [model](model-hosting-decision.md), [security](trip-assistant-security.md), [evaluation](agent-evaluation-plan.md) and [roadmap](trip-assistant-roadmap.md); implementation and validation remain Todo |
 | [#13 VISION-01: Full personal trip assistant](https://github.com/UM-NLP/whenshouldgo/issues/13) | Active epic | Agent-first direction and phased children |
 | [#14 AGENT-01: Trip Workspace and agent runtime](https://github.com/UM-NLP/whenshouldgo/issues/14) | Todo | Workspace/belief contracts, model gateway, typed tools, evidence validator, pending actions and cost ledger |
+| [#22 ACCESS-01: Anonymous guest and registered-free tiers](https://github.com/UM-NLP/whenshouldgo/issues/22) | Todo with #14 | Silent Firebase guest, 50-turn/10-trip policy, local-first retention, free account linking/merge, quota ledger and access-tier evaluation; [specification](access-tiers.md) |
 | [#20 AGENT-MVP-01: Same-day local outing web concierge](https://github.com/UM-NLP/whenshouldgo/issues/20) | Todo after #14 | Vague/named discovery, grounded shortlist, Trip Board, finalist route checks, Maps handoff and outcome capture |
 | [#21 AGENT-EVAL-01: Quality, safety, cost and pilot](https://github.com/UM-NLP/whenshouldgo/issues/21) | Blocked by #20 | 300 reviewed dialogues, 2,000 variants, 150 adversarial cases, then 30+ real goals and evidence-gated decision |
 | [#11 EXPAND-01: PWA/Android gate](https://github.com/UM-NLP/whenshouldgo/issues/11) | On hold | Starts only after #21 demonstrates repeat use and a surface-specific need |
@@ -19,11 +20,13 @@ Updated 2026-10-10. The product has been redesigned as an agent-first personal t
 | [#1 Adaptive one-way updates](https://github.com/UM-NLP/whenshouldgo/issues/1) | On hold | Resume only if the one-way arrival feature is revisited |
 | [#2 Route comparability/strict deadlines](https://github.com/UM-NLP/whenshouldgo/issues/2) | On hold | Resume only if the one-way arrival feature is revisited |
 | [#3 Actual arrival evidence/cost](https://github.com/UM-NLP/whenshouldgo/issues/3) | On hold | Historical evidence gap remains unresolved |
-| Issues #4â€“#10 and #12 planner-centered web plan | On hold | Superseded as the active product path; reusable constraint, API, testing and operations requirements will be pulled into #14 and the agent MVP |
+| Issues #4–#10 and #12 planner-centered web plan | On hold | Superseded as the active product path; reusable constraint, API, testing and operations requirements will be pulled into #14 and the agent MVP |
 
 ## Agent pilot constraints
 
 - No paid campaign, custom domain, payment system, native app, background worker or always-on server.
+- No login screen before value. Guests use a silent anonymous principal; no model or provider endpoint is publicly unauthenticated.
+- Guest allowance begins at 50 successful user turns or 10 activated trips, lifetime. Registered free begins at 100 turns and 10 trips per rolling 30 days. These are versioned validation hypotheses, not pricing promises.
 - One Cloud Run service with minimum instances zero and maximum one.
 - Per interactive workspace: at most six model turns, twelve tool calls, one stronger-model escalation, and frozen caps for Maps-grounding queries, place-detail calls, route finalists, elapsed time and estimated dollars.
 - Freeze account, per-user/day and whole-pilot spend caps only after a one-user live smoke test reconciles actual provider billing. Stop live calls through model and provider kill switches when cost, quota, grounding or quality controls fail.

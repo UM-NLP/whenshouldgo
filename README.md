@@ -4,7 +4,9 @@ WhenShouldGo is a planned agent-first personal trip assistant. It can begin with
 
 **Current status: the product was redesigned around a Trip Workspace and evidence-grounded agent; no application is deployed.** The cheapest validation is a mobile web agent for vague or named same-day local outings. Android is the first intended product after that gate because reminders, Maps sharing, widgets, offline state and voice entry are native capabilities. Typed tools provide discovery, routes, Calendar, weather, memory and actions; optional solvers validate hard schedules only when a goal needs them.
 
-The earlier one-way â€œarrive byâ€ experiment is preserved but On Hold. Its precise zero-buffer recommendations did not remain feasible in later live-estimate checks. No provider is established best, and the product will not promise an exact or guaranteed arrival.
+The validation product starts without a login screen. A silent anonymous identity gives each guest 50 successful user turns or 10 activated trips, whichever comes first; a free account is then required for further computation and adds recovery, sync and later account-only capabilities. These allowances are configurable pilot hypotheses. See [access tiers](docs/access-tiers.md).
+
+The earlier one-way “arrive by” experiment is preserved but On Hold. Its precise zero-buffer recommendations did not remain feasible in later live-estimate checks. No provider is established best, and the product will not promise an exact or guaranteed arrival.
 
 - [Web product plan](docs/web-product-plan.md)
 - [Web architecture](docs/web-architecture.md)
@@ -12,6 +14,7 @@ The earlier one-way â€œarrive byâ€ experiment is preserved but On Hold.
 - [Quality, security and operations](docs/web-quality-operations.md)
 - [Full trip assistant product](docs/trip-assistant-product-plan.md)
 - [Full trip assistant architecture](docs/trip-assistant-architecture.md)
+- [Anonymous access and free account tiers](docs/access-tiers.md)
 - [Conversation and decision policy](docs/agent-conversation-policy.md)
 - [Agent evaluation plan](docs/agent-evaluation-plan.md)
 - [Model and hosting decision](docs/model-hosting-decision.md)
