@@ -1,8 +1,8 @@
 # WhenShouldGo
 
-WhenShouldGo is a pre-seed product experiment for planning a flexible same-day round trip: enter preparation time, visit duration, a return deadline and travel preferences, then compare forecasted departure windows to reduce total predicted road time.
+WhenShouldGo is a pre-seed product experiment for same-day driving plans with different kinds of deadlines. A mobile-first adaptive interview identifies what the user must arrive, start, finish, leave, or return home by, asks only questions that can change feasibility or the recommendation, and compares forecasted departure windows to reduce total predicted road time.
 
-**Current status: web-first plan approved; no application is deployed.** The first product will be a mobile-first responsive web app with a deterministic planner, a server-side traffic provider, and separate Google Maps handoffs. A PWA and native Android app are gated by pilot evidence.
+**Current status: web-first plan approved and revised for adaptive intake; no application is deployed.** The first product will be a mobile-first responsive web app with a deterministic interview policy, deterministic planner, server-side traffic provider, and separate Google Maps handoffs. A PWA and native Android app are gated by pilot evidence.
 
 The earlier one-way “arrive by” experiment is preserved but On Hold. Its precise zero-buffer recommendations did not remain feasible in later live-estimate checks. No provider is established best, and the product will not promise an exact or guaranteed arrival.
 
