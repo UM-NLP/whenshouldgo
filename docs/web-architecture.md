@@ -1,5 +1,7 @@
 # Web-first system architecture
 
+> Historical planner-centered architecture. Superseded on 2026-10-10 by the [agent-first architecture](trip-assistant-architecture.md). Preserve for reusable requirements and decision history.
+
 Status: target architecture for the pre-seed pilot. Nothing in this document is deployed yet.
 
 ## Design decision
@@ -323,7 +325,7 @@ sequenceDiagram
 
 ## Browser behavior
 
-- Use one prominent adaptive question and a collapsible **Trip so far** timeline at phone widths. At 768px and wider, use interview/timeline columns. Never show fixed “step N of M” progress because the question count is adaptive.
+- Use one prominent adaptive question and a collapsible **Trip so far** timeline at phone widths. At 768px and wider, use interview/timeline columns. Never show fixed â€œstep N of Mâ€ progress because the question count is adaptive.
 - Offer quick-start branches for home-by, arrive-by, reservation/appointment, finish-before-closing, and no-fixed-time; every common path remains usable without typing.
 - Quick replies use semantic radio/checkbox groups, selection does not auto-advance, each new question receives heading focus, and a structured **Review all details** escape hatch appears after five follow-ups.
 - Store versioned user-entered constraints, original input strings, and permitted location identifiers in IndexedDB. Do not persist provider-derived route content or use query strings for trip data.
