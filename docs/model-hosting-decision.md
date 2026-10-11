@@ -1,42 +1,62 @@
-# Model and Hosting Decision
+# Agent Model and Hosting Decision
 
-Updated 2026-10-10. This decision concerns the conversational agent. Route feasibility and schedule optimization remain deterministic server functions.
+Updated 2026-10-10.
 
 ## Decision
 
-Use a direct hosted **Gemini 3.5 Flash-Lite** API as the initial production model behind a provider-neutral `ModelGateway`. Use OpenRouter for offline comparisons and, only if needed, a carefully restricted fallback for redacted, non-sensitive requests. Do not self-host a model during the pre-seed stage.
+Use the direct hosted **Gemini 3.5 Flash-Lite** API as the default model behind a provider-neutral `ModelGateway`. Enable official Gemini Grounding with Google Maps only for user-initiated geographic discovery. Evaluate a stronger Gemini Flash model for one bounded escalation on complex synthesis. Use OpenRouter for offline comparisons or a restricted fallback. Do not self-host during the pre-seed stage.
 
-Gemini 3.5 Flash-Lite is a stable, low-cost model with function calling and structured outputs. Current standard paid-tier pricing is US$0.30 per million input tokens and US$2.50 per million output tokens, and paid-tier data is not used to improve Google products. A 2,000-input-token and 500-output-token call is about US$0.00185; three such calls are about US$0.00555. These are illustrative token costs, excluding Maps and other infrastructure, and must be replaced with measured production traces. See [Gemini 3.5 Flash-Lite](https://ai.google.dev/gemini-api/docs/models/gemini-3.5-flash-lite) and [Gemini pricing](https://ai.google.dev/gemini-api/docs/pricing).
+This choice is stronger for the agent-first product because Gemini 3.5 Flash-Lite currently supports function calling, structured output, Search grounding and Grounding with Google Maps while remaining a low-cost stable model. Current standard paid token pricing is US$0.30 per million input and US$2.50 per million output tokens. An illustrative 2,000-input/500-output call is about US$0.00185 before grounding, Maps and infrastructure charges.
 
-## Why direct hosting first
+References: [model capabilities](https://ai.google.dev/gemini-api/docs/models/gemini-3.5-flash-lite), [pricing](https://ai.google.dev/gemini-api/docs/pricing), [Maps grounding](https://ai.google.dev/gemini-api/docs/maps-grounding).
 
-Direct access has fewer processors, no routing markup, predictable tool behavior, and simpler debugging. It also matches the selected Google Cloud stack. The gateway keeps the application portable:
+## Gateway
 
 ```text
-generate(messages, allowedTools, outputSchema, budget, privacyClass)
-  -> ModelTurn
+generate(
+  workspaceContext,
+  allowedTools,
+  outputSchema,
+  budget,
+  privacyClass,
+  groundingPolicy
+) -> ModelTurn
 ```
 
-Pin an explicit model version where the provider permits it. Run tool-selection, extraction, prompt-injection, latency, and cost evaluations before any model change.
+Pin model and prompt versions. Record tokens, latency, schema retries, tool errors and estimated cost without raw private content. A model change requires the full conversation, tool, recommendation, injection and cost evaluation suites.
 
-## OpenRouter role
+## Work allocation
 
-OpenRouter provides a standardized tool-calling interface, model/provider choice, and routing controls. Its current Standard plan adds a 5.5% platform fee, adds another processor and failure point, and privacy behavior depends on the chosen downstream provider and routing settings. It is useful for evaluation and operational fallback, but it is not the default path for calendar and exact-location context. See [OpenRouter pricing](https://openrouter.ai/pricing/), [tool calling](https://openrouter.ai/docs/guides/features/tool-calling), and [guardrails](https://openrouter.ai/docs/guides/features/guardrails/overview).
+The cheap model handles intent interpretation, goal hypotheses, `WorkspacePatch` proposals, next-action proposals, ordinary discovery and response wording. The stronger model may run once for bounded multi-day synthesis, repeated schema failure or a measured low-confidence case.
 
-## Why self-hosting is deferred
+No model is needed to deliver a scheduled reminder, detect an unchanged Calendar event, perform arithmetic validation, deduplicate a task or render an already-approved plan.
 
-A small open model still requires GPU capacity, model loading and cold-start control, scaling, security updates, observability, licenses, and proof that its tool calls meet the same evaluation threshold. GPU Cloud Run can scale to zero, but an L4 service has minimum CPU and memory requirements and the workload must pay model-start and operational costs. At pre-seed traffic, per-token hosted inference is the cheaper and safer operating choice. See [Cloud Run GPU support](https://docs.cloud.google.com/run/docs/configuring/services/gpu).
+## Google Maps grounding channel
 
-Reconsider self-hosting only after at least four weeks of measured production volume show sustained inference spend and GPU utilization sufficient to beat hosted total cost, or a privacy/residency requirement cannot be met by hosted APIs. The comparison must include engineering and on-call cost, not GPU price alone.
+Use the built-in Maps grounding tool for prompts such as â€œfind a relaxed vegetarian restaurant near meâ€ or â€œwhat can I do with children before dinner?â€ The tool is off by default and enabled only for clear geographic discovery with user location supplied when permitted.
 
-## Model responsibilities and budgets
+The application must display the Google Maps Grounded Result with its associated Maps links according to the additional terms. It cannot modify or intersperse other content within the grounded result, scrape/export Maps data or train on it. The terms currently allow limited storage for display evaluation and up to six months in the initiating user's chat history, and state that prompts/context/generated content are stored by Google for 30 days for this feature. The consent and retention UI must disclose this.
 
-The model may extract candidate intent from user-authored text, choose from an allowed non-provider tool subset, ask the next adaptive question, and explain user-authored constraints. It may not invent travel times, decide feasibility, order stops without the solver, bypass a confirmation, or directly write calendars and reminders.
+Grounded discovery is a distinct data path from ordinary Places and Routes APIs. Provider-policy review remains required before sending those API payloads to an LLM or TTS.
 
-Until the applicable route-provider agreement is reviewed in writing, the model receives no Google Maps durations, ETAs, routes, place descriptions, calendar-derived text, or computed recommendation based on that content. Google-backed computation ends the model loop and a deterministic UI template renders the result with attribution. Text-to-speech must not speak Google-derived driving times. This boundary may be relaxed only for a provider and use case whose contract expressly permits the LLM and voice processing. See [Google Maps Platform terms](https://cloud.google.com/maps-platform/terms).
+## OpenRouter
 
-Use compact typed context from the user's current utterance and confirmed, consented defaults. Do not send calendar feeds, calendar text, Google Maps content, raw route payloads, or the user's full history. Start with a maximum of six turns and a per-request dollar ceiling. Escalate to a stronger model only after a schema retry or for a validated complex itinerary class, with a separate cap and logged reason.
+OpenRouter provides model choice and fallback controls but adds a processor, fee, privacy configuration and failure boundary. It cannot replace the direct official Maps-grounding relationship. Use it for redacted offline evaluation or non-Maps fallback only after processor/privacy review.
 
-Required pre-production evaluations are 100% preservation of hard constraints in critical fixtures, at least 98% correct tool selection and schema-valid arguments, zero unauthorized commits, resistance to instructions embedded in calendar/place text, p95 agent overhead within the interactive latency budget, and measured model cost per activated plan.
+## Self-hosting
+
+Defer self-hosting until at least four weeks of production measurements show sustained inference spend and utilization that can beat hosted total cost, or a residency/privacy requirement cannot be met. Include GPU, cold starts, model/tool quality, security patching, observability and on-call work in the comparison.
+
+## Initial budgets
+
+- Six model turns per interactive run.
+- Twelve total tool calls.
+- One stronger-model escalation.
+- A 20-second interactive execution budget, excluding user conversation.
+- Search many candidates, fetch details for a shortlist and route finalists only.
+- Per-workspace token, grounding, Places, Routes and total-dollar ceilings.
+- Global daily caps and kill switches.
+
+At budget exhaustion, return a useful partial result with visible unresolved items and a structured fallback.
 
 
