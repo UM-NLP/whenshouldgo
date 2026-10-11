@@ -1,8 +1,8 @@
 # WhenShouldGo
 
-WhenShouldGo is a planned personal trip assistant. Its long-term job is to turn a conversation, shared map place, approved calendar event, or saved routine into an explainable travel plan; handle one-stop, multi-stop, and multi-day trips; and send opt-in reminders when preparation or departure should change.
+WhenShouldGo is a planned agent-first personal trip assistant. It can begin with a vague desire, named destination, shared place, Calendar event or active disruption; discover and compare possibilities; compose an editable trip; coordinate tools; monitor accepted commitments; and help the user recover when conditions change.
 
-**Current status: full product direction is documented; no application is deployed.** The cheapest validation remains a mobile-first responsive web app for one flexible local visit. Android is the first intended product after that gate because reminders, Maps sharing, widgets, and voice entry are native capabilities. The language model will interpret and explain; deterministic server tools remain responsible for constraints, feasibility, route calculations, and side effects.
+**Current status: the product was redesigned around a Trip Workspace and evidence-grounded agent; no application is deployed.** The cheapest validation is a mobile web agent for vague or named same-day local outings. Android is the first intended product after that gate because reminders, Maps sharing, widgets, offline state and voice entry are native capabilities. Typed tools provide discovery, routes, Calendar, weather, memory and actions; optional solvers validate hard schedules only when a goal needs them.
 
 The earlier one-way â€œarrive byâ€ experiment is preserved but On Hold. Its precise zero-buffer recommendations did not remain feasible in later live-estimate checks. No provider is established best, and the product will not promise an exact or guaranteed arrival.
 
@@ -12,6 +12,8 @@ The earlier one-way â€œarrive byâ€ experiment is preserved but On Hold.
 - [Quality, security and operations](docs/web-quality-operations.md)
 - [Full trip assistant product](docs/trip-assistant-product-plan.md)
 - [Full trip assistant architecture](docs/trip-assistant-architecture.md)
+- [Conversation and decision policy](docs/agent-conversation-policy.md)
+- [Agent evaluation plan](docs/agent-evaluation-plan.md)
 - [Model and hosting decision](docs/model-hosting-decision.md)
 - [Assistant privacy and security](docs/trip-assistant-security.md)
 - [Full assistant roadmap](docs/trip-assistant-roadmap.md)
