@@ -325,7 +325,7 @@ The service exposes a no-dependency `/healthz` endpoint that never calls Maps or
 
 Twenty pilot plans with one full refresh each would use at most about 960 route estimates at the hard cap, before lightweight live checks. That is below Google's currently documented 5,000 monthly free event cap for the relevant pricing table, assuming the same billing account has no competing usage. This is a planning estimate, not a promise of a zero invoice. [Google Maps pricing](https://developers.google.com/maps/billing-and-pricing/pricing).
 
-Cloud Billing warns that alerts-only budgets do not stop usage. Quotas, the server kill switch, maximum instances, and any eligible spend cap provide the actual enforcement layers. See [budget alerts](https://docs.cloud.google.com/billing/docs/how-to/budgets) and [spend caps](https://docs.cloud.google.com/billing/docs/how-to/budgets-spend-caps).
+Cloud Billing warns that alerts-only budgets do not stop usage. Transactional reservations, provider kill switches, Maps quotas, and any eligible spend cap are the enforcement layers; the maximum-instance setting only limits exposure. See [budget alerts](https://docs.cloud.google.com/billing/docs/how-to/budgets) and [spend caps](https://docs.cloud.google.com/billing/docs/how-to/budgets-spend-caps).
 
 ## Migration and expansion
 

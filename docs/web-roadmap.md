@@ -17,9 +17,9 @@ Status: proposed execution roadmap for one founder/developer working with the ni
 | Stage | Effort assumption | Deliverable | Exit gate |
 |---|---:|---|---|
 | 0. Contract and cost lock | 2–3 focused days | Versioned inputs/results, acceptance IDs, search/cost budgets, pilot consent and stop/go thresholds | No unresolved meaning for preparation, access, visit, cushion, visit window, baseline, or result labels |
-| 1. Planner core | 4–6 days | Pure Python planner, fake provider, adaptive search, dense oracle and typed no-plan explanations | Zero false-feasible fixtures; p95 regret <=5 road min; production mode <=24 estimates |
+| 1. Planner core | 4–6 days | Pure Python planner, fake provider, deterministic bounded search, independent oracle and typed no-plan explanations | Zero false-feasible fixtures; p95 regret <=5 road min; production mode <=24 estimates |
 | 2. Provider and API | 3–5 days | Google adapter, location confirmation, session/quota/idempotency middleware, OpenAPI and fake/live modes | Missing leg fails closed; credentials server-side; bounded live smoke passes |
-| 3. Responsive web journey | 5–8 days | Guided inputs, review, result timeline, alternatives, refresh, local recovery, Maps handoff and all error states | Full fake-provider journey passes at 360px, keyboard-only and selected browsers |
+| 3. Responsive web journey | 5–8 days | Guided inputs, review, in-memory result, refresh, local input recovery, Maps handoff and all error states | Full fake-provider journey passes at 360px, keyboard-only and selected browsers |
 | 4. Cheap pilot deployment | 2–3 days | One scale-to-zero Cloud Run service, invite access, kill switch, metrics, quotas, alerts and rollback | Release checklist passes; first five plans reconciled with billing data |
 | 5. Assisted web pilot | About 2 weeks elapsed | 5–8 invited users, 20+ real plan attempts, interviews, outcome check-ins and evidence report | Adoption, repeat-use, deadline, accuracy, latency and cost gates reported with counts |
 | 6. Decision and focused iteration | 1–3 days | Explicit stop, revise, or continue decision; prioritized evidence gaps | No expansion without a passed value/cost gate |
