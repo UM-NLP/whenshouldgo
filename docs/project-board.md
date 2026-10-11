@@ -18,7 +18,7 @@ Authoritative board: [@UM-NLP's When Should Go â€” Project 2](https://githu
 
 Browser verification on 2026-10-10 confirmed issues #4â€“#12 are present in Todo and issues #1â€“#3 are in On Hold. The board has no Blocked column; dependency order is therefore maintained in each issue and in the [backlog](backlog.md). Issue #11 remains Todo on the live board but is logically On hold in the backlog until the pilot gate is met.
 
-Issues [#13](https://github.com/UM-NLP/whenshouldgo/issues/13)â€“[#19](https://github.com/UM-NLP/whenshouldgo/issues/19) now record the full assistant vision and gated future phases. Their repository creation is verified. Project 2 placement has not been verified because no authenticated browser or GitHub Projects connector was available in this session; do not treat them as board members until that check is completed. The current delivery order remains #4, #12, #5, #6, #7, #8, #9, and #10.
+Issues [#13](https://github.com/UM-NLP/whenshouldgo/issues/13)â€“[#21](https://github.com/UM-NLP/whenshouldgo/issues/21) now record the agent-first vision, runtime, MVP, evaluation and gated future phases. Their repository creation is verified. Project 2 placement has not been verified because no authenticated browser or GitHub Projects connector was available in this session; do not treat them as board members until that check is completed. The intended active order is #14, #20 and #21, followed by the Android gate #11. Issues #4â€“#10 and #12 are logically On hold because their planner-centered sequence was superseded; reusable requirements remain preserved.
 
 The following section is the historical one-way-method snapshot and is superseded by the active table above.
 
