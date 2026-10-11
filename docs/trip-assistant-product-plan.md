@@ -1,6 +1,6 @@
 # Agent-First Personal Trip Assistant
 
-Updated 2026-10-10. This document replaces the earlier planner-centered product definition.
+Updated 2026-10-11. This document defines the current product.
 
 ## Product promise
 

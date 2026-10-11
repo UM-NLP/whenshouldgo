@@ -1,39 +1,29 @@
-# Backlog
+# Active Backlog
 
-Updated 2026-10-11. The product has been redesigned as an agent-first personal trip assistant centered on a Trip Workspace. The active validating release is a low-cost mobile web agent for vague or named same-day local outings. Android, Calendar, proactive assistance, multi-stop and multi-day capabilities are gated by evidence. The coordinator maintains this backlog and the [Project 2 snapshot](project-board.md).
+Updated 2026-10-11. Only work in the current agent-first product plan appears here.
 
-| Item | Status | Dependency / completion evidence |
+| Work item | State | Completion evidence |
 |---|---|---|
-| Planner-centered web documentation | Superseded | Preserved in web-product-plan.md, web-architecture.md, web-roadmap.md and web-quality-operations.md for reusable requirements and history |
-| Agent-first product, architecture, policy, model, security, evaluation and roadmap | Done | [Product](trip-assistant-product-plan.md), [architecture](trip-assistant-architecture.md), [conversation policy](agent-conversation-policy.md), [model](model-hosting-decision.md), [security](trip-assistant-security.md), [evaluation](agent-evaluation-plan.md) and [roadmap](trip-assistant-roadmap.md); implementation and validation remain Todo |
-| [#13 VISION-01: Full personal trip assistant](https://github.com/UM-NLP/whenshouldgo/issues/13) | Active epic | Agent-first direction and phased children |
-| [#14 AGENT-01: Trip Workspace and agent runtime](https://github.com/UM-NLP/whenshouldgo/issues/14) | Todo | Workspace/belief contracts, model gateway, typed tools, evidence validator, pending actions and cost ledger |
-| [#22 ACCESS-01: Anonymous guest and registered-free tiers](https://github.com/UM-NLP/whenshouldgo/issues/22) | Todo with #14 | Silent Firebase guest, 50-turn/10-trip policy, local-first retention, free account linking/merge, quota ledger and access-tier evaluation; [specification](access-tiers.md) |
-| [#23 GUARD-01: Push-to-talk, travel-only scope and token budgets](https://github.com/UM-NLP/whenshouldgo/issues/23) | Todo with #14 | In-app hold-to-talk, fixed domain gate, server-owned tool allowlist, token reservation/accounting, truncation recovery and boundary evaluation; [specification](voice-and-domain-controls.md) |
-| [#20 AGENT-MVP-01: Same-day local outing web concierge](https://github.com/UM-NLP/whenshouldgo/issues/20) | Todo after #14 | Vague/named discovery, grounded shortlist, Trip Board, finalist route checks, Maps handoff and outcome capture |
-| [#21 AGENT-EVAL-01: Quality, safety, cost and pilot](https://github.com/UM-NLP/whenshouldgo/issues/21) | Blocked by #20 | 300 reviewed dialogues, 2,000 variants, 150 adversarial cases, then 30+ real goals and evidence-gated decision |
-| [#11 EXPAND-01: PWA/Android gate](https://github.com/UM-NLP/whenshouldgo/issues/11) | On hold | Starts only after #21 demonstrates repeat use and a surface-specific need |
-| [#15 CALENDAR-01: Read-only calendar and explicit routines](https://github.com/UM-NLP/whenshouldgo/issues/15) | Future | After Android/account foundation and OAuth/privacy release gates |
-| [#16 PROACTIVE-01: Event-driven monitoring and reminders](https://github.com/UM-NLP/whenshouldgo/issues/16) | Future | After calendar sync, notification consent, task idempotency and cost measurement |
-| [#17 MULTISTOP-01: Same-day bounded optimizer](https://github.com/UM-NLP/whenshouldgo/issues/17) | Future | After 20 concierge multi-stop plans validate demand |
-| [#18 ROADTRIP-01: Multi-day web builder and Android day view](https://github.com/UM-NLP/whenshouldgo/issues/18) | Future | After 10 interviews and 10 real road-trip plans validate a separate segment |
-| [#19 VOICE-01: App Actions and assistant-role research](https://github.com/UM-NLP/whenshouldgo/issues/19) | Future | Push-to-talk first; assistant-role/hotword only after privacy, battery, provider-license, policy and retention gates |
-| [#1 Adaptive one-way updates](https://github.com/UM-NLP/whenshouldgo/issues/1) | On hold | Resume only if the one-way arrival feature is revisited |
-| [#2 Route comparability/strict deadlines](https://github.com/UM-NLP/whenshouldgo/issues/2) | On hold | Resume only if the one-way arrival feature is revisited |
-| [#3 Actual arrival evidence/cost](https://github.com/UM-NLP/whenshouldgo/issues/3) | On hold | Historical evidence gap remains unresolved |
-| Issues #4–#10 and #12 planner-centered web plan | On hold | Superseded as the active product path; reusable constraint, API, testing and operations requirements will be pulled into #14 and the agent MVP |
+| [#13 VISION-01: Agent-first personal trip assistant](https://github.com/UM-NLP/whenshouldgo/issues/13) | Active epic | Current product boundary, principles, phases, and expansion gates |
+| [#14 AGENT-01: Trip Workspace and agent runtime](https://github.com/UM-NLP/whenshouldgo/issues/14) | Next | Workspace schemas, model gateway, domain gate, typed tools, evidence validation, action protocol, event journal, and cost ledger |
+| [#22 ACCESS-01: Anonymous guest and registered-free tiers](https://github.com/UM-NLP/whenshouldgo/issues/22) | Next with #14 | Silent guest bootstrap, account linking, quota ledger, recovery, and migration tests |
+| [#23 GUARD-01: Push-to-talk, travel-only scope, and token budgets](https://github.com/UM-NLP/whenshouldgo/issues/23) | Next with #14 | In-app hold-to-talk contract, server domain gate, tool allowlist, token reservation, safe truncation handling, and boundary evaluation |
+| [#20 AGENT-MVP-01: Same-day local outings](https://github.com/UM-NLP/whenshouldgo/issues/20) | After foundation | Complete mobile-web journey from vague or named goal to grounded Trip Board, route check, Maps handoff, and outcome capture |
+| [#21 AGENT-EVAL-01: Quality, safety, cost, and pilot](https://github.com/UM-NLP/whenshouldgo/issues/21) | After MVP | Reviewed offline corpus, adversarial and cost reports, then at least 30 supported real goals and an explicit continue/revise/stop decision |
+| [#11 ANDROID-01: Android product gate and MVP](https://github.com/UM-NLP/whenshouldgo/issues/11) | Gated by #21 | Android build begins only if the pilot demonstrates repeat value and a native-specific need |
+| [#15 CALENDAR-01: Read-only calendar and explicit routines](https://github.com/UM-NLP/whenshouldgo/issues/15) | Future | Consent, account, Android, OAuth, privacy, and evaluation gates |
+| [#16 PROACTIVE-01: Event-driven monitoring and reminders](https://github.com/UM-NLP/whenshouldgo/issues/16) | Future | Calendar sync, notification consent, task idempotency, quiet hours, and measured cost |
+| [#17 MULTISTOP-01: Same-day bounded optimizer](https://github.com/UM-NLP/whenshouldgo/issues/17) | Future | Demand evidence and bounded optimization evaluation |
+| [#18 ROADTRIP-01: Multi-day trip builder](https://github.com/UM-NLP/whenshouldgo/issues/18) | Future | Separate customer validation and provider-cost model |
+| [#19 VOICE-01: Android voice entry](https://github.com/UM-NLP/whenshouldgo/issues/19) | Future Android phase | Implement #23 push-to-talk baseline; gate assistant-role or hotword research separately |
 
-## Agent pilot constraints
+## Current operating limits
 
-- No paid campaign, custom domain, payment system, native app, background worker or always-on server.
-- No login screen before value. Guests use a silent anonymous principal; no model or provider endpoint is publicly unauthenticated.
-- Guest allowance begins at 50 successful user turns or 10 activated trips, lifetime. Registered free begins at 100 turns and 10 trips per rolling 30 days. These are versioned validation hypotheses, not pricing promises.
-- One Cloud Run service with minimum instances zero and maximum one.
-- Per interactive workspace: at most six model turns, twelve tool calls, one stronger-model escalation, and frozen caps for Maps-grounding queries, place-detail calls, route finalists, elapsed time and estimated dollars.
-- Per accepted user input: at most 2,000 tokens. Per planning call: at most 12,000 compiled input and 1,200 output tokens. Per run: at most 40,000 input and 4,000 output tokens. Provider-reported cached, tool-use and thinking tokens enter the cost ledger.
-- Out-of-scope requests use a fixed response and no planning tools; they do not consume the public turn allowance but do enter abuse rate limits.
-- Freeze account, per-user/day and whole-pilot spend caps only after a one-user live smoke test reconciles actual provider billing. Stop live calls through model and provider kill switches when cost, quota, grounding or quality controls fail.
-- Search broadly, fetch details for a shortlist and route finalists only. Do not build route matrices for raw discovery candidates.
-- Precise trip data stays out of Git, URLs and analytics. Phase 0 session data is local/ephemeral; Google Maps Grounded Results follow their specific display, provider-processing and chat-history retention terms.
+- No paid campaign, custom domain, payment system, native app, or always-on server during the web validation phase.
+- No visible login before value; every request still has a server-derived guest or registered principal.
+- One scale-to-zero backend with server-side credentials, quotas, authorization, idempotency, and kill switches.
+- At most six model calls, twelve tool calls, one escalation, 40,000 input tokens, and 4,000 output tokens per interactive run.
+- Search broadly, fetch details for a shortlist, and route finalists only.
+- Precise trip data stays out of Git, URLs, logs, and analytics.
 
-Status meanings: **Todo** can begin; **Blocked** awaits listed work; **On hold** is intentionally excluded from the active web MVP. Documentation completion does not mean the method or market is validated.
+Documentation completion is not product or market validation.
