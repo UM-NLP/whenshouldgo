@@ -8,7 +8,7 @@ Build the first product as a **mobile-first responsive web app**, then make it i
 
 The web app can already deliver the complete value loop:
 
-1. ask for every trip constraint;
+1. understand the trip in the user's own words and ask only the missing questions that can change the plan;
 2. calculate a round-trip schedule with server-side traffic data;
 3. show when to start preparing and leave;
 4. refresh the forecast;
@@ -20,7 +20,7 @@ The first release will not modify the consumer Google Maps interface. It will ac
 
 ## User promise
 
-> Find the best forecasted time to leave for a round trip, spend the time you need there, and plan to return by your deadline.
+> Tell us what must happen on your trip: arrive, start, finish, leave, or get home by a certain time. We ask only what is needed to find the lowest-traffic feasible plan.
 
 The interface uses **best forecasted option checked** or **best evaluated departure**. It never says exact, guaranteed, or always on time. Traffic forecasts can change.
 
@@ -35,8 +35,8 @@ Verified:
 
 Hypotheses:
 
-- Initial customer: GTA drivers with a flexible same-day errand or visit and a firm return obligation.
-- Parents and caregivers are the first segment to test because a pickup or return deadline makes the cost concrete.
+- Initial customer: GTA drivers making a same-day trip with at least one meaningful time constraint, such as a reservation, appointment, closing time, pickup, visit window, or return-home deadline.
+- Parents/caregivers, appointment travelers, and time-limited errand drivers are candidate first segments; interviews must determine which has recurring demand.
 - Users are willing to delay leaving when the predicted road-time saving is meaningful.
 - The combined outbound, visit, and return decision is valuable often enough to create repeat use.
 
@@ -44,7 +44,7 @@ There is no verified demand, willingness-to-pay, retention, or market-size evide
 
 ## Job to be done
 
-> When I have a flexible visit today but must be home by a firm time, help me decide when to start getting ready and when to leave so I spend as little forecasted time driving as possible, complete my visit, and keep a safety margin for returning.
+> When I have a same-day trip with one or more timing requirements, help me state those requirements naturally, ask only the questions needed to understand them, and find a feasible departure that minimizes forecasted driving time.
 
 Primary value measure: forecasted driving minutes avoided versus leaving as soon as ready, using the same provider and route policy for both alternatives.
 
@@ -63,61 +63,93 @@ The first pilot supports:
 - mobile and desktop web browsers, designed for phone screens first;
 - same-day driving plans;
 - one start/return place and one destination;
-- an exact visit duration;
+- outbound-only and return-to-origin plans;
+- fixed starts, latest arrivals, latest finishes, latest departures, home-return deadlines, flexible visit windows, and combinations of them;
+- exact, minimum, or bounded activity duration when duration affects feasibility;
 - manual address entry and optional foreground current location;
 - an optional acceptable visit window;
 - preparation, parking/walking, and safety allowances;
 - toll, highway, and ferry preferences;
 - one routing provider for all candidates in a plan;
-- a guided form, editable review, recommendation, and two useful alternatives;
+- an adaptive conversational interview with quick replies, an editable timeline review, a recommendation, and two useful alternatives;
 - manual refresh and freshness warnings;
 - separate Google Maps handoffs for outbound and return legs;
 - local browser storage for user-entered drafts and permitted location identifiers; route results remain in memory;
 - private invite access and privacy-safe pilot analytics.
 
-The pilot excludes accounts, payment, subscriptions, native push reminders, continuous background work, future-day monitoring, multiple stops, different return locations, other travel modes, an LLM, a widget, voice assistants, embedded navigation, and a native Android build.
+The pilot excludes accounts, payment, subscriptions, native push reminders, continuous background work, future-day monitoring, multiple stops, different return locations, other travel modes, autonomous LLM planning, a widget, voice assistants, embedded navigation, and a native Android build. The first parser is rule-based behind a typed interface; a later language-model parser may propose slots, but it cannot confirm constraints, decide feasibility, or calculate schedules.
 
-## Inputs
+## Adaptive interview contract
 
-The app asks one question at a time and shows all answers on an editable review screen.
+The opening question is deliberately broad:
 
-| Input | Meaning |
+> Where are you going, and what is fixed about the timing? You can mention a reservation, closing time, how long you need there, or when you must be home.
+
+One answer may fill several facts. The app never asks again for a fact the user already supplied. It stores each fact as `UNKNOWN`, `CANDIDATE`, `CONFIRMED`, `DEFAULTED`, or `NOT_APPLICABLE`, together with its source. Hard constraints must be confirmed; a purpose label may choose a clarification branch but never creates a deadline by itself.
+
+Supported timeline constraints are:
+
+| User meaning | Typed constraint |
 |---|---|
-| Start and return place | Confirmed address, browser location, or pin; both are the same in the MVP. |
-| Destination | Confirmed address or pin. |
-| Trip date and timezone | Today in the trip's displayed IANA zone. |
-| Earliest preparation start | Earliest time the user can begin getting ready; default is now. |
-| Preparation duration | Uninterrupted time needed before leaving home. |
-| Walk to vehicle | Time between leaving home and starting the outbound route. |
-| Walk/park in | Time between road arrival and visit start. |
-| Time at destination | Exact visit duration. |
-| Walk/park out | Time between visit end and return-drive start. |
-| Walk from vehicle home | Time between road arrival and being home. |
-| Back by | Latest acceptable time at home. |
-| Return cushion | Margin subtracted from the back-by deadline; offer 0, 10, 20, and custom minutes. |
-| Visit window | Optional earliest visit start and latest visit end. |
-| Route preferences | Avoid tolls, highways, and ferries. |
-| Maximum wait | Optional maximum time the user is willing to delay leaving to save road time. Test this in the pilot. |
+| “Be there by 2” | `READY_AT_DESTINATION <= 14:00` |
+| “My reservation is at 2” | `ACTIVITY_START = 14:00`, with a confirmed arrival allowance |
+| “Finish before the store closes at 6” | `ACTIVITY_END <= 18:00` |
+| “Leave there by 5” | `DEPART_DESTINATION <= 17:00` |
+| “Be home by 6” | `HOME_ARRIVAL <= 18:00` |
+| “Visit between 1 and 3” | Confirmed activity-start/end window |
+| “Stay at least one hour” | `ACTIVITY_DURATION >= 60 minutes` |
+| Several requirements | Intersection of every hard constraint; none is silently relaxed |
+
+“Arrive” means parked and ready to begin after any confirmed access allowance. The review timeline makes this interpretation visible.
+
+After each answer, the deterministic question policy chooses the highest-value unresolved item:
+
+1. resolve a contradiction;
+2. obtain a hard time anchor that bounds the search;
+3. obtain a missing origin, destination, date/timezone, readiness, or duration required by the selected trip shape;
+4. resolve language whose meaning changes feasibility, such as whether closing time means enter, start service, or finish;
+5. ask about a default only when changing it could change the recommendation;
+6. group remaining visible assumptions into one editable confirmation.
+
+Trip purpose is optional and contextual. “Restaurant reservation” usually leads to a fixed-start confirmation; “walk-in restaurant” may require a seating cutoff; “lunch at a friend's house” may be flexible. If the timing words are already clear, the app does not ask the purpose.
+
+Visit duration is asked only when it affects a finish, return, or return leg. The app asks the earliest time the user can leave; preparation duration is requested only when the user wants a “start getting ready” time. Return questions are skipped for outbound-only plans. Route preferences are loaded from visible local defaults and asked only if missing or consequential.
+
+The interview stops and enables calculation only when locations are confirmed, date/timezone/readiness are known, every required duration has known semantics, at least one hard time anchor bounds the search, all feasibility-changing ambiguity is resolved, constraints are consistent, and the user confirms one editable summary. Impossible arithmetic is rejected before any paid route call.
+
+If the user selects **No fixed time**, the next question asks how late the outing may finish. “Sometime today” never silently becomes midnight. If more than five follow-ups are required, the interface offers **Review all details** as a structured recovery path.
+
+Safe visible defaults are today, the displayed local timezone, driving, return to origin when a return constraint is present, minimize total forecast driving seconds, saved route preferences, and ready now. The app never silently guesses duration, whether a stated time is exact, what a closing time means, business hours, or whether a preference is a hard requirement.
 
 ## Core journey
 
 1. **Open link:** Show the value, forecast limitation, and **Plan a trip**. No permission prompt.
-2. **Enter trip:** Ask structured questions with address fields, duration controls, date/time controls, and preference chips.
-3. **Confirm places:** Resolve the full address or pin. Request browser location only after **Use my location**.
-4. **Review:** Show every input, timezone, default, and derived earliest departure. Edits invalidate old results.
-5. **Calculate:** Preserve inputs while the server checks traffic in both directions. Do not show a fake percentage.
-6. **Recommend:** Lead with **Leave at [time]** and **Best forecasted option we checked**.
-7. **Act:** Keep the input template locally, refresh, copy a privacy-safe summary, or explicitly open the outbound Maps URL.
-8. **Return:** Offer **Leaving now** to obtain a current return ETA and warn about deadline risk.
-9. **Learn:** Ask for a voluntary outcome and reuse response without collecting a GPS trace.
+2. **Describe trip:** Accept one natural-language answer plus optional quick replies; parse all supported facts without making a route call.
+3. **Clarify:** Ask one high-value question at a time. Explain why a purpose or timing distinction matters when it is not obvious.
+4. **Confirm places:** Resolve the full address or pin. Request browser location only after **Use my location**.
+5. **Review:** Show an editable “Here’s what I understood” timeline with every hard constraint, timezone, allowance, and default. Edits invalidate affected results.
+6. **Calculate:** Preserve inputs while the server checks the required leg or legs. Do not show a fake percentage.
+7. **Recommend:** Lead with **Leave at [time]** and **Best forecasted option we checked**.
+8. **Act:** Keep the input template locally, refresh, copy a privacy-safe summary, or explicitly open the relevant Maps URL.
+9. **Return:** For round trips, offer **Leaving now** to obtain a current return ETA and warn about deadline risk.
+10. **Learn:** Ask for a voluntary outcome and reuse response without collecting a GPS trace.
 
-The result shows start preparing, leave home, start driving, destination road arrival, visit start/end, return drive start, home arrival, deadline slack, both leg durations, total road time, predicted saving against the evaluated leave-when-ready baseline, two alternatives, provider, and calculation time.
+The result shows only relevant milestones: start preparing when requested, leave, road arrival, ready-at-destination, activity start/end, return departure/home arrival when applicable, slack for every hard deadline, leg durations, total road time, predicted saving against the evaluated leave-when-ready baseline, alternatives, provider, and calculation time.
+
+### Example question paths
+
+- **Friend visit:** “Visit a friend for an hour and be home by 6.” Ask only for missing destination and earliest departure; confirm the timeline.
+- **Business closing:** “The pharmacy closes at 6.” Ask whether the user must enter, start service, or finish by 6, then ask how long is needed if finish time matters.
+- **Reservation:** “Restaurant reservation at 7.” Ask the destination and acceptable arrival allowance. Do not ask whether 7 is flexible.
+- **Fully specified:** “Reservation at 1, stay 90 minutes, home by 4, leaving from home after 11.” If places are known, proceed directly to one confirmation.
 
 ## Required states
 
 | State | Required recovery |
 |---|---|
 | Empty | Ask for destination and show an example without pre-filling private data. |
+| Unsupported or unclear wording | Highlight the unresolved timing meaning and offer short choices plus direct editing; never guess a hard constraint. |
+| Contradictory constraints | Show the conflict on the timeline and ask which fact should change before calculation. |
 | Invalid input | Inline error and focus on the first invalid field. |
 | Ambiguous address | Candidate list or pin confirmation before calculation. |
 | Location denied/unavailable | Continue with manual entry. |
@@ -159,6 +191,11 @@ Proposed gates, to be agreed before collecting results:
 
 - at least 20 completed real-plan attempts across at least five users;
 - at least 90% of supported requests produce a valid plan or a correct no-plan explanation;
+- zero missed or invented hard constraints in the authored interview benchmark;
+- a fully specified request needs no clarification beyond location resolution and one grouped confirmation;
+- at least 90% of supported benchmark conversations ask no more than one avoidable follow-up beyond a human-authored minimum;
+- median follow-up count is at most three for saved-home scenarios and median interview completion is under 60 seconds;
+- purpose is never requested when explicit timing semantics make it irrelevant;
 - at least 50% of feasible recommendations are accepted;
 - at least five of eight invited users create a second plan when another eligible trip occurs;
 - median predicted saving is at least ten road minutes among accepted plans;
@@ -196,17 +233,19 @@ The private pilot can start when:
 1. the full fake-provider journey works in the frozen Playwright Chromium, Firefox, and WebKit matrix; physical Android Chrome and iPhone Safari complete a manual journey and Maps handoff;
 2. keyboard-only operation, visible focus, semantic labels, live loading/result announcements, focus recovery, 200% text, and WCAG 2.2 AA reflow at 320 CSS pixels work, with manual mobile and desktop screen-reader checks;
 3. manual entry works without geolocation permission;
-4. every recommendation satisfies preparation, access, visit, window, route, cushion, and deadline constraints under the returned estimates;
-5. every candidate evaluates its return leg at the derived return departure time;
-6. provider failures never fabricate a result;
-7. a reload restores user-entered constraints and requires recalculation; provider-derived results are absent from IndexedDB, Cache Storage, browser URLs, and telemetry;
-8. the Maps handoff works on Android Chrome and iPhone Safari, with a copy fallback;
-9. all required error/recovery states pass acceptance tests;
-10. provider credentials are absent from frontend bundles and browser network calls;
-11. request counts, latency, result category, and estimated cost are measurable without location data;
-12. copy contains no exact-arrival promise or unsupported confidence percentage;
-13. `/privacy` and `/terms` are public, Google-derived results show required attribution, and Maps handoff discloses that selected endpoints go to Google and may enter browser or app history;
-14. logout, session replacement, owner mismatch, pilot-data deletion, and the 24-hour post-`homeBy` expiry prevent another session from seeing local trip inputs.
+4. every user-supplied hard constraint is confirmed on the timeline, every default has visible provenance, and no paid route call occurs before the interview reaches `READY_TO_PLAN`;
+5. the authored dialogue suite covers every supported intent, ambiguity branch, and multi-constraint combination with zero missed or invented hard constraints;
+6. every recommendation satisfies readiness, access, activity, window, route, cushion, and deadline constraints under the returned estimates;
+7. every round-trip candidate evaluates its return leg at the derived return departure time;
+8. provider failures never fabricate a result;
+9. a reload restores user-entered constraints and requires recalculation; provider-derived results are absent from IndexedDB, Cache Storage, browser URLs, and telemetry;
+10. the Maps handoff works on Android Chrome and iPhone Safari, with a copy fallback;
+11. all required error/recovery states pass acceptance tests;
+12. provider credentials are absent from frontend bundles and browser network calls;
+13. question ID/reason, answer/skip/edit, completion time, request shape, result category, and estimated cost are measurable without free text, purpose text, exact times, or location data;
+14. copy contains no exact-arrival promise or unsupported confidence percentage;
+15. `/privacy` and `/terms` are public, Google-derived results show required attribution, and Maps handoff discloses that selected endpoints go to Google and may enter browser or app history;
+16. logout, session replacement, owner mismatch, pilot-data deletion, and the plan-expiry rule prevent another session from seeing local trip inputs.
 
 See [web-architecture.md](web-architecture.md), [web-roadmap.md](web-roadmap.md), and [web-quality-operations.md](web-quality-operations.md).
 
