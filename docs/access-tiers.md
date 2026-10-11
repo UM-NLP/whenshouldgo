@@ -46,7 +46,7 @@ Guest state is local-first in Room or IndexedDB: messages, drafts, accepted plan
 
 Registered-free storage may contain opted-in workspaces, confirmed profile memory, devices and later Calendar connections or scheduled actions. Registration is not consent to upload all local history. After linking, the user chooses which local trips to copy. Exact location and provider-content restrictions in the security plan still apply.
 
-Firebase anonymous identities may be configured for automatic cleanup after 30 days of inactivity. Local plans remain readable after server expiry, but fresh tools require a new guest identity or registration. Losing browser/app data or reinstalling can make an unregistered identity unrecoverable; the product states this plainly and does not fingerprint the device to recreate it.
+Firebase's optional automatic cleanup deletes anonymous accounts older than 30 days. Do not enable it in the first validation release because it would create a time-based registration gate that the product has not chosen. Local plans remain readable after a server workspace expires, but losing browser/app data or reinstalling can make an unregistered identity unrecoverable; the product states this plainly and does not fingerprint the device to recreate it.
 
 ## Identity, quota and upgrade design
 
