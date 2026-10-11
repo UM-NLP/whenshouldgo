@@ -15,5 +15,5 @@ The earlier one-way “arrive by” experiment is preserved but On Hold. Its pre
 - [Decision history](docs/decisions.md)
 - [Historical experiment results](docs/experiment-results.md)
 
-The existing scripts in `tools/` are historical research code until they are frozen and moved under `experiments/arrival_deadline/`. Keys, private trip inputs, raw responses and geometry stay outside Git in `.env.local` and `.local/`. Provider calls can incur charges; every live stage must enforce quotas and verify actual billing.
+The existing scripts in `tools/` are historical research code until they are frozen and moved under `experiments/arrival_deadline/`. Keys, private trip inputs, raw responses and geometry stay outside Git in `.env.local` and `.local/`; explicit cloud/Docker ignore files also keep them out of build contexts. The web MVP persists input drafts locally but keeps provider-derived route results in memory. Provider calls can incur charges; every live stage must enforce atomic quotas and verify actual billing.
 

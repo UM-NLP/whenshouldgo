@@ -15,9 +15,9 @@ Authoritative board: [@UM-NLP's When Should Go — Project 2](https://github.com
 
 Issues #4–#11 were created in the repository. Project membership/status synchronization could not be reverified in this session because the browser-control runtime failed to initialize; the table above is the intended Project 2 state. The repository issues and [backlog](backlog.md) remain the verified source until the board is synchronized.
 
-The following section is the historical one-way-method snapshot.
+The following section is the historical one-way-method snapshot and is superseded by the active table above.
 
-Updated 2026-10-10. Authoritative board: [@UM-NLP’s When Should Go — Project 2](https://github.com/users/UM-NLP/projects/2). Browser verification confirmed issues #1–#3 are all in the On Hold column. The same-day round-trip optimizer remains a proposed plan and has not been added as an issue.
+Recorded earlier on 2026-10-10. Authoritative board: [@UM-NLP’s When Should Go — Project 2](https://github.com/users/UM-NLP/projects/2). Browser verification confirmed issues #1–#3 were all in the On Hold column at that time. The round-trip work was subsequently approved for web-first planning and added as issues #4–#11.
 
 | Done | In progress | Planning | On hold / deferred |
 |---|---|---|---|

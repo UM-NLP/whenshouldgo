@@ -6,8 +6,8 @@ Status: proposed execution roadmap for one founder/developer working with the ni
 
 - Pre-seed budget: no paid acquisition, no app-store work, no subscription system, no custom domain requirement, and no always-on compute.
 - One complete web journey before companion features.
-- One Cloud Run service, minimum instances zero, maximum one during the pilot.
-- Hard cap of 24 paid route estimates per full plan.
+- One Cloud Run service, minimum instances zero, maximum one during the pilot; atomic Firestore quotas remain authoritative because the instance maximum may be exceeded briefly.
+- Hard cap of 24 paid route estimates per full plan, 1,200 Routes units for the whole pilot, 650 Routes units per day, and 100 paid location-resolution calls.
 - Invite-only cohort of 5–8 users and at least 20 real plan attempts.
 - Native Android, widget, voice, embedded navigation, and iOS remain gated.
 - Old one-way exact-departure work stays On Hold as historical evidence.
@@ -35,8 +35,10 @@ The stages are sequential where evidence is required. UX and fake-provider front
 - Define `TripRequest`, `PlanResult`, `Alternative`, `NoPlanReason`, and error schemas in OpenAPI.
 - Assign acceptance IDs to every P0 requirement.
 - Freeze baseline: leave as soon as ready under the same provider and route policy.
-- Freeze search quality thresholds and the 24-estimate production cap.
+- Freeze exact-second ranking, the deterministic search schedule and required samples, independent-oracle quality thresholds, a reserved leave-when-ready baseline, and the 24-estimate production cap.
 - Define invite consent, prohibited analytics fields, outcome fields, retention, and deletion.
+- Freeze pilot denominators for eligible requests, acceptance, adherence, deadline success, forecast error, repeat use, and cost per successful task.
+- Resolve provider storage, attribution, Terms, Privacy, location-resolution, and workload-identity requirements.
 - Verify current provider pricing/free caps immediately before live deployment.
 
 ### Exit evidence
@@ -53,8 +55,9 @@ The stages are sequential where evidence is required. UX and fake-provider front
 - Implement typed domain models and timezone-safe schedule arithmetic.
 - Implement the `RouteProvider` protocol and deterministic fake provider.
 - Implement global-anchor and local-refinement search for nonmonotonic traffic.
-- Implement objective, whole-minute tie handling, maximum-wait option, alternatives, and typed no-plan explanations.
-- Build at least 1,000 synthetic surfaces and an exhaustive one-minute oracle.
+- Implement exact-second objective ranking, exact-tie handling, maximum-wait option, alternatives, and typed no-plan explanations.
+- Build at least 1,000 versioned synthetic surfaces and an independent exhaustive one-minute oracle that shares no feasibility or scoring helpers with production code.
+- Reserve one candidate chain for the leave-when-ready baseline and return `SEARCH_INCOMPLETE` only when a required sample fails or the fixed search schedule cannot finish within its cap.
 - Preserve existing scripts under `experiments/arrival_deadline` only after their current checks are frozen.
 
 ### Exit evidence
@@ -72,10 +75,10 @@ If quality misses the gate, do not hide it by increasing paid calls. Change the 
 
 ### Work
 
-- Implement official Google Routes client/ADC where supported, otherwise a restricted server key.
+- Implement the official Google Routes client with a dedicated least-privilege Cloud Run service identity and ADC/OAuth. Treat a key plus static egress/IP restriction as a separately approved fallback architecture.
 - Implement address/current-coordinate resolution and explicit confirmation tokens.
-- Build session exchange, CSRF, payload validation, quota, idempotency, provider kill switch, and safe error middleware.
-- Build compute, refresh, leaving-now, and pilot-outcome endpoints.
+- Build atomic single-use invite exchange, strict Origin/CSRF checks, payload validation, transactional quota reservation, idempotency leases, provider kill switches, and safe error middleware.
+- Build compute, refresh, leaving-now, structured pilot-outcome, and authenticated pilot-data deletion endpoints.
 - Record redacted provider count, status, latency, retry, billable unit, and pricing version.
 - Add fake-provider contract tests plus a minimal live smoke test.
 
@@ -83,7 +86,7 @@ If quality misses the gate, do not hide it by increasing paid calls. Change the 
 
 - Browser bundle/network contains no provider credential.
 - Invalid, unauthenticated, CSRF, or quota-exceeded requests make zero provider calls.
-- Duplicate request IDs return one computation.
+- Same-key duplicates across two processes make at most one computation attempt and return typed pending/already-computed responses; a crash conservatively spends its reservation.
 - Fallback/malformed/missing provider responses fail closed.
 - No canary address or coordinate appears in logs.
 
@@ -94,17 +97,19 @@ If quality misses the gate, do not hide it by increasing paid calls. Change the 
 - Build the question flow and editable confirmation summary.
 - Add manual locations first; foreground browser location is optional and contextual.
 - Build loading, recommendation timeline, alternatives, freshness, refresh, and leaving-now behavior.
-- Implement invalid, ambiguous, denied, offline, provider-error, missing-leg, impossible, incomplete-search, stale, passed-departure, Maps-unavailable, storage-cleared, and DST states.
-- Persist versioned drafts/results in IndexedDB.
+- Implement invalid, ambiguous, denied, loaded-tab-offline, provider-error, missing-leg, impossible, incomplete-search, stale, passed-departure, Maps-unavailable, storage-cleared/corrupt/quota-failed, and DST states.
+- Persist only versioned user-entered constraints and permitted location identifiers in session-scoped IndexedDB; keep provider-derived results in memory and expire local data within 24 hours after `homeBy`.
 - Construct separate outbound and return Google Maps URLs.
 - Add privacy-safe funnel events and voluntary outcomes.
 - Add local share/copy; do not put precise trip data in URLs.
+- Add public Terms and Privacy pages, accessible Google attribution, explicit handoff disclosure, `Cache-Control: no-store`, and a future-service-worker bypass for `/api/`.
 
 ### Exit evidence
 
-- One complete journey at 360px and 200% zoom.
-- Keyboard-only and screen-reader smoke checks pass.
-- Reload restores the plan and marks it stale correctly.
+- One complete journey at 360px, 200% text, and WCAG 2.2 AA reflow at 320 CSS pixels.
+- Keyboard-only, focus restoration/live-region, and manual mobile/desktop screen-reader checks pass.
+- The full fake-provider suite passes in frozen Playwright Chromium, Firefox, and WebKit versions; physical Android Chrome and iPhone Safari complete a handoff smoke test.
+- Reload restores inputs and requires a new calculation; an already-loaded offline tab preserves its in-memory stale display, while offline reload waits for the PWA stage.
 - Android Chrome and iPhone Safari open Maps or the browser fallback.
 - Every accepted input maps to a visible review field and typed API field.
 
@@ -112,27 +117,32 @@ If quality misses the gate, do not hide it by increasing paid calls. Change the 
 
 ### Work
 
-- Build one container serving frontend and API.
+- Build one container serving frontend and API from a clean commit, locked dependencies, and a pinned base image; deploy the recorded image digest.
 - Deploy in Toronto with request-based Cloud Run, min `0`, max `1`, 512 MiB memory, one CPU, concurrency `8`, and a 20-second request timeout.
 - Use the default `run.app` domain during the pilot.
-- Create only one Firestore database for pseudonymous invite/session/quota/idempotency data.
-- Set Maps daily quotas, per-session quotas, CA$1/5/10 alerts, an eligible spend cap where available, and the provider kill switch.
+- Create one Firestore database for pseudonymous invite/session/quota/idempotency and structured outcome data, with versioned schemas and TTL policies.
+- Add `bootstrap.ps1` and `verify-infra.ps1` for APIs, IAM, Firestore, Artifact Registry, quotas, secrets, alerts, and log settings; use a dedicated pilot project without a paid staging project.
+- Add explicit `.gcloudignore` and `.dockerignore`, inspect the upload manifest and image layers, and deploy a no-traffic tagged candidate before promotion.
+- Set the 1,200-unit pilot reservation cap, 650-unit Routes daily quota, 100-call resolver cap, per-session quotas, CA$1/5/10 alerts, an eligible spend cap where available, and separately auditable Routes/resolver kill switches.
 - Exercise provider-outage, runaway-cost, rollback, credential, and privacy runbooks.
+- Use passive request/error monitoring plus a manual pre-session smoke test; `/healthz` must call neither Maps nor Firestore.
 
 ### Pilot cost envelope
 
 | Item | Pilot choice | Expected cost behavior |
 |---|---|---|
 | Frontend/API compute | Cloud Run scale-to-zero, max one instance | Intended to fit current free tier at pilot volume; verify invoice |
-| Session/quota data | Firestore free quota | Tiny volume; no raw trip history |
+| Session/quota/outcome data | Firestore free quota | Tiny volume; structured outcomes only, no raw trip history |
 | Domain | Default `run.app` | No domain purchase |
 | Routing | <=24 estimates per plan | Dominant marginal cost; monitor free cap and actual billing |
-| Location resolution | At most two confirmed endpoints per plan | Track separately; avoid keystroke-by-keystroke paid calls initially |
+| Location resolution | 100-call whole-pilot cap | Track separately; avoid keystroke-by-keystroke paid calls initially |
 | Analytics | Structured application metrics/logs | No paid product analytics vendor |
-| CI/deployment | Local/hosted repository checks plus source deploy | Keep image/build minutes and Artifact Registry storage small |
+| CI/deployment | One digest-pinned image; no paid staging environment | Keep build minutes and Artifact Registry storage small; clean up old untagged images |
 | Acquisition | Direct invitations and interviews | No paid campaign |
 
-Twenty plans with one full refresh each have a hard maximum near 960 route estimates, plus bounded live checks. This is designed to fit below the currently documented 5,000-event monthly Routes free cap if no other project usage consumes it. Treat that as a planning estimate and verify the actual billing account.
+Twenty plans with one full refresh each have a hard maximum near 960 route estimates. The 1,200-unit whole-pilot reservation leaves 240 units for smoke and recovery checks and stays below the currently documented 5,000-event monthly Routes free cap if no other project on the billing account consumes it. Treat that as a planning estimate and verify the actual billing account.
+
+At the currently documented first paid band for Compute Routes Pro, US$10 per 1,000 events, a 24-estimate full optimization has about US$0.24 marginal routing cost after the free cap; a second full optimization doubles that. This is why refreshes are explicit and bounded. Location resolution, hosting, tax and currency conversion are separate. Recheck the [official price list](https://developers.google.com/maps/billing-and-pricing/pricing) before every pilot or pricing decision.
 
 ## Stage 5 — assisted web pilot
 
@@ -150,16 +160,26 @@ Twenty plans with one full refresh each have a hard maximum near 960 route estim
 - recommendation viewed and accepted/rejected reason;
 - evaluated baseline and predicted saving;
 - refresh/adherence behavior;
-- voluntary departure/arrival/return times and deadline outcome;
+- voluntary adherence/deadline outcome and browser-derived rounded leg durations/error offsets; no absolute trip timestamps;
 - provider drift, latency, calls, retries, and billed cost;
 - second eligible plan and reuse intent;
 - support incident and privacy/deletion request counts.
+
+Preregister these denominators before the first invite:
+
+- an eligible supported request is a confirmed compute attempt inside documented product bounds; provider, search, timeout, and app failures count, while invalid/unsupported inputs do not;
+- an accepted recommendation is a viewed `FEASIBLE` result the user explicitly chooses;
+- a followed plan leaves within plus or minus five minutes of the last accepted recommendation, with material stops, route changes, and visit changes classified separately;
+- deadline success uses followed plans with a valid check-in;
+- forecast error uses legs with valid opt-in timing and the frozen forecast snapshot;
+- repeat use uses testers who report a second eligible opportunity, alongside the raw invited-user rate;
+- estimated and invoice-reconciled cost per success divide all provider cost, including failures, retries, resolution, refresh, leaving-now, and smoke calls, by `FEASIBLE` plus correctly computed `NO_FEASIBLE_PLAN` tasks.
 
 ### Go/revise/stop thresholds
 
 Continue toward PWA/retention work when:
 
-- at least 90% of supported requests behave correctly;
+- at least 18 of the first 20 eligible supported requests produce `FEASIBLE` or a correct `NO_FEASIBLE_PLAN`, with no app-caused failure;
 - at least 50% of feasible recommendations are accepted;
 - at least five of eight users create a second plan when another eligible trip occurs;
 - median predicted saving among accepted plans is at least ten minutes;
@@ -218,4 +238,20 @@ Reuse the OpenAPI contract and backend. Embedded Navigation SDK remains a separa
 | EXPAND-01 Gate PWA and Android surfaces | Stage 7 | PILOT-01 | Evidence-based build/defer decision per surface |
 
 The coordinator owns integration and board status. Product, UI, AI, engineering, growth, security, testing, and operations findings are incorporated into the acceptance criteria for these issues.
+
+## Nine-role review record
+
+| Role | Review responsibility reflected in this plan |
+|---|---|
+| Coordinator | Integrated scope, dependencies, repository artifacts and board plan. |
+| Product owner | Target user, costly problem, MVP boundaries, promise and gates. |
+| UI designer | Question flow, review/timeline journey, mobile states and accessibility. |
+| AI expert | Deterministic optimizer, exact objective, independent oracle and evaluation targets. |
+| Web developer | React/FastAPI boundary, typed contracts, provider adapter and same-origin deployment. |
+| Growth/monetization | Interviews, assisted pilot, adoption/retention evidence and contribution-cost measures. |
+| Security reviewer | Identity, data minimization, provider policy, Maps disclosure, atomic spend controls and deletion. |
+| Tester | Traceability, search completeness, multi-process races, browser/device matrix and pilot denominators. |
+| Operations engineer | Reproducible pilot project, digest releases, quota envelope, monitoring, incidents and recovery. |
+
+These are design reviews. Application behavior, live integration, accessibility on devices, deployment, billing and customer outcomes remain unexecuted until their roadmap stages.
 

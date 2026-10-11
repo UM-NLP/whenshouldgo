@@ -16,7 +16,7 @@ The web app can already deliver the complete value loop:
 
 One responsive codebase works on Android, iPhone, and desktop browsers. It avoids Play review, native SDK work, separate mobile releases, and native reminder complexity during the pre-seed validation stage. A web manifest and service worker can later make it installable, but installation is progressive enhancement; every core function must work in an ordinary mobile browser. See [PWA quality guidance](https://web.dev/articles/pwa-checklist) and [PWA installation](https://web.dev/learn/pwa/installation).
 
-The first release will not modify the consumer Google Maps interface. It will accept normal inputs, optionally accept a pasted/shared Maps link after compatibility testing, and hand outbound and return navigation to Google Maps URLs.
+The first release will not modify the consumer Google Maps interface. It will accept normal inputs, optionally accept a pasted/shared Maps link after compatibility testing, and hand outbound and return navigation to Google Maps URLs. Trip data never enters this application's URLs; an explicit handoff sends the selected endpoints to Google and can place them in browser or Maps history.
 
 ## User promise
 
@@ -72,7 +72,7 @@ The first pilot supports:
 - a guided form, editable review, recommendation, and two useful alternatives;
 - manual refresh and freshness warnings;
 - separate Google Maps handoffs for outbound and return legs;
-- local browser storage for drafts and the active plan;
+- local browser storage for user-entered drafts and permitted location identifiers; route results remain in memory;
 - private invite access and privacy-safe pilot analytics.
 
 The pilot excludes accounts, payment, subscriptions, native push reminders, continuous background work, future-day monitoring, multiple stops, different return locations, other travel modes, an LLM, a widget, voice assistants, embedded navigation, and a native Android build.
@@ -107,7 +107,7 @@ The app asks one question at a time and shows all answers on an editable review 
 4. **Review:** Show every input, timezone, default, and derived earliest departure. Edits invalidate old results.
 5. **Calculate:** Preserve inputs while the server checks traffic in both directions. Do not show a fake percentage.
 6. **Recommend:** Lead with **Leave at [time]** and **Best forecasted option we checked**.
-7. **Act:** Save locally, refresh, copy/share the plan, or open the outbound Maps URL.
+7. **Act:** Keep the input template locally, refresh, copy a privacy-safe summary, or explicitly open the outbound Maps URL.
 8. **Return:** Offer **Leaving now** to obtain a current return ETA and warn about deadline risk.
 9. **Learn:** Ask for a voluntary outcome and reuse response without collecting a GPS trace.
 
@@ -122,8 +122,9 @@ The result shows start preparing, leave home, start driving, destination road ar
 | Ambiguous address | Candidate list or pin confirmation before calculation. |
 | Location denied/unavailable | Continue with manual entry. |
 | Loading | Preserve answers; allow cancel and retry. |
-| Offline | Keep draft/last result locally, mark it stale, and disable calculation/navigation refresh until online. |
-| Provider failure | Show no new recommendation; keep any old result visibly stale. |
+| Offline | Keep the input draft. A still-loaded tab may show its in-memory result as stale; an offline reload is unsupported until the PWA stage. Disable calculation and refresh until online. |
+| Browser storage failure | Continue in memory and show **Not saved on this device**; allow retry or clear local data. |
+| Provider failure | Show no new recommendation; keep any in-memory old result visibly stale. |
 | Missing leg | Identify the failed leg and produce no recommendation. |
 | Impossible | Show earliest forecasted home time, lateness, and explicit constraint changes. |
 | Search incomplete | Explain that the app could not compare enough times reliably and offer retry. |
@@ -169,9 +170,20 @@ Proposed gates, to be agreed before collecting results:
 
 These are proposed decisions, not existing results. Actual minimum-road-time saving remains counterfactual.
 
+Pilot measurement definitions are frozen before invitations:
+
+- **Eligible supported request:** a confirmed compute attempt inside the documented driving/date/location bounds. Schema-invalid or unsupported inputs are excluded; provider, search, timeout, and application failures remain in the denominator.
+- **Accepted recommendation:** a `FEASIBLE` result the user views and explicitly chooses to follow.
+- **Followed plan:** the user reports leaving within plus or minus five minutes of the last accepted recommendation. Material stops, route changes, or visit-duration changes are reported separately.
+- **Deadline success denominator:** followed plans with a valid outcome check-in.
+- **Forecast-error denominator:** legs with valid opt-in timing from which the browser submits only rounded durations/error offsets, not absolute timestamps.
+- **Repeat-use denominator:** users who report a second eligible trip opportunity; also report the raw invited-user repeat rate.
+
+Every pilot result publishes numerator, denominator, missing-data exclusions, and the forecast snapshot used for each scored leg.
+
 ## Surface roadmap
 
-1. **Responsive web MVP:** complete planner, review, result, refresh, local persistence, Maps handoff, and pilot analytics.
+1. **Responsive web MVP:** complete planner, review, in-memory result, refresh, local input persistence, Maps handoff, and pilot analytics.
 2. **PWA:** manifest, icons, service worker, install guidance, and an offline shell after the core online calculation is stable.
 3. **Web retention features:** saved local templates, shareable constraint links without precise locations, and optional email/calendar reminder experiments.
 4. **Android decision gate:** build native Android only if the pilot shows repeat use and users need reliable device reminders, share-sheet integration, widgets, or Assistant actions.
@@ -181,18 +193,20 @@ These are proposed decisions, not existing results. Actual minimum-road-time sav
 
 The private pilot can start when:
 
-1. the complete journey works at 360px width and current Chrome, Safari, Edge, and Firefox versions selected in the browser matrix;
-2. keyboard-only operation, visible focus, semantic labels, and 200% zoom work;
+1. the full fake-provider journey works in the frozen Playwright Chromium, Firefox, and WebKit matrix; physical Android Chrome and iPhone Safari complete a manual journey and Maps handoff;
+2. keyboard-only operation, visible focus, semantic labels, live loading/result announcements, focus recovery, 200% text, and WCAG 2.2 AA reflow at 320 CSS pixels work, with manual mobile and desktop screen-reader checks;
 3. manual entry works without geolocation permission;
 4. every recommendation satisfies preparation, access, visit, window, route, cushion, and deadline constraints under the returned estimates;
 5. every candidate evaluates its return leg at the derived return departure time;
 6. provider failures never fabricate a result;
-7. draft and active plan recovery work after reload;
+7. a reload restores user-entered constraints and requires recalculation; provider-derived results are absent from IndexedDB, Cache Storage, browser URLs, and telemetry;
 8. the Maps handoff works on Android Chrome and iPhone Safari, with a copy fallback;
 9. all required error/recovery states pass acceptance tests;
 10. provider credentials are absent from frontend bundles and browser network calls;
 11. request counts, latency, result category, and estimated cost are measurable without location data;
-12. copy contains no exact-arrival promise or unsupported confidence percentage.
+12. copy contains no exact-arrival promise or unsupported confidence percentage;
+13. `/privacy` and `/terms` are public, Google-derived results show required attribution, and Maps handoff discloses that selected endpoints go to Google and may enter browser or app history;
+14. logout, session replacement, owner mismatch, pilot-data deletion, and the 24-hour post-`homeBy` expiry prevent another session from seeing local trip inputs.
 
 See [web-architecture.md](web-architecture.md), [web-roadmap.md](web-roadmap.md), and [web-quality-operations.md](web-quality-operations.md).
 
