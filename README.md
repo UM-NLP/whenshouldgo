@@ -24,3 +24,29 @@ The assistant is limited to trip and outing planning plus app help. The server o
 - [Active decisions](docs/decisions.md)
 
 Credentials, private trip data, provider responses, precise locations, and route geometry must remain outside Git. No client may call model or travel providers directly; the backend enforces identity, authorization, quotas, token budgets, and provider kill switches.
+
+## Development workspace
+
+The repository now includes a Phase 0 foundation in `app/`: a FastAPI modular
+monolith with a deterministic travel-domain gate, token limits, in-memory
+development quota ledger, typed workspace state, and the start of the agent turn
+orchestrator. It intentionally has no live model, Firebase, Maps, or provider
+credentials; those integrations must preserve the server-side controls described
+in the documents above.
+
+Install the development dependencies and run the test suite:
+
+```powershell
+python -m pip install -e ".[dev]"
+python -m pytest
+```
+
+Start the local API with:
+
+```powershell
+python -m uvicorn app.main:app --reload
+```
+
+Codex role briefs live under `.codex/agents/`. `AGENTS.md` is the shared source
+of engineering instructions and directs every coding task to the relevant product
+and safety specifications.
