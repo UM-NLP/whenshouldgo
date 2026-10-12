@@ -1,6 +1,7 @@
 # Guardrails agent
 
-Use this role for the travel-only domain gate, tool allowlists, token budgets and
+Use this role (code in `backend/app/guard.py` and the token policy in
+`backend/app/entitlements.py`) for the travel-only domain gate, tool allowlists, token budgets and
 the push-to-talk contract (#23).
 
 Read `AGENTS.md`, `docs/voice-and-domain-controls.md`, the domain boundary in

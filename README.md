@@ -27,26 +27,27 @@ Credentials, private trip data, provider responses, precise locations, and route
 
 ## Development workspace
 
-The repository now includes a Phase 0 foundation in `app/`: a FastAPI modular
-monolith with a deterministic travel-domain gate, token limits, in-memory
-development quota ledger, typed workspace state, and the start of the agent turn
-orchestrator. It intentionally has no live model, Firebase, Maps, or provider
-credentials; those integrations must preserve the server-side controls described
-in the documents above.
+The Phase 0 backend foundation lives in `backend/`: a FastAPI modular monolith with
+server-derived identity (failing closed without a verifier), versioned entitlement
+and token policy, an atomic in-memory quota ledger, strict domain contracts, a
+placeholder travel-domain gate and the start of the turn orchestrator. It has no
+live model, Firebase, Maps or provider credentials; those integrations must keep
+the server-side controls described in the documents above. `web/` is not started.
 
-Install the development dependencies and run the test suite:
+Install the development dependencies and run the tests from `backend/`:
 
 ```powershell
+cd backend
 python -m pip install -e ".[dev]"
 python -m pytest
 ```
 
-Start the local API with:
+`create_app()` with no identity verifier rejects every authenticated route, so the
+default `app.main:app` only serves `/healthz` until a verifier is wired in:
 
 ```powershell
 python -m uvicorn app.main:app --reload
 ```
 
-Codex role briefs live under `.codex/agents/`. `AGENTS.md` is the shared source
-of engineering instructions and directs every coding task to the relevant product
-and safety specifications.
+`AGENTS.md` is the shared source of engineering instructions. Role briefs live in
+`.codex/agents/`; `.github/` registers the same roles with GitHub Copilot.

@@ -1,6 +1,7 @@
-"""Versioned entitlement policy (docs/access-tiers.md, EntitlementPolicy).
+"""Versioned server policy: allowances (docs/access-tiers.md) and token ceilings
+(docs/voice-and-domain-controls.md, D10).
 
-Allowances are server-side data, never client input. Changing a limit means adding a
+Allowances and budgets are server-side data, never client input. Changing a limit means adding a
 new policy version here (later: loading it from server configuration), not editing
 handlers or QuotaService.
 """
@@ -28,11 +29,47 @@ class Allowance:
 
 
 @dataclass(frozen=True)
+class TokenPolicy:
+    max_user_message_tokens: int = 2_000
+    classifier_input_tokens: int = 2_048
+    classifier_output_tokens: int = 64
+    planner_call_input_tokens: int = 12_000
+    planner_call_output_tokens: int = 1_200
+    run_input_tokens: int = 40_000
+    run_output_tokens: int = 4_000
+    run_model_calls: int = 6
+    run_tool_calls: int = 12
+    run_escalations: int = 1
+    visible_reply_tokens: int = 450
+    spoken_reply_tokens: int = 160
+    run_deadline_seconds: int = 20
+
+
+@dataclass(frozen=True)
+class DailyTokenCeiling:
+    input_tokens: int
+    output_tokens: int
+
+
+DEFAULT_DAILY_TOKENS: Mapping[PrincipalKind, DailyTokenCeiling] = MappingProxyType(
+    {
+        PrincipalKind.GUEST: DailyTokenCeiling(60_000, 6_000),
+        PrincipalKind.REGISTERED_FREE: DailyTokenCeiling(120_000, 12_000),
+    }
+)
+
+
+@dataclass(frozen=True)
 class EntitlementPolicy:
     version: str
     effective_at: datetime
     grace_rule: str
     allowances: Mapping[PrincipalKind, Allowance] = field(default_factory=dict)
+    tokens: TokenPolicy = TokenPolicy()
+    daily_tokens: Mapping[PrincipalKind, DailyTokenCeiling] = DEFAULT_DAILY_TOKENS
+    guest_workspace_retention_days: int = 7
+    notice_quiet_meter_ratio: float = 0.7
+    notice_benefit_ratio: float = 0.9
 
     def for_kind(self, kind: PrincipalKind) -> Allowance | None:
         """Return the allowance for a tier; None means no entitlement (always denied)."""

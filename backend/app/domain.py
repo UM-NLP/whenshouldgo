@@ -1,9 +1,16 @@
-"""Frozen Phase 0 contracts from docs/trip-assistant-architecture.md and agent-conversation-policy.md."""
+"""Phase 0 domain contracts (docs/trip-assistant-architecture.md,
+docs/agent-conversation-policy.md, docs/access-tiers.md).
 
+Pydantic models reject unknown fields so that client input and model output can
+never smuggle identity, tier or state through extra keys.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class Strict(BaseModel):
@@ -16,7 +23,18 @@ class PrincipalKind(StrEnum):
     DISABLED = "DISABLED"
 
 
+@dataclass(frozen=True)
+class Principal:
+    """Server-derived identity. Built only from a verified token, never from a body."""
+
+    uid: str
+    kind: PrincipalKind
+    policy_version: str
+
+
 class DomainClass(StrEnum):
+    """Travel-domain gate result (docs/voice-and-domain-controls.md)."""
+
     TRAVEL = "TRAVEL"
     APP_HELP = "APP_HELP"
     MIXED = "MIXED"
@@ -78,14 +96,28 @@ class Fact(Strict):
     expires_at: datetime | None = None
     depends_on: list[str] = Field(default_factory=list)
 
+    @model_validator(mode="after")
+    def _inference_is_never_a_confirmed_hard_fact(self) -> Fact:
+        if (
+            self.source == FactSource.INFERENCE
+            and self.hard
+            and self.confirmation == Confirmation.CONFIRMED
+        ):
+            raise ValueError("an inference cannot be a confirmed hard constraint")
+        return self
+
 
 class Evidence(Strict):
     id: str
     tool: str
     tool_version: str
+    source: str
     retrieved_at: datetime
     expires_at: datetime
     precision: str
+
+    def is_fresh(self, now: datetime) -> bool:
+        return self.expires_at > now
 
 
 class WorkspacePatch(Strict):
@@ -100,11 +132,17 @@ class WorkspacePatch(Strict):
 
 
 class PendingAction(Strict):
+    """Two-step side effect: shown as ``preview``, committed only on explicit confirmation.
+
+    No expiry duration is specified in docs/; the creator must set ``expires_at``.
+    """
+
     id: str
     workspace_id: str
     plan_version: int
     effect: str
     target: str
+    preview: str
     nonce: str
     idempotency_key: str
     expires_at: datetime
@@ -117,7 +155,18 @@ class TripWorkspace(Strict):
     status: WorkspaceStatus = WorkspaceStatus.CAPTURED
     version: int = 0
     timezone: str = "America/Toronto"
+    goal: str | None = None
     facts: list[Fact] = Field(default_factory=list)
     evidence: list[Evidence] = Field(default_factory=list)
     pending_actions: list[PendingAction] = Field(default_factory=list)
     active_plan_version: int | None = None
+
+    @property
+    def assumptions(self) -> list[Fact]:
+        """Inferred, unconfirmed facts the user can edit."""
+        return [
+            fact
+            for fact in self.facts
+            if fact.source == FactSource.INFERENCE
+            and fact.confirmation == Confirmation.UNCONFIRMED
+        ]

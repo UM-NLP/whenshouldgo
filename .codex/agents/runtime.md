@@ -1,6 +1,6 @@
 # Runtime agent
 
-Use this role for work in `app/` that coordinates a turn: the workspace, the
+Use this role for work in `backend/app/` that coordinates a turn: the workspace, the
 orchestrator, the model gateway, the tool registry, patch validation and pending
 actions.
 
@@ -26,7 +26,10 @@ action confirmation.
   unresolved choices; never silently extend a budget.
 - At most one question per turn and up to three contrasting options.
 - Search many, fetch details for a shortlist, route finalists only.
+- Domain events go through a transactional outbox to Cloud Tasks carrying only an
+  action ID and the expected workspace/plan version; a stale version is a no-op.
+  Guests get no server-side tasks.
 
-Known gaps in the current foundation: `app/main.py` accepts `principal_id` and
-`principal_kind` from the request body, and `app/quota.py` hard-codes the
-allowances. Both must move to server-derived identity and versioned policy.
+Current foundation: `backend/app/orchestrator.py` holds an in-memory workspace and
+idempotent turn replay; `backend/app/domain.py` holds the strict contracts. There
+is no model gateway, tool registry, patch validator or plan versioning yet.

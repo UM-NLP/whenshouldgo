@@ -9,7 +9,7 @@ from app.entitlements import Allowance, EntitlementPolicy, Period, PolicyRegistr
 from app.main import app as default_app
 from app.main import create_app
 from app.orchestrator import TurnOrchestrator
-from app.policy import OUT_OF_SCOPE_REPLY
+from app.guard import OUT_OF_SCOPE_REPLY
 from app.quota import QuotaService
 
 TOKENS = {

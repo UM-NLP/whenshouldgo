@@ -3,14 +3,13 @@
     { "name": "root (AGENTS.md, README)", "path": "." },
     { "name": "docs (product source of truth)", "path": "docs" },
     { "name": "codex agents", "path": ".codex/agents" },
-    { "name": "app", "path": "app" },
-    { "name": "tests", "path": "tests" },
+    { "name": "backend", "path": "backend" },
     { "name": "web", "path": "web" }
   ],
   "settings": {
     "python.testing.pytestEnabled": true,
     "python.testing.unittestEnabled": false,
-    "python.testing.cwd": "${workspaceFolder:root (AGENTS.md, README)}",
+    "python.testing.cwd": "${workspaceFolder:backend}",
     "python.testing.pytestArgs": ["tests"],
     "files.exclude": {
       "**/__pycache__": true,
@@ -32,14 +31,14 @@
         "label": "install dev dependencies",
         "type": "shell",
         "command": "python -m pip install -e \".[dev]\"",
-        "options": { "cwd": "${workspaceFolder:root (AGENTS.md, README)}" },
+        "options": { "cwd": "${workspaceFolder:backend}" },
         "problemMatcher": []
       },
       {
         "label": "run tests",
         "type": "shell",
         "command": "python -m pytest",
-        "options": { "cwd": "${workspaceFolder:root (AGENTS.md, README)}" },
+        "options": { "cwd": "${workspaceFolder:backend}" },
         "group": { "kind": "test", "isDefault": true },
         "problemMatcher": []
       },
@@ -47,7 +46,7 @@
         "label": "run local API",
         "type": "shell",
         "command": "python -m uvicorn app.main:app --reload",
-        "options": { "cwd": "${workspaceFolder:root (AGENTS.md, README)}" },
+        "options": { "cwd": "${workspaceFolder:backend}" },
         "isBackground": true,
         "problemMatcher": []
       }

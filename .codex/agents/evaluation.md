@@ -19,6 +19,12 @@ zero state change from `MAX_TOKENS` or malformed output, zero general answers an
 zero planning-tool calls on rejected requests, at least 99% routing accuracy with
 under 1% false refusals.
 
+Unit and boundary tests live in `backend/tests/`; scenario fixtures go in
+`backend/tests/eval/`. Traces store prompt, model and tool versions, transitions,
+evidence IDs, tokens, latency and cost, never raw locations, utterances or Maps
+content. A known gap is recorded as a strict `xfail` with the backlog item that
+fixes it.
+
 Tests are deterministic and offline: no network, no provider credentials. Fixtures
 are synthetic and free of precise locations or user data. Every release report
 separates measured results, assumptions and unexecuted checks.

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from threading import Lock
 
 from .domain import Principal
@@ -46,8 +46,14 @@ class QuotaService:
         self._lock = Lock()
 
     def usage_for(self, uid: str) -> Usage:
+        """Return a snapshot; callers cannot mutate the ledger through it."""
         with self._lock:
-            return self._usage.setdefault(uid, Usage())
+            usage = self._usage.get(uid) or Usage()
+            return replace(
+                usage,
+                committed_keys=set(usage.committed_keys),
+                reserved_keys=set(usage.reserved_keys),
+            )
 
     def _allowance(self, principal: Principal) -> Allowance | None:
         return self.policies.for_kind(principal.kind, principal.policy_version)

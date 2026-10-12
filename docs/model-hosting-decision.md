@@ -33,7 +33,7 @@ No model is needed to deliver a scheduled reminder, detect an unchanged Calendar
 
 ## Google Maps grounding channel
 
-Use the built-in Maps grounding tool for prompts such as â€œfind a relaxed vegetarian restaurant near meâ€ or â€œwhat can I do with children before dinner?â€ The tool is off by default and enabled only for clear geographic discovery with user location supplied when permitted.
+Use the built-in Maps grounding tool for prompts such as “find a relaxed vegetarian restaurant near me” or “what can I do with children before dinner?” The tool is off by default and enabled only for clear geographic discovery with user location supplied when permitted.
 
 The application must display the Google Maps Grounded Result with its associated Maps links according to the additional terms. It cannot modify or intersperse other content within the grounded result, scrape/export Maps data or train on it. The terms currently allow limited storage for display evaluation and up to six months in the initiating user's chat history, and state that prompts/context/generated content are stored by Google for 30 days for this feature. The consent and retention UI must disclose this.
 

@@ -21,6 +21,15 @@ Read `AGENTS.md`, `docs/access-tiers.md`, and the identity sections of
   owns an account uses a previewed, idempotent merge; never merge by email or add
   allowances together.
 - No advertising IDs, hardware IDs, IP history or fingerprinting.
+- Endpoints (`docs/access-tiers.md`): `POST /v1/session:bootstrap`,
+  `GET /v1/me/capabilities`, `GET /v1/me/usage`, `POST /v1/trips/{id}:activate`,
+  `POST /v1/account/link-intents`, `POST /v1/account/link-intents/{id}:complete`,
+  `POST /v1/account-migrations`, `POST /v1/me:export`, `POST /v1/me:delete`.
+
+Current foundation: `backend/app/auth.py` (verifier protocol, server-side tier),
+`backend/app/entitlements.py` (versioned policy) and `backend/app/quota.py`
+(in-memory reserve/commit/release). Trip activation, the rolling 30-day window and
+Firestore persistence are not implemented.
 
 Test quota races, duplicate keys, policy-change grace, interrupted link/merge
 resume, and cross-tenant isolation between guest and registered principals.

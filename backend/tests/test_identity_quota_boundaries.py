@@ -16,7 +16,7 @@ from app.domain import Principal, PrincipalKind
 from app.entitlements import Allowance, EntitlementPolicy, Period, PolicyRegistry
 from app.main import create_app
 from app.orchestrator import TurnOrchestrator
-from app.policy import OUT_OF_SCOPE_REPLY, SAFETY_REPLY
+from app.guard import OUT_OF_SCOPE_REPLY, SAFETY_REPLY
 from app.quota import QuotaService
 
 TOKENS = {
@@ -196,6 +196,40 @@ def test_duplicate_key_counts_once_and_keeps_same_workspace() -> None:
     assert first["workspace_id"] == second["workspace_id"]
 
 
+def test_duplicate_key_replays_the_stored_response_without_rerunning() -> None:
+    client, orch = make(registry(guest_turns=5))
+    first = post(client, key="dup").json()
+    workspace = orch.workspaces[("guest-a", "default")]
+    second = post(client, key="dup").json()
+    assert second == first
+    assert orch.workspaces[("guest-a", "default")] is workspace
+    assert workspace.version == 1
+
+
+def test_duplicate_key_replays_even_after_allowance_is_exhausted() -> None:
+    client, orch = make(registry(guest_turns=1))
+    first = post(client, key="only").json()
+    assert post(client, key="later").json()["allowance_exhausted"] is True
+    assert post(client, key="only").json() == first
+    assert turns(orch, "guest-a") == 1
+
+
+def test_duplicate_key_with_different_body_is_rejected_without_side_effects() -> None:
+    client, orch = make(registry(guest_turns=5))
+    post(client, key="dup")
+    workspace = orch.workspaces[("guest-a", "default")]
+    response = post(client, key="dup", body={"message": "Plan a different Toronto trip"})
+    assert response.status_code == 422
+    assert orch.workspaces[("guest-a", "default")] is workspace
+    assert turns(orch, "guest-a") == 1
+
+
+def test_over_length_message_is_not_labelled_out_of_scope() -> None:
+    client, _ = make()
+    payload = post(client, body={"message": "trip " * 2_100}).json()
+    assert payload["domain"] is None and payload["workspace_id"] is None
+
+
 def test_duplicate_key_after_exhaustion_does_not_raise_or_increment() -> None:
     quotas = QuotaService(registry(guest_turns=1))
     guest = Principal("g", PrincipalKind.GUEST, "test-boundary")
@@ -269,11 +303,8 @@ def test_check_then_commit_race_through_orchestrator_does_not_overspend() -> Non
     lock = threading.Lock()
 
     def attempt(index: int) -> None:
-        try:
-            orch.run_turn(guest, f"Plan a Toronto outing number {index}", f"k{index}")
-            result = f"ok{index}"
-        except PermissionError:
-            result = "denied"
+        turn = orch.run_turn(guest, f"Plan a Toronto outing number {index}", f"k{index}")
+        result = "denied" if turn.allowance_exhausted else f"ok{index}"
         with lock:
             outcomes.append(result)
 
@@ -299,8 +330,8 @@ def test_denied_reservation_leaves_existing_workspace_unchanged() -> None:
     workspace = orch.workspaces[("g", "default")]
     snapshot = (workspace.goal, workspace.status, list(workspace.assumptions))
     quotas.allowed = lambda principal: True  # type: ignore[method-assign]  # stale pre-check
-    with pytest.raises(PermissionError):
-        orch.run_turn(guest, "Plan a different Toronto outing", "second")
+    denied = orch.run_turn(guest, "Plan a different Toronto outing", "second")
+    assert denied.allowance_exhausted and denied.workspace is None and denied.tools == ()
     after = orch.workspaces[("g", "default")]
     assert after is workspace
     assert (after.goal, after.status, list(after.assumptions)) == snapshot
