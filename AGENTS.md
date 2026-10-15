@@ -12,8 +12,16 @@ documents in `docs/` before making a change. They are the product source of trut
 - Do not implement a general chatbot, autonomous purchases/bookings, background
   microphone, background location, Calendar sync, durable inferred memory, or
   multi-day/multi-stop planning in the Phase 0 path.
+- Phase 0 may define persisted schemas and the consent ledger for later phases, but it
+  does not implement server-side history, pattern computation, routines or
+  notifications. The phase order is in `docs/trip-assistant-roadmap.md`.
+- Inferred memory: nothing inferred is stored or treated as a hard fact without the
+  user's confirmation. Until the Phase 2 gate passes, no inferred pattern is persisted.
 - Keep credentials, precise locations, raw provider responses, route geometry,
   private chat data, and provider content outside Git and logs.
+- From Google Maps, store only place IDs and user data. Show Grounding Lite output
+  verbatim with its sources. Do not put ordinary Places or Routes API payloads in
+  model context until a written Google determination exists (`docs/decisions.md` 17).
 - Material claims need fresh, attributable evidence. Never turn an inference into
   a confirmed hard constraint.
 - A side effect must use a pending action with a preview, nonce, expiry,
@@ -39,13 +47,14 @@ Start with `architect` for new or cross-cutting work.
 | Role | Owns | Reads |
 |---|---|---|
 | `architect` | Planning and gate checks; no edits | `decisions`, `backlog`, `project-board`, `trip-assistant-roadmap`, `trip-assistant-product-plan` |
-| `runtime` | Workspace, orchestrator, model gateway, tools, patch validation | `trip-assistant-architecture`, `agent-conversation-policy`, `model-hosting-decision` |
+| `runtime` | Workspace, orchestrator, model gateway, tools, patch validation, runtime config | `trip-assistant-architecture`, `agent-conversation-policy`, `model-hosting-decision`, `data-and-history-design` |
 | `access` | Guest bootstrap, identity, quota, linking | `access-tiers` |
 | `guardrails` | Domain gate, token budgets, push-to-talk contract | `voice-and-domain-controls`, `agent-conversation-policy` |
-| `policy` | Tools, side effects, consent, data handling | `trip-assistant-security`, `voice-and-domain-controls` |
-| `product` | Mobile web client and Trip Board | `trip-assistant-product-plan`, `trip-assistant-roadmap`, `access-tiers` |
-| `evaluation` | Tests, fixtures, release evidence | `agent-evaluation-plan` |
+| `policy` | Tools, side effects, consent, data handling, telemetry allowlist | `trip-assistant-security`, `voice-and-domain-controls`, `data-and-history-design` |
+| `product` | Mobile web client and Trip Board | `trip-assistant-product-plan`, `trip-assistant-roadmap`, `access-tiers`, `data-and-history-design` |
+| `evaluation` | Tests, synthetic fixtures, release evidence, eval gates | `agent-evaluation-plan` |
 | `security-reviewer` | Read-only review of a change | `trip-assistant-security`, `access-tiers`, `voice-and-domain-controls` |
+| `legal` | Provider-terms, licensing and privacy research; no edits, not legal advice | `decisions`, `trip-assistant-security`, `model-hosting-decision`, `docs/legal/` |
 
 ## Stack
 
@@ -55,8 +64,10 @@ Start with `architect` for new or cross-cutting work.
   App Check, Secret Manager and KMS.
 - Web: React + TypeScript in `web/`, IndexedDB, service worker, and a client
   generated from the backend OpenAPI contract.
-- Model: a low-cost hosted Gemini model behind the provider-neutral
-  `ModelGateway` (`docs/model-hosting-decision.md`).
+- Model: a low-cost open model through OpenRouter behind the provider-neutral
+  `ModelGateway`, with pinned provider and zero data retention on every request
+  (`docs/model-hosting-decision.md`). Discovery uses Google Maps Grounding Lite.
+  Gemini is not used in the first version.
 - Avoid: Redis, Kubernetes, microservices, vector databases, always-on workers,
   GPU hosting and self-hosted models.
 
@@ -76,4 +87,5 @@ Start with `architect` for new or cross-cutting work.
 - `web/` holds the mobile web client (not started).
 - `.codex/agents/` holds the role briefs; `.github/` registers the same roles with
   GitHub Copilot and points back here.
-- `docs/` holds the product specifications and delivery decisions.
+- `docs/` holds the product specifications and delivery decisions. `docs/legal/`
+  holds the owner-supplied legal summary, open legal questions and issue drafts.

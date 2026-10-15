@@ -1,14 +1,12 @@
 # Agent Model and Hosting Decision
 
-Updated 2026-10-10.
+Updated 2026-10-14. This replaces the earlier Gemini-based decision. Gemini is not used in the first version.
 
 ## Decision
 
-Use the direct hosted **Gemini 3.5 Flash-Lite** API as the default model behind a provider-neutral `ModelGateway`. Enable official Gemini Grounding with Google Maps only for user-initiated geographic discovery. Evaluate a stronger Gemini Flash model for one bounded escalation on complex synthesis. Use OpenRouter for offline comparisons or a restricted fallback. Do not self-host during the pre-seed stage.
+Use a low-cost open model reached through **OpenRouter** as the default behind a provider-neutral `ModelGateway`. Use **Google Maps Grounding Lite** (through a server-side MCP client) for user-initiated geographic discovery. Evaluate one stronger model for at most one bounded escalation on complex synthesis. Do not self-host during the pre-seed stage.
 
-This choice is stronger for the agent-first product because Gemini 3.5 Flash-Lite currently supports function calling, structured output, Search grounding and Grounding with Google Maps while remaining a low-cost stable model. Current standard paid token pricing is US$0.30 per million input and US$2.50 per million output tokens. An illustrative 2,000-input/500-output call is about US$0.00185 before grounding, Maps and infrastructure charges.
-
-References: [model capabilities](https://ai.google.dev/gemini-api/docs/models/gemini-3.5-flash-lite), [pricing](https://ai.google.dev/gemini-api/docs/pricing), [Maps grounding](https://ai.google.dev/gemini-api/docs/maps-grounding).
+The specific model and upstream host are chosen by a bake-off on synthetic fixtures (tool-calling reliability, strict JSON output, travel-domain classification, injection resistance, latency and cost), not by price alone. A candidate must have a zero-data-retention endpoint and written terms on file in `docs/legal/` before use. Cheap open models vary widely in tool calling and structured output, so the evaluation suite is the selection gate.
 
 ## Gateway
 
@@ -19,29 +17,37 @@ generate(
   outputSchema,
   budget,
   privacyClass,
-  groundingPolicy
+  runtimeConfigVersion
 ) -> ModelTurn
 ```
 
-Pin model and prompt versions. Record tokens, latency, schema retries, tool errors and estimated cost without raw private content. A model change requires the full conversation, tool, recommendation, injection and cost evaluation suites.
+Every request carries the OpenRouter routing parameters that pin the provider and enforce privacy (zero data retention, data collection denied, no fallback to unreviewed hosts, an explicit allowlist of reviewed providers). Parameter names must be checked against OpenRouter's current documentation when the adapter is built. The gateway fails closed: it refuses to send a request that lacks these parameters, and a startup test asserts this. Account-level settings keep OpenRouter's prompt logging and training opt-ins off. OpenRouter plugins and server-side tools are not used on these prompts, because zero data retention does not cover them.
+
+`RuntimeConfig` is a versioned bundle recorded on every turn: model ID, upstream provider, prompt version hashes, tool schema versions, classifier version, policy and entitlement versions, token ceilings, TTLs and feature flags per phase. A change is auditable and can be rolled back by changing the config version. A model, provider or prompt change requires the full conversation, tool, recommendation, injection and cost evaluation suites on synthetic fixtures. Track provider deprecation notices and record the exact model ID in every trace.
+
+Record tokens, latency, schema retries, tool errors and estimated cost without raw private content or Maps content. Costs use a versioned price table that includes the model, Grounding Lite, Places and Routes unit prices.
 
 ## Work allocation
 
-The cheap model handles intent interpretation, goal hypotheses, `WorkspacePatch` proposals, next-action proposals, ordinary discovery and response wording. The stronger model may run once for bounded multi-day synthesis, repeated schema failure or a measured low-confidence case.
+The cheap model handles intent interpretation, goal hypotheses, `WorkspacePatch` proposals, next-action proposals, grounded discovery through Grounding Lite and response wording. The stronger model may run once for bounded multi-day synthesis, repeated schema failure or a measured low-confidence case.
 
-No model is needed to deliver a scheduled reminder, detect an unchanged Calendar event, perform arithmetic validation, deduplicate a task or render an already-approved plan.
+No model is needed to deliver a scheduled reminder, detect an unchanged Calendar event, perform arithmetic validation, deduplicate a task, compute a pattern, render an already-approved plan or render a Places or Routes result.
 
-## Google Maps grounding channel
+## Google Maps Grounding Lite channel
 
-Use the built-in Maps grounding tool for prompts such as “find a relaxed vegetarian restaurant near me” or “what can I do with children before dinner?” The tool is off by default and enabled only for clear geographic discovery with user location supplied when permitted.
+Use Grounding Lite for prompts such as “find a relaxed vegetarian restaurant near me” or “what can I do with children before dinner?” The server holds the API key, exposes only an allowlist of its tools, and enables them only for clear geographic discovery, with user location supplied when permitted. Research reported the tools `search_places`, `lookup_weather`, `compute_routes`, `resolve_names` and `resolve_maps_urls`, a global endpoint at `mapstools.googleapis.com/mcp`, and per-project quotas of 300 requests per minute for search, weather and routes. Those details are unverified and must be checked before implementation.
 
-The application must display the Google Maps Grounded Result with its associated Maps links according to the additional terms. It cannot modify or intersperse other content within the grounded result, scrape/export Maps data or train on it. The terms currently allow limited storage for display evaluation and up to six months in the initiating user's chat history, and state that prompts/context/generated content are stored by Google for 30 days for this feature. The consent and retention UI must disclose this.
+The model sees tool results, which contain Maps content, within a single request. The application displays the grounded output unmodified with its Google Maps sources immediately after it, reachable in one interaction, and with the required attribution. It cannot extract, modify, reorder or intersperse the grounded output, and it cannot use it to train, test, validate or improve any model. The grounded output may be cached for redisplay for 30 consecutive days at most. The model provider must not store or cache Maps content, which is why zero data retention is required.
 
-Grounded discovery is a distinct data path from ordinary Places and Routes APIs. Provider-policy review remains required before sending those API payloads to an LLM or TTS.
+Open launch-stage, availability and terms questions are tracked in [legal/open-questions.md](legal/open-questions.md). If Grounding Lite is Experimental or Preview, Phase 0 runs as a pilot on pre-GA terms with no SLA, with a degradation path to a structured, server-rendered fallback.
 
-## OpenRouter
+## Ordinary Places and Routes APIs
 
-OpenRouter provides model choice and fallback controls but adds a processor, fee, privacy configuration and failure boundary. It cannot replace the direct official Maps-grounding relationship. Use it for redacted offline evaluation or non-Maps fallback only after processor/privacy review.
+The server calls these APIs directly for a selected place ID and for route checks, and renders the results. Until a written Google determination says otherwise, their payloads are not placed in model context or text-to-speech. The owner has asked to allow this with user consent. User consent addresses privacy, not Google's licence terms, so the question has been added to [legal/open-questions.md](legal/open-questions.md) as a question for Google, and the evidence contract carries an `llm_visible` flag so the rule can change without a redesign.
+
+## OpenRouter as processor
+
+OpenRouter is a new processor and an additional failure boundary. Before pilot traffic: obtain written zero-retention terms for each allowlisted upstream host, request a data processing agreement and sub-processor information, name OpenRouter and the upstream host in the consent notice, and review each host's stated retention monthly.
 
 ## Self-hosting
 
@@ -54,9 +60,7 @@ Defer self-hosting until at least four weeks of production measurements show sus
 - One stronger-model escalation.
 - A 20-second interactive execution budget, excluding user conversation.
 - Search many candidates, fetch details for a shortlist and route finalists only.
-- Per-workspace token, grounding, Places, Routes and total-dollar ceilings.
+- Per-workspace token, grounding, Places, Routes and total-dollar ceilings. Dollar amounts are set before pilot traffic and recorded in `RuntimeConfig`.
 - Global daily caps and kill switches.
 
 At budget exhaustion, return a useful partial result with visible unresolved items and a structured fallback.
-
-

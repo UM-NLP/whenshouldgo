@@ -1,6 +1,6 @@
 # Agent-First Personal Trip Assistant
 
-Updated 2026-10-11. This document defines the current product.
+Updated 2026-10-14. This document defines the current product.
 
 ## Product promise
 
@@ -74,13 +74,13 @@ Other final states are `CANCELLED`, `EXPIRED` and `UNSUPPORTED`. Expired or chan
 3. If no blocker exists, run a cheap broad discovery search rather than starting an interview.
 4. Fetch details only for promising candidates and route only finalists.
 5. Present up to three materially different options: for example quickest, best preference match and lowest cost.
-6. Show why each fits, travel/outing time, opening status, cost category, uncertainty, freshness and Maps source links.
+6. Show the grounded output verbatim with its Maps sources immediately after it, then server-rendered route time, opening status and freshness for the selected option, plus the assistant's own framing, uncertainty and alternatives above or beside it. Place facts come from the grounded block or direct provider fields, not from the assistant's wording.
 7. Let the user choose, refine or change one assumption.
 8. Build an actionable outing only after selection; validate any deadline or required duration with appropriate tools.
 
 ## Recommendation policy
 
-Hard requirements filter candidates. Accessibility, dietary, visa, age and safety requirements cannot be averaged away. Rank remaining options on a Pareto frontier across travel time, total time away, cost, preference fit, schedule slack, uncertainty and group fairness.
+Hard requirements filter candidates. Accessibility, dietary, visa, age and safety requirements cannot be averaged away. Rank remaining options on a Pareto frontier across travel time, total time away, cost, preference fit, schedule slack, uncertainty and group fairness. In Phase 0 the frontier is applied only to the options the agent frames from grounded output and direct route data; Google's grounded results are shown as returned and are not re-ranked, edited or interspersed, and a richer ranking over provider content waits for a written provider determination.
 
 For groups, protect the least-served member before maximizing average satisfaction. When preferences conflict, show a compromise plus contrasting alternatives. Sponsored or affiliate influence must be labelled and cannot be hidden in organic ranking.
 
@@ -101,15 +101,24 @@ It supports:
 - grounded place discovery;
 - one recommendation and up to two alternatives;
 - an editable Trip Board;
-- manual refresh, reminder proposal, outcome check-in and Google Maps handoff.
+- manual refresh, an in-app reminder shown when the user next opens the app, outcome check-in and Google Maps handoff;
+- a local outing log of what the user saves or completes, with no inference.
 
-It excludes Calendar sync, inferred routines, continuous background location, autonomous booking/purchase, multi-stop and multi-day planning. These enter through evidence-gated phases.
+It excludes Calendar sync, inferred routines, server-side history, notifications, continuous background location, autonomous booking/purchase, multi-stop and multi-day planning. These enter through evidence-gated phases.
+
+## Long-term features and their order
+
+The product's long-term features arrive on web before Android or Calendar, in this order ([trip-assistant-roadmap.md](trip-assistant-roadmap.md), [data-and-history-design.md](data-and-history-design.md)):
+
+1. **Trip history (Phase 1):** an opt-in log of the user's outings, kept 180 days by default and adjustable, used to suggest reasonable options and shown back to the user.
+2. **Patterns and routines (Phase 2):** the app notices a regular habit, such as going out on Saturday mornings, shows what it saw, and asks “Save as a routine?”. A routine exists only after the user confirms it, and nothing inferred becomes a hard constraint.
+3. **Routine reminder notifications (Phase 3):** a registered user who confirmed a routine and opted in gets a generic push at the routine's time, such as “Time for your usual Saturday outing? Tap to plan.” Tapping starts a normal planning turn.
 
 ## Access model
 
 First use requires no visible login or personal information. The client silently establishes an anonymous tenant identity so the service can isolate data and control provider cost. A guest receives 50 successful user turns or 10 activated trips over the lifetime of that guest identity, whichever is reached first. The current response always finishes; the next metered action asks the person to create a free Google or email-link account.
 
-Registration remains free. It preserves the current identity when possible and adds account recovery, cross-device sync, opted-in cloud history and, after their own release gates, Calendar, durable memory and bounded proactive monitoring. Guest use stays local-first and excludes those account capabilities. Existing plans remain viewable, exportable, deletable and usable for Maps handoff after the gate. The exact counting, retention and merge rules are defined in [access-tiers.md](access-tiers.md).
+Registration remains free. It preserves the current identity when possible and adds account recovery, cross-device sync, opted-in cloud history and, after their own release gates, confirmed routines, routine reminder notifications, Calendar, durable memory and bounded proactive monitoring. Guest use stays local-first and excludes those account capabilities. Existing plans remain viewable, exportable, deletable and usable for Maps handoff after the gate. The exact counting, retention and merge rules are defined in [access-tiers.md](access-tiers.md).
 
 ## Success
 

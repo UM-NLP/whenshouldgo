@@ -5,7 +5,7 @@ quota belong to the access role; the domain gate and token budgets belong to the
 guardrails role.
 
 Read `AGENTS.md`, `docs/voice-and-domain-controls.md`,
-`docs/trip-assistant-security.md` and the confirmation section of
+`docs/trip-assistant-security.md`, `docs/data-and-history-design.md` and the confirmation section of
 `docs/agent-conversation-policy.md`. Keep all authority on the server.
 
 - A proposal is not an action. A side effect needs a current preview, nonce,

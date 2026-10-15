@@ -82,4 +82,6 @@ The release suite includes direct and disguised requests for coding, essays, the
 
 Targets are zero general-purpose answers in the reviewed boundary suite, zero tool calls for rejected out-of-scope requests, zero actions from truncated output, at least 99% correct routing of supported travel/app-help inputs, and fewer than 1% false refusals on supported goals. Report classifier and planner tokens, latency, repairs, refusals, false accepts, false refusals and cost without recording raw private utterances.
 
-Official references: [Android audio capture](https://developer.android.com/media/platform/av-capture), [Gemini token counting](https://ai.google.dev/gemini-api/docs/tokens), [Gemini generation configuration and finish reasons](https://ai.google.dev/api/generate-content) and [Gemini rate limits](https://ai.google.dev/gemini-api/docs/rate-limits).
+The gateway uses the token usage, finish reasons and rate-limit signals that the pinned OpenRouter provider reports; chars/4 estimates are only a pre-check and are inaccurate for non-Latin scripts, so reservation relies on the provider's counts. Reading text-to-speech of Google Maps content is restricted by Google's terms and stays out of scope until a written determination exists.
+
+Official references: [Android audio capture](https://developer.android.com/media/platform/av-capture) and [OpenRouter provider routing](https://openrouter.ai/docs/features/provider-routing).

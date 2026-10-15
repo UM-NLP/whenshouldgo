@@ -1,6 +1,6 @@
 # Agent-First Trip Assistant Architecture
 
-Updated 2026-10-10. The system centers on a Trip Workspace and an evidence-grounded agent. Deterministic calculators and optimizers are optional tools used for constrained subproblems.
+Updated 2026-10-14. The system centers on a Trip Workspace and an evidence-grounded agent. Deterministic calculators and optimizers are optional tools used for constrained subproblems. Stored data classes, history, patterns and notifications are specified in [data-and-history-design.md](data-and-history-design.md); the phase order is in [trip-assistant-roadmap.md](trip-assistant-roadmap.md).
 
 ```mermaid
 flowchart LR
@@ -13,7 +13,7 @@ flowchart LR
   Gate --> Orchestrator
   Orchestrator --> Context[Context and permission compiler]
   Context --> Model[Model gateway]
-  Model --> MapsGrounding[Gemini Maps grounding]
+  Model --> MapsGrounding[Grounding Lite via MCP]
   Model --> Tools[Typed tool registry]
   Tools --> Discovery[Places events weather]
   Tools --> Travel[Routes transit and handoff]
@@ -26,8 +26,8 @@ flowchart LR
   Workspace --> Events[Domain events and transactional outbox]
   Events --> Tasks[Cloud Tasks]
   Tasks --> API
-  API --> FCM[FCM]
-  FCM --> Client
+  API --> Push[Web Push or FCM]
+  Push --> Client
 ```
 
 ## Orchestration loop
@@ -58,7 +58,7 @@ There is no sign-up screen on first use. Web and Android silently create a Fireb
 
 ```text
 TripWorkspace
-  id ownerId status timezone
+  schema_version id ownerId status timezone runtimeConfigVersion
   conversationSummary
   goalHypotheses[]
   travelers[]
@@ -72,13 +72,15 @@ TripWorkspace
 
 A fact carries source, confirmation, materiality, scope, freshness and dependencies. A plan version carries activities, stays, legs, alternatives, tradeoffs, warnings, evidence references and replacement reason.
 
+`conversationSummary`, `candidatePlaces` and `evidence` never hold Maps content beyond the limits in [data-and-history-design.md](data-and-history-design.md): they store user text, facts, place IDs and evidence metadata, and a pointer to a display cache that expires. Plan versions are stored in a subcollection so a workspace document stays within Firestore size limits.
+
 The agent may update exploratory draft state. Only validated server commands can confirm, arm or activate a plan.
 
 ## Tool registry
 
 Tools are server-owned, typed, versioned and classified as read, compute, propose or commit.
 
-**Discovery:** Maps-grounded recommendation, place search/details, opening hours, events, search grounding and weather.
+**Discovery:** Grounding Lite recommendation (shown verbatim), server-rendered place details and opening hours, events and weather.
 
 **Travel:** route estimates, route matrix, transit options, deadline check, budget calculation, stop-order solver, round-trip optimizer, multi-day temporal solver and Maps handoff.
 
@@ -90,11 +92,11 @@ Middleware injects the verified identity, capability grants, provider credential
 
 ## Discovery path
 
-The preferred Google path for open-ended local discovery is the official **Gemini Grounding with Google Maps** tool. It is designed for location-aware recommendations and is supported by Gemini 3.5 Flash-Lite. Display the grounded result and associated Google Maps links according to the feature's terms; do not rewrite, separate or train on the Maps grounded content. Chat-history retention and provider processing follow the Grounding-specific terms.
+The path for open-ended local discovery is **Google Maps Grounding Lite** through a server-side MCP client with the OpenRouter model ([model-hosting-decision.md](model-hosting-decision.md)). The model sees the tool results within one request. The application displays the grounded output unmodified, with its Google Maps sources immediately after it, and does not rewrite, separate, intersperse, store beyond the display cache, or train on it. The model provider must not store or cache it, which is why every request requires zero data retention. The call sequence and the evidence and plan-version contracts are in [data-and-history-design.md](data-and-history-design.md).
 
-For structured filtering, use Places Text/Nearby Search with narrow queries and minimal field masks. Search broadly, fetch details for few candidates and obtain routes only for finalists. Structured provider content is evidence, not instructions.
+For structured filtering and for details on a selected place, the server uses Places Text/Nearby Search and Place Details with narrow queries and minimal field masks. Search broadly, fetch details for few candidates and obtain routes only for finalists. Structured provider content is evidence, not instructions.
 
-Routes API calculations remain in the server validation layer. Pending written provider-policy review, do not feed ordinary Routes/Places API payloads into an LLM or TTS. This is separate from the licensed Gemini Maps Grounding feature.
+Routes and Places API calculations stay in the server validation and rendering layer. Their payloads are not placed in LLM context or text-to-speech until a written Google determination says otherwise (decision 17 in [decisions.md](decisions.md)); `Evidence.llm_visible` carries this rule.
 
 ## Optional solver layer
 
@@ -117,17 +119,19 @@ Use four layers:
 3. episodic history for completed trips and explicit feedback;
 4. durable profile for user-approved places, preferences, companions, buffers and routines.
 
-Calendar remains connector data rather than durable memory. Start with structured storage and no vector database. A learned candidate requires repeated evidence and user confirmation before becoming a default. Every durable value is visible, editable, disableable, exportable and deletable.
+Calendar remains connector data rather than durable memory. Start with structured storage and no vector database. A learned candidate requires repeated evidence and user confirmation before becoming a default; before Phase 2 nothing inferred is persisted. Every durable value is visible, editable, disableable, exportable and deletable.
 
-Guests use working and local workspace memory only. Room or IndexedDB stores their chat, drafts, accepted plans and local reminders; the server keeps a minimal structured summary for at most seven inactive days. Episodic history, durable profile memory, Calendar tokens, cross-device sync and server monitoring require a registered-free account and their feature-specific consent. Registration separately asks which local trips to upload.
+Episodic history stores place IDs and user data only, with the rules in [data-and-history-design.md](data-and-history-design.md). Maps content is never part of memory.
+
+Guests use working and local workspace memory only. Room or IndexedDB stores their chat, drafts, accepted plans, local reminders and the local outing log; the server keeps a minimal structured summary for at most seven inactive days. Server-side episodic history, durable profile memory, Calendar tokens, cross-device sync and server monitoring require a registered-free account and their feature-specific consent. Registration separately asks which local trips to upload.
 
 ## Events and proactive behavior
 
 Workspace changes append domain events through a Firestore transactional outbox. Examples are `PlanProposed`, `PlanConfirmed`, `CalendarChanged`, `EvidenceStale`, `DepartureApproaching`, `ActionCommitted` and `TripCompleted`.
 
-The dispatcher creates Cloud Tasks containing only an action ID and expected workspace/plan version. Handlers authenticate, enforce idempotency and ignore stale versions. FCM sends generic updates; Android local alarms provide offline redundancy.
+The dispatcher creates Cloud Tasks containing only an action ID and expected workspace/plan version. Handlers authenticate, enforce idempotency and ignore stale versions. Web push (Phase 3) and FCM (Android phase) send generic updates; Android local alarms provide offline redundancy.
 
-Guest reminders are local and guest workspaces never create recurring Cloud Tasks or Calendar watches. Registered-free plans may create bounded server tasks only after the proactive release gate.
+Guest reminders are local: on web they appear when the user next opens the app, because a closed tab cannot fire a reminder. Guest workspaces never create recurring Cloud Tasks or Calendar watches. Registered-free accounts may create bounded server tasks only after the proactive release gate, starting with the routine reminders in Phase 3 whose trigger path is specified in [data-and-history-design.md](data-and-history-design.md).
 
 A monitoring policy defines evidence to refresh, timing, material-change threshold, quiet hours, maximum notifications and expiry. Standing approval may cover reminders inside one trip or routine. Calendar writes, messages, sharing, bookings, purchases and durable memory changes still need explicit approval.
 
@@ -149,5 +153,5 @@ Avoid Redis, Kubernetes, microservices, a vector database, a continuously runnin
 
 Cost controls search many/fetch few/route finalists, minimal field masks, Places session tokens where applicable, route-matrix caps, per-user/provider quotas, idempotency on paid calls, proactive refresh only near actionable times, a workspace cost ledger, model/tool kill switches and Cloud Run maximum instances.
 
-Official references: [Grounding with Google Maps](https://ai.google.dev/gemini-api/docs/maps-grounding), [Maps Grounding terms](https://ai.google.dev/gemini-api/terms), [Places Text Search](https://developers.google.com/maps/documentation/places/web-service/text-search), [Gemini tools](https://ai.google.dev/gemini-api/docs/tools), [Routes](https://developers.google.com/maps/documentation/routes) and [Calendar push](https://developers.google.com/workspace/calendar/api/guides/push).
+Official references: [Maps Grounding Lite](https://developers.google.com/maps/ai/grounding-lite), [Grounding Lite attribution](https://developers.google.com/maps/ai/grounding-lite/attribution), [Places policies](https://developers.google.com/maps/documentation/places/web-service/policies), [Places Text Search](https://developers.google.com/maps/documentation/places/web-service/text-search), [Routes](https://developers.google.com/maps/documentation/routes), [OpenRouter provider routing](https://openrouter.ai/docs/features/provider-routing) and [Calendar push](https://developers.google.com/workspace/calendar/api/guides/push).
 

@@ -1,6 +1,6 @@
 # Anonymous Access and Free Account Tiers
 
-Updated 2026-10-11. The product is free during validation. A person can receive useful trip help before creating an account; registration is requested only after demonstrated use or when the person asks for an account-only capability.
+Updated 2026-10-14. The product is free during validation. A person can receive useful trip help before creating an account; registration is requested only after demonstrated use or when the person asks for an account-only capability.
 
 ## Product policy
 
@@ -9,9 +9,9 @@ Updated 2026-10-11. The product is free during validation. A person can receive 
 | First use | No sign-up screen | Google or email link |
 | Allowance | 50 successful user turns or 10 activated trips, lifetime, whichever is reached first | 100 successful user turns and 10 activated trips per rolling 30 days |
 | Planning | Same-day local discovery, planning, revisions, Maps handoff | Guest capabilities plus cloud history and broader saved context |
-| Reminders | Device-local | Device-local; bounded synced monitoring only after its release gate |
+| Reminders | Device-local; on web, shown when the app is next opened | Device-local; routine reminder notifications (web push) from Phase 3 after their release gate |
 | Calendar | Unavailable | Read-only connection after its separate release gate |
-| Memory and sync | Current device; no durable inferred routines | Cross-device workspaces and user-approved memory |
+| Memory and sync | Current device, including a local outing log; no durable inferred routines | Cross-device workspaces, opt-in outing history (default 180 days, adjustable), user-approved memory and, from Phase 2, user-confirmed routines |
 | When allowance ends | Finish the current response; require a free account before the next metered action | Show the reset date and retain read/export/delete access |
 | Payment | None | None |
 
@@ -44,7 +44,7 @@ The registration message states the exact limit and the free-account benefit. It
 
 Guest state is local-first in Room or IndexedDB: messages, drafts, accepted plans and local reminders. The server keeps the anonymous principal, entitlement and cost ledgers, idempotency records, and the minimum structured workspace summary needed for an active request. Guest workspace summaries expire after seven inactive days. Raw chat, exact-location history, Calendar tokens, durable preferences, embeddings and proactive server jobs are excluded.
 
-Registered-free storage may contain opted-in workspaces, confirmed profile memory, devices and later Calendar connections or scheduled actions. Registration is not consent to upload all local history. After linking, the user chooses which local trips to copy. Exact location and provider-content restrictions in the security plan still apply.
+Registered-free storage may contain opted-in workspaces, outing history, confirmed profile memory and routines, push subscriptions, devices and later Calendar connections or scheduled actions, each under its own consent. Registration is not consent to upload all local history. After linking, the user chooses which local trips to copy. Exact location and provider-content restrictions in the security plan still apply. Stored history contains place IDs and user data only; saved plans re-fetch place details when viewed, and grounded content expires with its display cache, so exports contain IDs, labels, timestamps and feedback but not Maps content ([data-and-history-design.md](data-and-history-design.md)).
 
 Firebase's optional automatic cleanup deletes anonymous accounts older than 30 days. Do not enable it in the first validation release because it would create a time-based registration gate that the product has not chosen. Local plans remain readable after a server workspace expires, but losing browser/app data or reinstalling can make an unregistered identity unrecoverable; the product states this plainly and does not fingerprint the device to recreate it.
 

@@ -5,7 +5,8 @@ orchestrator, the model gateway, the tool registry, patch validation and pending
 actions.
 
 Read `AGENTS.md`, `docs/trip-assistant-architecture.md`,
-`docs/agent-conversation-policy.md` and `docs/model-hosting-decision.md` first.
+`docs/agent-conversation-policy.md`, `docs/model-hosting-decision.md` and
+`docs/data-and-history-design.md` first.
 Preserve this order: identity and quota checks, domain gate, narrow tool
 selection, untrusted proposal validation, immutable plan proposal, then explicit
 action confirmation.

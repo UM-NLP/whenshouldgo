@@ -17,4 +17,6 @@ Updated 2026-10-11. Authoritative board: [@UM-NLP's When Should Go — Project 2
 | 5 | [#18 Multi-day trip builder](https://github.com/UM-NLP/whenshouldgo/issues/18) | Future | Separate validation |
 | 5 | [#19 Android voice entry](https://github.com/UM-NLP/whenshouldgo/issues/19) | Future | #23 and Android retention |
 
+Pending update (2026-10-14): the roadmap now places trip history, patterns and routine reminder notifications (drafts HISTORY-01, ROUTINE-01, NOTIFY-01, LLMOPS-01 and LEGAL-01 to LEGAL-07 in [legal/github-issues-draft.md](legal/github-issues-draft.md)) before Android, and #16 depends on NOTIFY-01 rather than #15. Create those issues and update this table and the board when the issues exist.
+
 Verified through the authenticated Projects interface on 2026-10-11: Project 2 contains only issues #11 and #13–#23. All 12 current cards are in Todo; Done, In Progress, and On Hold are empty. Repository issue state and content are maintained through the GitHub connector.
