@@ -35,7 +35,7 @@ OutingRecord  (schema_version, id, owner_id, workspace_id, plan_version)
 - “Visited” exists only when the user confirms it. Nothing is inferred from location.
 - The history screen shows IDs and user data from storage, then fetches names and details by place ID with a minimal field mask, renders them directly with Google attribution, and keeps them in memory only. If an ID is not found, the screen shows the user's label and “details unavailable”. A refresh job rechecks IDs older than about 12 months against Google's current guidance.
 - Users can hide any entry. Entries that could reveal a sensitive category (for example health, religion, children's activities) are never surfaced as a pattern unless the user has chosen to label them.
-- Retention is a rolling 180 days by default, adjustable by the user. The consent notice states the period. Phase 0 records outings locally on the device only.
+- Retention is a rolling 180 days at most. The user can shorten it or switch history off but cannot extend it beyond 180 days for now (owner decision, 2026-10-15). The consent notice states the period. Phase 0 records outings locally on the device only.
 
 ## Consent ledger
 
@@ -126,6 +126,10 @@ content_hash                # for the verbatim-display invariant; hash only, nev
 
 `expires_at` (freshness) and `cache_expires_at` (storage) are separate. `Evidence` holds no content.
 
+Weather obtained through Grounding Lite's weather tool is tagged `MAPS_GROUNDED` (kind `WEATHER`), with the same attribution, display-cache and evaluation rules, until Google answers in writing whether it is Maps content (owner decision, 2026-10-15). Weather from a non-Google source uses content class `NONE`.
+
+A `PendingAction` lives at most 15 minutes from creation to confirmation (owner decision, 2026-10-15). Confirmation after expiry is refused and the user starts over.
+
 `PlanVersion` is immutable: `schema_version, id, workspace_id, version, parent_version?, replaced_reason?, destination{place_id, user_label?}, origin_ref, user_constraint fact IDs, grounded_evidence_id (display cache pointer that may expire), route_evidence_id? (ephemeral), assumption_fact_ids[], warnings[], created_at`. After the cache expires, rendering uses place-ID re-fetch. Activation (save, reminder or handoff) writes the `OutingRecord`.
 
 ## Versioning, retention, deletion and export
@@ -136,7 +140,7 @@ Every persisted document and API payload carries `schema_version` and `kind`. Ch
 |---|---|---|---|
 | Grounded display cache | 24 hours, 30 days at most | TTL purge and account deletion | Excluded |
 | Guest server workspace summary | 7 inactive days | TTL | Place IDs, user text, plan decisions |
-| `OutingRecord` | Opt-in rolling 180 days, user-adjustable | Per item, clear all, on consent withdrawal, on account deletion | Yes (IDs, labels, timestamps, feedback) |
+| `OutingRecord` | Opt-in rolling 180 days at most, user can shorten | Per item, clear all, on consent withdrawal, on account deletion | Yes (IDs, labels, timestamps, feedback) |
 | `ConsentRecord` | Life of account plus the audit window counsel approves | Account deletion, keeping only approved audit residue | Yes |
 | `PatternCandidate` | Expires at `expires_at` | With history | Yes |
 | `Routine` | Until the user deletes it | Per item, account deletion | Yes |

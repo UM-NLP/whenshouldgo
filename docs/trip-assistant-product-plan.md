@@ -110,7 +110,7 @@ It excludes Calendar sync, inferred routines, server-side history, notifications
 
 The product's long-term features arrive on web before Android or Calendar, in this order ([trip-assistant-roadmap.md](trip-assistant-roadmap.md), [data-and-history-design.md](data-and-history-design.md)):
 
-1. **Trip history (Phase 1):** an opt-in log of the user's outings, kept 180 days by default and adjustable, used to suggest reasonable options and shown back to the user.
+1. **Trip history (Phase 1):** an opt-in log of the user's outings, kept for at most 180 days (the user can shorten it), used to suggest reasonable options and shown back to the user.
 2. **Patterns and routines (Phase 2):** the app notices a regular habit, such as going out on Saturday mornings, shows what it saw, and asks “Save as a routine?”. A routine exists only after the user confirms it, and nothing inferred becomes a hard constraint.
 3. **Routine reminder notifications (Phase 3):** a registered user who confirmed a routine and opted in gets a generic push at the routine's time, such as “Time for your usual Saturday outing? Tap to plan.” Tapping starts a normal planning turn.
 

@@ -8,7 +8,7 @@ Sources that could not be read in full: the live Google Maps Platform Terms of S
 
 - Discovery uses Google Maps Grounding Lite with an OpenRouter-hosted model, as described in the owner-supplied summary ([google-maps-llm-policy-summary.md](google-maps-llm-policy-summary.md)).
 - Ordinary Places and Routes payloads stay out of model context (decision 17). The owner disagrees with this and wants user consent to be enough; consent does not change Google's licence terms, so the question is sent to Google below.
-- Stored history holds place IDs and user data only; the retention default is 180 days and adjustable.
+- Stored history holds place IDs and user data only; the retention ceiling is 180 days and the user can shorten it. Grounding Lite weather is treated as Maps content until Google answers.
 
 ## Verification status of the owner-supplied legal summary
 
@@ -30,6 +30,8 @@ Ask in writing, keep the case number and have counsel review the answers.
 > 6. Does the 30-day cache for Grounded Output allow us to show a user the grounded answer they received in a “recent” view during those 30 days?
 > 7. Does the 30-day latitude/longitude limit apply to coordinates returned by Grounding Lite tools?
 > 8. May we send a limited set of fields returned by the ordinary Places API (name, types, price level, rating, opening-hours text, derived distance) to a third-party LLM, hosted with zero data retention, as prompt input so that it writes a short recommendation shown beside a Google Map and Google Maps attribution? If yes, which fields may never be included (reviews, photos, editorial and AI-generated summaries), and may the LLM's output be stored in the user's trip history? If no, please confirm that Grounding Lite is the intended path.
+
+> 9. Is output from the Grounding Lite weather tool (`lookup_weather`) Google Maps Content for the purposes of the caching, display, attribution and no-train/test/validate rules? If not, may we store and reuse it like ordinary weather data?
 
 ## Checklist for counsel: notifications, profiling and privacy
 
@@ -62,7 +64,7 @@ Ask in writing, keep the case number and have counsel review the answers.
 
 **Phase 0:** launch stage and Canadian eligibility confirmed in writing, or the owner accepts a pilot-only Phase 0 on pre-GA terms with no SLA; OpenRouter zero retention enforced per request with a failing test when missing, written terms for the chosen upstream host on file; Google attribution and non-modification tests pass; history schema limited to place ID, user label, user tag and time; privacy policy and in-context notice naming Google, OpenRouter and the upstream host, stating cross-border processing and retention, with consent recorded by version; access, export, delete and withdrawal working; synthetic fixtures only; Google's written answer to question 3 (otherwise store only IDs the user picked from an ordinary Places result or a Maps URL they supplied).
 
-**Phase 1:** everything above, plus retention default (180 days, adjustable) in the notice and a tested backup deletion window.
+**Phase 1:** everything above, plus the retention ceiling (180 days, user can shorten) in the notice and a tested backup deletion window.
 
 **Phase 2:** Google's written answers to questions 4 and 5 (otherwise deterministic counts only and no place IDs in any trained model); separate express opt-in for pattern suggestions with the basis shown; counsel's view on inferences as personal information and an access format that includes them; the sensitive-inference rule implemented and tested; Quebec profiling and privacy impact assessment settled if Quebec residents are served.
 

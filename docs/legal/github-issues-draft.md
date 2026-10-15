@@ -24,7 +24,7 @@ Questions 3–8 in `docs/legal/open-questions.md`. Gates: place-ID storage (Phas
 Done when: written answers are on file and decisions 17 and 18 and `docs/data-and-history-design.md` are updated or confirmed.
 
 ### LEGAL-04: Privacy policy, terms of use and consent notice wording
-Phase 0 entry gate. Must include the Google Maps terms and privacy notice links, name Google, OpenRouter and the upstream host as processors, state processing outside Canada and foreign-authority access, state the 180-day default history retention, and describe each consent separately (location, history, pattern suggestions, notifications). Add a safety disclaimer for dietary and accessibility information.
+Phase 0 entry gate. Must include the Google Maps terms and privacy notice links, name Google, OpenRouter and the upstream host as processors, state processing outside Canada and foreign-authority access, state the 180-day maximum history retention, and describe each consent separately (location, history, pattern suggestions, notifications). Add a safety disclaimer for dietary and accessibility information.
 Done when: counsel has approved text and the consent ledger stores the notice version.
 
 ### LEGAL-05: Counsel review of profiling, inferences and Quebec Law 25
@@ -50,7 +50,7 @@ Part of the #14 contract freeze.
 Done when: the above exist with tests and `docs/agent-evaluation-plan.md` states the sample size and pass rule.
 
 ### HISTORY-01: Opt-in trip history (Phase 1)
-`OutingRecord` stored server-side for registered users; guests keep it on the device. Place IDs and user data only; history view rebuilt from place IDs with attribution; edit, delete, export; 180-day default retention adjustable; consent ledger; place-ID refresh job.
+`OutingRecord` stored server-side for registered users; guests keep it on the device. Place IDs and user data only; history view rebuilt from place IDs with attribution; edit, delete, export; 180-day retention ceiling the user can shorten; consent ledger; place-ID refresh job.
 Done when: the Phase 1 exit gate in `docs/trip-assistant-roadmap.md` passes. Depends on Phase 0 exit, LEGAL-02, LEGAL-03 (question 3) and LEGAL-04.
 
 ### ROUTINE-01: Patterns and confirmed routines (Phase 2)

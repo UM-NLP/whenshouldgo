@@ -11,7 +11,7 @@ Updated 2026-10-14. The product is free during validation. A person can receive 
 | Planning | Same-day local discovery, planning, revisions, Maps handoff | Guest capabilities plus cloud history and broader saved context |
 | Reminders | Device-local; on web, shown when the app is next opened | Device-local; routine reminder notifications (web push) from Phase 3 after their release gate |
 | Calendar | Unavailable | Read-only connection after its separate release gate |
-| Memory and sync | Current device, including a local outing log; no durable inferred routines | Cross-device workspaces, opt-in outing history (default 180 days, adjustable), user-approved memory and, from Phase 2, user-confirmed routines |
+| Memory and sync | Current device, including a local outing log; no durable inferred routines | Cross-device workspaces, opt-in outing history (up to 180 days, user can shorten), user-approved memory and, from Phase 2, user-confirmed routines |
 | When allowance ends | Finish the current response; require a free account before the next metered action | Show the reset date and retain read/export/delete access |
 | Payment | None | None |
 

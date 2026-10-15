@@ -22,7 +22,7 @@ Memory is a user-owned structured profile: saved place IDs/labels, preparation d
 
 Each remembered value carries provenance, confirmation time, last use, and an optional expiry. Candidates decay and are removed if not confirmed. Users can inspect, edit, export, forget one item, clear history, disconnect a calendar, or delete the account.
 
-Do not keep detailed movement traces or a permanent raw calendar mirror. Current GPS, raw audio, and voice transcripts are memory-only and discarded after confirmation. Calendar descriptions, attendees, attachments, conference URLs, and invitation text are never collected. Trip history is opt-in with a default rolling retention of 180 days that the user can shorten, extend or disable, and the consent notice states the period (decision 19). It stores place IDs and user data only. Logs and analytics exclude addresses, coordinates, event text, tokens, full prompts, and free-text outcomes.
+Do not keep detailed movement traces or a permanent raw calendar mirror. Current GPS, raw audio, and voice transcripts are memory-only and discarded after confirmation. Calendar descriptions, attendees, attachments, conference URLs, and invitation text are never collected. Trip history is opt-in with a rolling retention of at most 180 days that the user can shorten or disable but not extend for now, and the consent notice states the period (decision 19). It stores place IDs and user data only. Logs and analytics exclude addresses, coordinates, event text, tokens, full prompts, and free-text outcomes.
 
 ## Storage and credentials
 
@@ -42,7 +42,7 @@ Telemetry is an allowlist by construction: typed fields only (identifiers, enums
 
 Calendar names, event locations, place text, reviews, shared URLs and provider content are untrusted. Official grounding runs only through the provider's bounded tool. Custom tool results are reduced to typed fields and citations before model use. Tool responses cannot change system policy or tool permissions. The orchestrator selects a narrow tool set, validates JSON Schema, removes unexpected fields, caps lengths and counts, and rejects arbitrary URLs.
 
-Side effects use a two-step pending-action protocol. The proposal records exact effect, account, target, expiry, and one-time nonce. The commit endpoint checks authentication, authorization, current consent, matching plan version, nonce, idempotency, and confirmation. Every commit is auditable and replay-safe.
+Side effects use a two-step pending-action protocol. The proposal records exact effect, account, target, an expiry at most 15 minutes after creation, and one-time nonce. The commit endpoint checks authentication, authorization, current consent, matching plan version, nonce, idempotency, and confirmation. Every commit is auditable and replay-safe.
 
 An authenticated request passes an input-size and travel-domain gate before the planning model. Out-of-scope requests receive a fixed response and no travel tools. The server selects the tool allowlist; neither user input nor retrieved content can expand it. Enforce per-message, per-call, per-run and per-principal token ceilings. Reserve worst-case tokens before generation, commit provider-reported actual usage, and reject `MAX_TOKENS`, malformed or truncated actions. Repeated out-of-scope attempts enter an abuse cooldown without repeated model calls.
 
