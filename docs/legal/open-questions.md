@@ -33,6 +33,9 @@ Ask in writing, keep the case number and have counsel review the answers.
 
 > 9. Is output from the Grounding Lite weather tool (`lookup_weather`) Google Maps Content for the purposes of the caching, display, attribution and no-train/test/validate rules? If not, may we store and reuse it like ordinary weather data?
 
+> 10. Do the summary text and the place data from `search_places` follow the same display, caching and evaluation rules? May a `save_to_maps_url` be cached? What wording and display rules apply to the walking-route warning?
+> 11. Do the attribution page's voice-first rules (companion UI, disclosure at first use and at least every six months) apply to a mobile web client? May an unmodified summary be shown after the user's session ends, and what counts as "within one user interaction" for sources?
+
 ## Checklist for counsel: notifications, profiling and privacy
 
 1. Is a web-push or FCM notification an “electronic address” message under CASL? Is a notification such as “You usually go out Saturday morning. Want ideas?” a commercial electronic message, given that the service is free and recommends third-party businesses?
@@ -58,6 +61,7 @@ Ask in writing, keep the case number and have counsel review the answers.
 | Whether the Google Cloud billing account is in the EEA (different terms apply) | Check the billing address |
 | Grounding Lite pricing and quotas (research found conflicting sources, one paid SKU listed) | Confirm in the Google Cloud console |
 | Place-ID refresh guidance | Check Google's current guidance before building the refresh job |
+| Grounding Lite live behavior: JSON vs server-sent events, whether an initialize or session step is needed, input and output casing, the real link hosts and error format | One live `tools/list` and `tools/call` capture with a Maps demo key, saved outside Git (all are marked `TODO(verify-live)` in `backend/app/discovery/`) |
 | Privacy policy and terms of use must include the Google Maps terms and Google privacy notice links (summary section 8) | Counsel to draft wording |
 
 ## Gates by phase

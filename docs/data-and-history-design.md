@@ -97,14 +97,15 @@ Trigger path:
 Orchestrator -> ModelGateway (OpenRouter, pinned provider, zero retention, no fallbacks)
   call A  FRAME:    intent_tag, assumptions, WorkspacePatch from user facts only (no Maps content)
   call B  DISCOVER: server-side MCP client for Grounding Lite with a tool allowlist
-                    -> GroundedAnswer { text, sources[{place_id, maps_uri, attribution, preview}] }
+                    -> GroundedAnswer { summary text, places[{place_id, attribution{title,url}, place_url}] }
+                       (shape from Google's Grounding Lite docs, to be confirmed by a live capture)
 Validator: accepts or rejects, never edits
 Direct path (no LLM): Places Details by place ID, Routes check -> server-rendered components
 ```
 
 - The output of call B is `MAPS_GROUNDED`. It is never logged, never summarized into history, and never used to produce a patch. The model's `WorkspacePatch` comes only from call A and may reference place IDs but never names, hours or ratings.
 - The validator checks that each source came from a tool call in this run, that source URIs are on the allowlist, finish reason, truncation, budgets and schema. It may reject the whole block and fall back. It cannot redact, trim or reorder it.
-- The server renders the grounded text escaped and unmodified with sources immediately after it, Google Maps attribution and link previews, and no interstitial content. Server-authored framing above it is visually distinct. Route and place components are separate and labelled.
+- The server carries the grounded summary as raw text to be inserted as text, never HTML (escaping happens only at one named HTML sink). Each place's attribution title, exactly as provided and linked to its URL, follows immediately after it with Google Maps branding and no interstitial content. A hash over everything displayed is anchored to the tool-call ledger, so a block that does not match what the tool returned is rejected. Coordinates and other links in the payload are discarded, never stored. Grounded text is held only in the display cache. Server-authored framing above it is visually distinct. Route and place components are separate and labelled.
 - Selecting a source sets `selected_place_id`. The server then calls Places Details and Routes directly for the feasibility check.
 - Follow-up turns do not replay stored Maps content. The server stores user text, facts and place IDs.
 - Hard needs such as accessibility or diet cannot be verified inside grounded text without extracting from it. In Phase 0 they are passed as query terms and flagged, and the details come from direct Places data shown separately.
