@@ -603,6 +603,9 @@ class TokenCeilings(Frozen):
     run_tool_calls: int = Field(default=12, ge=1)
     run_escalations: int = Field(default=1, ge=0)
     interactive_budget_seconds: int = Field(default=20, ge=1)
+    # Per planning call (decision 10): 12,000 compiled input and 1,200 output tokens.
+    planner_input_tokens: int = Field(default=12_000, ge=1)
+    planner_output_tokens: int = Field(default=1_200, ge=1)
 
 
 class RuntimeTTLs(Frozen):
@@ -644,6 +647,16 @@ class RuntimeConfig(Frozen):
     version: VersionText
     model_id: Annotated[str, StringConstraints(min_length=1, max_length=200)]
     provider: Annotated[str, StringConstraints(min_length=1, max_length=100)]
+    # Privacy settings are part of the audited bundle (docs/model-hosting-decision.md). The
+    # Literal types make a weakened value unrepresentable; the gateway re-checks anyway.
+    provider_allowlist: Annotated[
+        tuple[Annotated[str, StringConstraints(pattern=r"^[a-z0-9][a-z0-9._-]{0,63}$")], ...],
+        Field(min_length=1, max_length=10),
+    ]
+    zdr: Literal[True] = True
+    data_collection: Literal["deny"] = "deny"
+    allow_fallbacks: Literal[False] = False
+    price_table_version: VersionText
     prompt_version_hashes: tuple[PromptHash, ...]
     tool_schema_versions: tuple[ToolSchemaVersion, ...]
     classifier_version: VersionText
@@ -655,6 +668,10 @@ class RuntimeConfig(Frozen):
 
     @model_validator(mode="after")
     def _unique_names(self) -> RuntimeConfig:
+        if self.provider not in self.provider_allowlist:
+            raise ValueError("provider must be on provider_allowlist")
+        if len(set(self.provider_allowlist)) != len(self.provider_allowlist):
+            raise ValueError("duplicate provider in provider_allowlist")
         for items in (self.prompt_version_hashes, self.tool_schema_versions):
             names = [item.name for item in items]
             if len(names) != len(set(names)):

@@ -247,6 +247,8 @@ def runtime_config(**overrides) -> RuntimeConfig:
         version="rc-1",
         model_id="synthetic/model",
         provider="synthetic-host",
+        provider_allowlist=("synthetic-host",),
+        price_table_version="prices-0",
         prompt_version_hashes=({"name": "frame", "sha256": "b" * 64},),
         tool_schema_versions=({"name": "search", "version": "1"},),
         classifier_version="kw-1",

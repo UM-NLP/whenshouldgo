@@ -1,15 +1,30 @@
 from __future__ import annotations
 
+import anyio
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.requests import ClientDisconnect
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from .auth import IdentityVerifier, PrincipalResolver, current_principal
 from .domain import ErrorBody, ErrorCode, Principal, PrincipalKind, TurnResponse
 from .orchestrator import IdempotencyKeyReused, TurnOrchestrator
 from .quota import ReservationConflict
+from .telemetry import (
+    ErrorEvent,
+    Phase,
+    TraceSink,
+    bind_trace_id,
+    current_trace_id,
+    ensure_log_guard,
+    exception_type_name,
+    frames_from,
+    get_default_sink,
+    trace,
+)
 
 
 class TurnRequest(BaseModel):
@@ -47,21 +62,112 @@ def _error_response(
     return JSONResponse(status_code=status, content=body, headers=headers)
 
 
+def _trace_error(
+    request_or_scope: object,
+    code: ErrorCode,
+    phase: Phase,
+    status: int | None,
+    exception_type: str | None = None,
+    frames: tuple[str, ...] = (),
+) -> None:
+    """Emit an ErrorEvent: enums, status and the exception class name only."""
+    app_ref = getattr(request_or_scope, "app", None)
+    if app_ref is None and isinstance(request_or_scope, dict):
+        app_ref = request_or_scope.get("app")
+    sink = getattr(getattr(app_ref, "state", None), "sink", None) or get_default_sink()
+    trace(
+        ErrorEvent,
+        sink,
+        trace_id=current_trace_id(),
+        code=code,
+        phase=phase,
+        http_status=status,
+        exception_type=exception_type,
+        frames=frames,
+    )
+
+
+_CLIENT_GONE: tuple[type[BaseException], ...] = (
+    ClientDisconnect,
+    ConnectionResetError,
+    BrokenPipeError,
+    anyio.ClosedResourceError,
+    anyio.BrokenResourceError,
+    anyio.EndOfStream,
+)
+
+
+class _TraceMiddleware:
+    """Binds a trace id per request and turns unhandled exceptions into a bare 500.
+
+    Answering here (instead of re-raising to the server) keeps tracebacks, which can embed
+    request text in exception messages, away from uvicorn's error logger.
+    """
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        status: int | None = None
+
+        async def tracked_send(message: Message) -> None:
+            nonlocal status
+            if message["type"] == "http.response.start":
+                status = int(message["status"])
+            await send(message)
+
+        aborted = False
+        with bind_trace_id():
+            try:
+                await self.app(scope, receive, tracked_send)
+            except _CLIENT_GONE:
+                # The peer left: not a server fault, and there is nobody to answer.
+                return
+            except Exception as error:  # noqa: BLE001 - last-resort boundary
+                _trace_error(
+                    scope, ErrorCode.PROVIDER, Phase.REQUEST, status or 500,
+                    exception_type_name(error), frames_from(error),
+                )
+                if status is not None:
+                    aborted = True
+                else:
+                    await _error_response(500, ErrorCode.PROVIDER, "internal error")(
+                        scope, receive, send
+                    )
+        if aborted:
+            # Raised outside the except block so __context__ is None: the original
+            # exception (and any user text in its message) is not chained to this one.
+            raise RuntimeError("response aborted")
+
+
+def _phase_for(status: int) -> Phase:
+    return Phase.AUTH if status in (401, 403) else Phase.REQUEST
+
+
 def create_app(
     verifier: IdentityVerifier | None = None,
     resolver: PrincipalResolver | None = None,
     orchestrator: TurnOrchestrator | None = None,
+    trace_sink: TraceSink | None = None,
 ) -> FastAPI:
     """Build the API. With no verifier, every authenticated route fails closed (401)."""
+    ensure_log_guard()
     application = FastAPI(title="WhenShouldGo API", version="0.1.0")
-    application.state.orchestrator = orchestrator or TurnOrchestrator()
+    application.state.orchestrator = orchestrator or TurnOrchestrator(sink=trace_sink)
+    application.state.sink = (
+        trace_sink or getattr(application.state.orchestrator, "sink", None) or get_default_sink()
+    )
+    application.add_middleware(_TraceMiddleware)
     application.state.verifier = verifier
     application.state.resolver = resolver or PrincipalResolver(
         policies=application.state.orchestrator.quotas.policies
     )
 
     @application.exception_handler(StarletteHTTPException)
-    async def _http_error(_: Request, exc: StarletteHTTPException) -> JSONResponse:
+    async def _http_error(request: Request, exc: StarletteHTTPException) -> JSONResponse:
         detail = exc.detail
         if isinstance(detail, dict) and detail.get("kind") == "error":
             code = ErrorCode(detail["code"])
@@ -71,16 +177,18 @@ def create_app(
             code = _STATUS_CODES.get(exc.status_code, ErrorCode.PROVIDER)
             message = detail if isinstance(detail, str) else "request failed"
         headers = dict(exc.headers) if exc.headers else None
+        _trace_error(request, code, _phase_for(exc.status_code), exc.status_code)
         return _error_response(exc.status_code, code, message, headers)
 
     @application.exception_handler(RequestValidationError)
-    async def _invalid_request(_: Request, __: RequestValidationError) -> JSONResponse:
+    async def _invalid_request(request: Request, __: RequestValidationError) -> JSONResponse:
         # Redacted on purpose: pydantic details echo the rejected input.
+        _trace_error(request, ErrorCode.VALIDATION, Phase.REQUEST, 422)
         return _error_response(422, ErrorCode.VALIDATION, "request failed validation")
 
-    @application.exception_handler(Exception)
-    async def _unhandled(_: Request, __: Exception) -> JSONResponse:
-        return _error_response(500, ErrorCode.PROVIDER, "internal error")
+    # No @exception_handler(Exception): Starlette would install it on the outermost
+    # ServerErrorMiddleware, which _TraceMiddleware (inside it) always pre-empts, so it
+    # would be dead code. _TraceMiddleware owns the unhandled-exception path.
 
     @application.get("/healthz")
     def healthz() -> dict[str, str]:
