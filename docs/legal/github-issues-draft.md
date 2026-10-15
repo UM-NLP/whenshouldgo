@@ -47,6 +47,7 @@ Part of the #14 contract freeze.
 - Versioned price table and cost ledger covering the model, Grounding Lite, Places and Routes; dollar caps per goal, per tier per day and pilot-wide, with fallback behavior at exhaustion.
 - Eval pipeline: recorded synthetic suite on every pull request; live-model suite on a schedule or config change with repeats; statistical pass rule for the “zero” and “99%” gates.
 - Provider failure ladder (rate limit, quota, empty grounding, timeout) and circuit breaker thresholds.
+- Built so far on branch `feat/gateway-and-telemetry`: fail-closed OpenRouter gateway, resilience ladder, typed telemetry allowlist and log guard, canary tests. Remaining: real prices in the price table, per-run dollar ceiling, a shared (Firestore) kill-switch flag replacing the per-process 402 latch, wiring the gateway into the orchestrator (the strict xfail `test_orchestrator_path_never_sends_maps_text_to_frame_or_compose` must pass first), verifying the OpenRouter response `provider` field format, a dependency lockfile with hashes and `pip-audit` in CI, a pinned Python 3.12 in CI, Ruff in CI (the print ban is untested locally), a dashboard or alert on telemetry `health()` counters, and a decision on whether a rate-limited (429) call should be charged at the worst-case reservation.
 Done when: the above exist with tests and `docs/agent-evaluation-plan.md` states the sample size and pass rule.
 
 ### HISTORY-01: Opt-in trip history (Phase 1)

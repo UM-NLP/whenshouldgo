@@ -80,6 +80,11 @@ Start with `architect` for new or cross-cutting work.
   - `entitlements.py`: versioned policy (allowances, token ceilings, retention).
   - `quota.py`: atomic reserve/commit/release keyed by idempotency key.
   - `guard.py`: travel-domain gate (placeholder keyword classifier).
+  - `gateway/`: provider-neutral `ModelGateway`, OpenRouter adapter and resilience.
+    Fails closed without a pinned provider, zero retention, no fallbacks and a
+    reviewed price table. Test doubles live in `backend/tests/gateway_fakes.py`.
+  - `telemetry.py`: typed trace-event allowlist (no free-text fields), emit API and the
+    log guard that blocks free-text logging from app code.
   - `orchestrator.py`: turn pipeline with idempotent replay.
   - `main.py`: `create_app()` and routes.
 - `backend/tests/` holds deterministic tests; no network or provider credentials.

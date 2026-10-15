@@ -23,7 +23,7 @@ generate(
 
 Every request carries the OpenRouter routing parameters that pin the provider and enforce privacy (zero data retention, data collection denied, no fallback to unreviewed hosts, an explicit allowlist of reviewed providers). Parameter names must be checked against OpenRouter's current documentation when the adapter is built. The gateway fails closed: it refuses to send a request that lacks these parameters, and a startup test asserts this. Account-level settings keep OpenRouter's prompt logging and training opt-ins off. OpenRouter plugins and server-side tools are not used on these prompts, because zero data retention does not cover them.
 
-`RuntimeConfig` is a versioned bundle recorded on every turn: model ID, upstream provider, prompt version hashes, tool schema versions, classifier version, policy and entitlement versions, token ceilings, TTLs and feature flags per phase. A change is auditable and can be rolled back by changing the config version. A model, provider or prompt change requires the full conversation, tool, recommendation, injection and cost evaluation suites on synthetic fixtures. Track provider deprecation notices and record the exact model ID in every trace.
+`RuntimeConfig` is a versioned bundle recorded on every turn: model ID, upstream provider and provider allowlist, the privacy settings (zero retention required, data collection denied, fallbacks disabled; a weakened config cannot be constructed), price table version, prompt version hashes, tool schema versions, classifier version, policy and entitlement versions, token ceilings (including the per-call planner ceilings), TTLs and feature flags per phase. A change is auditable and can be rolled back by changing the config version. A model, provider or prompt change requires the full conversation, tool, recommendation, injection and cost evaluation suites on synthetic fixtures. Track provider deprecation notices and record the exact model ID in every trace.
 
 Record tokens, latency, schema retries, tool errors and estimated cost without raw private content or Maps content. Costs use a versioned price table that includes the model, Grounding Lite, Places and Routes unit prices.
 
@@ -61,6 +61,6 @@ Defer self-hosting until at least four weeks of production measurements show sus
 - A 20-second interactive execution budget, excluding user conversation.
 - Search many candidates, fetch details for a shortlist and route finalists only.
 - Per-workspace token, grounding, Places, Routes and total-dollar ceilings. Dollar amounts are set before pilot traffic and recorded in `RuntimeConfig`.
-- Global daily caps and kill switches.
+- Global daily caps and kill switches. The gateway latches a per-process kill switch on a provider 402 (out of credits). Cloud Run scale-to-zero or a second instance loses it, so a shared flag in Firestore is required before pilot traffic. The per-run dollar ceiling is not yet enforced; it is added once the price table has real prices.
 
 At budget exhaustion, return a useful partial result with visible unresolved items and a structured fallback.
