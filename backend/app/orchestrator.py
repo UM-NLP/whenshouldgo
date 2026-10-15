@@ -14,6 +14,7 @@ from .domain import (
     PrincipalKind,
     TripWorkspace,
     WorkspaceStatus,
+    evolve,
 )
 from .guard import OUT_OF_SCOPE_REPLY, SAFETY_REPLY, classify, estimate_tokens, tools_for
 from .quota import QuotaService
@@ -112,23 +113,22 @@ class TurnOrchestrator:
                 current = self.workspaces.get(key)
                 base = current or TripWorkspace(id=str(uuid4()), owner_id=principal.uid)
                 # Build the next state on a copy; swap it in only after the commit.
-                workspace = base.model_copy(
-                    update={
-                        "goal": message,
-                        "status": WorkspaceStatus.EXPLORING,
-                        "version": base.version + 1,
-                        "facts": [
-                            Fact(
-                                id="planning_area",
-                                key="planning_area",
-                                value="Toronto/GTA",
-                                source=FactSource.INFERENCE,
-                                confirmation=Confirmation.UNCONFIRMED,
-                                hard=False,
-                                scope="trip",
-                            )
-                        ],
-                    }
+                workspace = evolve(
+                    base,
+                    goal=message,
+                    status=WorkspaceStatus.EXPLORING,
+                    version=base.version + 1,
+                    facts=[
+                        Fact(
+                            id="planning_area",
+                            key="planning_area",
+                            value="Toronto/GTA",
+                            source=FactSource.INFERENCE,
+                            confirmation=Confirmation.UNCONFIRMED,
+                            hard=False,
+                            scope="trip",
+                        )
+                    ],
                 )
                 result = TurnResult(
                     self._reply(domain), domain, tools_for(domain, principal.kind), workspace

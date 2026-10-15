@@ -83,7 +83,7 @@ def test_model_patch_cannot_smuggle_an_inferred_hard_fact() -> None:
         )
 
 
-@pytest.mark.parametrize("missing", ["preview", "nonce", "idempotency_key", "expires_at", "target"])
+@pytest.mark.parametrize("missing", ["preview", "nonce", "idempotency_key", "expires_at", "created_at", "target"])
 def test_pending_action_requires_preview_nonce_expiry_and_idempotency(missing) -> None:
     values = dict(
         id="a",
@@ -92,9 +92,10 @@ def test_pending_action_requires_preview_nonce_expiry_and_idempotency(missing) -
         effect="SET_REMINDER",
         target="device",
         preview="Remind me at 17:15 to leave",
-        nonce="n",
-        idempotency_key="i",
-        expires_at=datetime(2026, 1, 1, tzinfo=UTC),
+        nonce="n" * 16,
+        idempotency_key="idem-key-1",
+        created_at=datetime(2026, 1, 1, tzinfo=UTC),
+        expires_at=datetime(2026, 1, 1, 0, 10, tzinfo=UTC),
     )
     values.pop(missing)
     with pytest.raises(ValidationError):
@@ -111,6 +112,13 @@ def test_evidence_freshness_is_evaluated_against_a_supplied_clock() -> None:
         retrieved_at=now - timedelta(minutes=5),
         expires_at=now + timedelta(minutes=1),
         precision="exact",
+        # Handling fields are required by the frozen evidence contract (no unsafe defaults).
+        kind="PLACES_DIRECT",
+        content_class="MAPS_PLACES",
+        llm_visible=False,
+        storage_class="EPHEMERAL",
+        attribution_required=True,
+        tool_call_id="call-1",
     )
     assert evidence.is_fresh(now)
     assert not evidence.is_fresh(now + timedelta(minutes=2))

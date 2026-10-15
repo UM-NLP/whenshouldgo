@@ -1,20 +1,95 @@
 """Phase 0 domain contracts (docs/trip-assistant-architecture.md,
-docs/agent-conversation-policy.md, docs/access-tiers.md).
+docs/agent-conversation-policy.md, docs/access-tiers.md,
+docs/data-and-history-design.md).
 
 Pydantic models reject unknown fields so that client input and model output can
 never smuggle identity, tier or state through extra keys.
+
+Every persisted document and API payload carries ``schema_version`` and ``kind``
+(docs/data-and-history-design.md, "Versioning"). Changes are additive within a version.
+
+Mutation rule: persisted contracts are immutable (``Frozen``). State changes build a
+new, fully revalidated copy through ``evolve`` or a named server function; the code
+base never uses ``model_construct`` or ``model_copy(update=...)`` (a test enforces it).
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from enum import StrEnum
+from typing import Annotated, Literal, TypeVar
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import (
+    AfterValidator,
+    AwareDatetime,
+    BaseModel,
+    ConfigDict,
+    Field,
+    StringConstraints,
+    model_validator,
+)
+
+SCHEMA_VERSION = 1
+MAX_MAPS_CACHE = timedelta(days=30)
+MAX_MAPS_CACHE_HOURS = 24 * 30
+# PLACEHOLDER: the owner has not chosen a pending-action lifetime. 60 minutes is a
+# conservative ceiling so that a stale preview can never be confirmed much later.
+MAX_PENDING_ACTION_TTL = timedelta(minutes=60)
+# Default retention for history (decision 19). The user may extend it, but a larger
+# value must be allowed deliberately by raising this constant.
+MAX_OUTING_RETENTION_DAYS = 180
+MAX_OUTING_RETENTION = timedelta(days=MAX_OUTING_RETENTION_DAYS)
+
+_T = TypeVar("_T", bound=BaseModel)
+
+# --- Bounded identifier and text types ----------------------------------------------
+Ident = Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9_.:-]{1,128}$")]
+PlaceId = Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9_-]{1,300}$")]
+OpaqueToken = Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9_-]{8,64}$")]
+ShortText = Annotated[str, StringConstraints(max_length=100)]
+VersionText = Annotated[str, StringConstraints(min_length=1, max_length=40)]
+
+_COORDINATES = re.compile(r"-?\d{1,3}\.\d+\s*[,;/ ]\s*-?\d{1,3}\.\d+")
+_STREET_ADDRESS = re.compile(
+    r"\b\d{1,6}\s+[\w.' -]{1,40}\b(street|st|avenue|ave|road|rd|boulevard|blvd|drive|dr|"
+    r"lane|ln|way|court|ct|crescent|cres|place|pl|highway|hwy)\b",
+    re.IGNORECASE,
+)
+_POSTAL_CODE = re.compile(r"\b[A-Za-z]\d[A-Za-z][ -]?\d[A-Za-z]\d\b")
+
+
+def _reject_location_text(value: str | None) -> str | None:
+    """Heuristic backstop only. Real provenance is enforced at the write path, which
+    accepts a label solely from text the user typed, never from Maps content."""
+    if value is not None and (
+        _COORDINATES.search(value) or _STREET_ADDRESS.search(value) or _POSTAL_CODE.search(value)
+    ):
+        raise ValueError("label looks like a coordinate or an address")
+    return value
+
+
+UserLabel = Annotated[str, StringConstraints(max_length=80), AfterValidator(_reject_location_text)]
 
 
 class Strict(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", validate_assignment=True)
+
+
+class Frozen(BaseModel):
+    """Immutable contract: no unknown fields and no mutation after construction."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+
+def evolve(model: _T, **changes: object) -> _T:
+    """Return a new, fully revalidated copy of ``model`` with ``changes`` applied."""
+    fields = type(model).model_fields
+    unknown = set(changes) - set(fields)
+    if unknown:
+        raise ValueError(f"unknown fields: {sorted(unknown)}")
+    return type(model)(**{**{name: getattr(model, name) for name in fields}, **changes})
 
 
 class PrincipalKind(StrEnum):
@@ -84,17 +159,19 @@ class Confirmation(StrEnum):
     UNCONFIRMED = "UNCONFIRMED"
 
 
-class Fact(Strict):
-    id: str
-    key: str
-    value: str | float | int | bool | None = None
+class Fact(Frozen):
+    schema_version: int = Field(default=SCHEMA_VERSION, ge=1)
+    kind: Literal["fact"] = "fact"
+    id: Ident
+    key: Ident
+    value: Annotated[str, StringConstraints(max_length=500)] | float | int | bool | None = None
     source: FactSource
     confirmation: Confirmation
     hard: bool
-    scope: str
-    evidence_ids: list[str] = Field(default_factory=list)
-    expires_at: datetime | None = None
-    depends_on: list[str] = Field(default_factory=list)
+    scope: Annotated[str, StringConstraints(min_length=1, max_length=64)]
+    evidence_ids: tuple[Ident, ...] = Field(default=(), max_length=50)
+    expires_at: AwareDatetime | None = None
+    depends_on: tuple[Ident, ...] = Field(default=(), max_length=50)
 
     @model_validator(mode="after")
     def _inference_is_never_a_confirmed_hard_fact(self) -> Fact:
@@ -107,16 +184,113 @@ class Fact(Strict):
         return self
 
 
-class Evidence(Strict):
-    id: str
-    tool: str
-    tool_version: str
-    source: str
-    retrieved_at: datetime
-    expires_at: datetime
-    precision: str
+class EvidenceKind(StrEnum):
+    GROUNDED_ANSWER = "GROUNDED_ANSWER"
+    PLACES_DIRECT = "PLACES_DIRECT"
+    ROUTE_DIRECT = "ROUTE_DIRECT"
+    USER = "USER"
+    WEATHER = "WEATHER"
+
+
+class ContentClass(StrEnum):
+    """Storage class of the content a piece of evidence points at."""
+
+    MAPS_GROUNDED = "MAPS_GROUNDED"
+    MAPS_PLACES = "MAPS_PLACES"
+    MAPS_ROUTE = "MAPS_ROUTE"
+    USER = "USER"
+    NONE = "NONE"
+
+
+class EvidenceStorageClass(StrEnum):
+    EPHEMERAL = "EPHEMERAL"
+    DISPLAY_CACHE = "DISPLAY_CACHE"
+    PLACE_ID_ONLY = "PLACE_ID_ONLY"
+
+
+_S = EvidenceStorageClass
+_C = ContentClass
+# Bidirectional: each kind allows only these classes, and each Maps class only its kind.
+# OPEN QUESTION (owner): WEATHER is pinned to NONE until its class is decided; weather
+# obtained through Grounding Lite may turn out to be Maps content.
+_KIND_CLASSES = {
+    EvidenceKind.GROUNDED_ANSWER: {_C.MAPS_GROUNDED},
+    EvidenceKind.PLACES_DIRECT: {_C.MAPS_PLACES},
+    EvidenceKind.ROUTE_DIRECT: {_C.MAPS_ROUTE},
+    EvidenceKind.USER: {_C.USER, _C.NONE},
+    EvidenceKind.WEATHER: {_C.NONE},
+}
+# Explicit allowed storage per content class. Only grounded answers may be display-cached
+# (24 h default, 30 days max); Places payloads are re-fetched by place ID and Routes
+# payloads stay in memory.
+_CLASS_STORAGE = {
+    _C.MAPS_GROUNDED: {_S.EPHEMERAL, _S.DISPLAY_CACHE, _S.PLACE_ID_ONLY},
+    _C.MAPS_PLACES: {_S.EPHEMERAL, _S.PLACE_ID_ONLY},
+    _C.MAPS_ROUTE: {_S.EPHEMERAL},
+    _C.USER: {_S.EPHEMERAL},
+    _C.NONE: {_S.EPHEMERAL},
+}
+_NEVER_LLM_VISIBLE = {_C.MAPS_PLACES, _C.MAPS_ROUTE}  # until decision 17 changes
+
+
+class Evidence(Frozen):
+    """Provenance and handling metadata for a tool result. Holds no content, only a hash."""
+
+    schema_version: int = Field(default=SCHEMA_VERSION, ge=1)
+    id: Ident
+    tool: Ident
+    tool_version: VersionText
+    source: ShortText
+    retrieved_at: AwareDatetime
+    expires_at: AwareDatetime  # freshness
+    precision: Annotated[str, StringConstraints(max_length=40)]
+    # No defaults for the handling fields: a producer must state them explicitly.
+    kind: EvidenceKind
+    content_class: ContentClass
+    llm_visible: bool
+    storage_class: EvidenceStorageClass
+    attribution_required: bool
+    cache_expires_at: AwareDatetime | None = None  # storage; separate from freshness
+    place_id: PlaceId | None = None
+    tool_call_id: Ident | None = None  # provenance within the run
+    content_hash: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+
+    @model_validator(mode="after")
+    def _handling_rules(self) -> Evidence:
+        if self.content_class not in _KIND_CLASSES[self.kind]:
+            raise ValueError(f"{self.kind} evidence cannot use content_class {self.content_class}")
+        if self.storage_class not in _CLASS_STORAGE[self.content_class]:
+            raise ValueError(f"{self.content_class} content cannot use {self.storage_class}")
+        if self.llm_visible and (
+            self.content_class in _NEVER_LLM_VISIBLE
+            or self.kind in (EvidenceKind.PLACES_DIRECT, EvidenceKind.ROUTE_DIRECT)
+        ):
+            raise ValueError("direct Places/Routes evidence must not be LLM-visible")
+        if self.content_class.value.startswith("MAPS_") and not self.attribution_required:
+            raise ValueError("Maps content requires attribution")
+        if self.expires_at <= self.retrieved_at:
+            raise ValueError("expires_at must follow retrieved_at")
+        if self.storage_class == _S.DISPLAY_CACHE:
+            if self.cache_expires_at is None:
+                raise ValueError("DISPLAY_CACHE evidence requires cache_expires_at")
+            if self.cache_expires_at < self.retrieved_at:
+                raise ValueError("cache_expires_at precedes retrieved_at")
+            if self.cache_expires_at > self.retrieved_at + MAX_MAPS_CACHE:
+                raise ValueError("cache_expires_at exceeds retrieved_at + 30 days")
+        elif self.cache_expires_at is not None:
+            raise ValueError("cache_expires_at is only valid for DISPLAY_CACHE evidence")
+        if self.storage_class == _S.PLACE_ID_ONLY:
+            if not self.place_id:
+                raise ValueError("PLACE_ID_ONLY evidence requires place_id")
+            if self.content_hash is not None:
+                raise ValueError("PLACE_ID_ONLY evidence must not carry a content_hash")
+        if self.kind != EvidenceKind.USER and not self.tool_call_id:
+            raise ValueError("tool evidence requires tool_call_id")
+        return self
 
     def is_fresh(self, now: datetime) -> bool:
+        if now.tzinfo is None or now.utcoffset() is None:
+            raise ValueError("now must be timezone-aware")
         return self.expires_at > now
 
 
@@ -131,31 +305,67 @@ class WorkspacePatch(Strict):
     status: WorkspaceStatus | None = None
 
 
-class PendingAction(Strict):
+class PendingActionEffect(StrEnum):
+    # CREATE_ROUTINE is added in Phase 2 (decision 20) and ENABLE_NOTIFICATIONS in
+    # Phase 3 (decision 21), together with their handlers. Not before.
+    SET_REMINDER = "SET_REMINDER"
+    LAUNCH_HANDOFF = "LAUNCH_HANDOFF"
+
+
+class PendingAction(Frozen):
     """Two-step side effect: shown as ``preview``, committed only on explicit confirmation.
 
-    No expiry duration is specified in docs/; the creator must set ``expires_at``.
+    Confirmation produces a new copy via ``confirm_pending_action``; the field is never
+    assigned. The lifetime ceiling is MAX_PENDING_ACTION_TTL (a placeholder, see above).
     """
 
-    id: str
-    workspace_id: str
-    plan_version: int
-    effect: str
-    target: str
-    preview: str
-    nonce: str
-    idempotency_key: str
-    expires_at: datetime
-    confirmed_at: datetime | None = None
+    schema_version: int = Field(default=SCHEMA_VERSION, ge=1)
+    kind: Literal["pending_action"] = "pending_action"
+    id: Ident
+    workspace_id: Ident
+    plan_version: int = Field(ge=1)
+    effect: PendingActionEffect
+    target: Ident  # opaque reference or place_id; never an address or coordinates
+    preview: Annotated[str, StringConstraints(min_length=1, max_length=500)]
+    nonce: Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9_-]{16,128}$")]
+    idempotency_key: Annotated[str, StringConstraints(min_length=8, max_length=200)]
+    created_at: AwareDatetime
+    expires_at: AwareDatetime
+    confirmed_at: AwareDatetime | None = None
+
+    @model_validator(mode="after")
+    def _lifetime(self) -> PendingAction:
+        if self.expires_at <= self.created_at:
+            raise ValueError("expires_at must follow created_at")
+        if self.expires_at - self.created_at > MAX_PENDING_ACTION_TTL:
+            raise ValueError("pending action lifetime exceeds MAX_PENDING_ACTION_TTL")
+        if self.confirmed_at is not None and not (
+            self.created_at <= self.confirmed_at <= self.expires_at
+        ):
+            raise ValueError("confirmed_at must fall between created_at and expires_at")
+        return self
+
+
+def confirm_pending_action(action: PendingAction, now: datetime) -> PendingAction:
+    """Server-side confirmation: returns a new copy; refuses expired or repeat confirmation."""
+    if now.tzinfo is None or now.utcoffset() is None:
+        raise ValueError("now must be timezone-aware")
+    if action.confirmed_at is not None:
+        raise ValueError("pending action is already confirmed")
+    if not action.created_at <= now <= action.expires_at:
+        raise ValueError("pending action has expired or is not yet valid")
+    return evolve(action, confirmed_at=now)
 
 
 class TripWorkspace(Strict):
-    id: str
-    owner_id: str  # set from the verified token only
+    schema_version: int = Field(default=SCHEMA_VERSION, ge=1)
+    kind: Literal["trip_workspace"] = "trip_workspace"
+    id: Ident
+    owner_id: Ident  # set from the verified token only
     status: WorkspaceStatus = WorkspaceStatus.CAPTURED
     version: int = 0
     timezone: str = "America/Toronto"
-    goal: str | None = None
+    goal: Annotated[str, StringConstraints(max_length=20_000)] | None = None
     facts: list[Fact] = Field(default_factory=list)
     evidence: list[Evidence] = Field(default_factory=list)
     pending_actions: list[PendingAction] = Field(default_factory=list)
@@ -170,3 +380,305 @@ class TripWorkspace(Strict):
             if fact.source == FactSource.INFERENCE
             and fact.confirmation == Confirmation.UNCONFIRMED
         ]
+
+
+# --- Plan versions and history (docs/data-and-history-design.md) -------------------
+# These contracts hold IDs, enums, timestamps and text the user typed. They have no
+# field that can carry a Maps name, address, category, hours, rating or coordinates.
+
+
+class PlaceRef(Frozen):
+    place_id: PlaceId
+    id_checked_at: AwareDatetime | None = None
+
+
+class PlanDestination(Frozen):
+    place_id: PlaceId
+    user_label: UserLabel | None = None  # only what the user typed
+
+
+class ReplacedReason(StrEnum):
+    USER_EDIT = "USER_EDIT"
+    CONSTRAINT_CHANGED = "CONSTRAINT_CHANGED"
+    EVIDENCE_STALE = "EVIDENCE_STALE"
+    ADAPTATION = "ADAPTATION"
+
+
+class PlanWarning(StrEnum):
+    """Warnings are codes, never free text, so provider content cannot ride in them."""
+
+    ASSUMPTIONS_UNCONFIRMED = "ASSUMPTIONS_UNCONFIRMED"
+    EVIDENCE_STALE = "EVIDENCE_STALE"
+    ROUTE_UNVERIFIED = "ROUTE_UNVERIFIED"
+    DETAILS_UNAVAILABLE = "DETAILS_UNAVAILABLE"
+    HARD_NEED_UNVERIFIED = "HARD_NEED_UNVERIFIED"
+
+
+class PlanVersion(Frozen):
+    schema_version: int = Field(default=SCHEMA_VERSION, ge=1)
+    kind: Literal["plan_version"] = "plan_version"
+    id: Ident
+    workspace_id: Ident
+    version: int = Field(ge=1)
+    parent_version: int | None = Field(default=None, ge=1)
+    replaced_reason: ReplacedReason | None = None
+    destination: PlanDestination
+    origin_ref: OpaqueToken  # opaque token, never coordinates or an address
+    user_constraint_fact_ids: tuple[Ident, ...] = Field(default=(), max_length=50)
+    grounded_evidence_id: Ident | None = None  # display-cache pointer that may expire
+    route_evidence_id: Ident | None = None  # ephemeral
+    assumption_fact_ids: tuple[Ident, ...] = Field(default=(), max_length=50)
+    warnings: tuple[PlanWarning, ...] = Field(default=(), max_length=20)
+    created_at: AwareDatetime
+
+    @model_validator(mode="after")
+    def _lineage(self) -> PlanVersion:
+        if self.parent_version is not None and self.parent_version >= self.version:
+            raise ValueError("parent_version must precede version")
+        if self.replaced_reason is not None and self.parent_version is None:
+            raise ValueError("replaced_reason requires parent_version")
+        return self
+
+
+class IntentTag(StrEnum):
+    """Classified from the user's own request, never from Maps content."""
+
+    FOOD_DRINK = "FOOD_DRINK"
+    OUTDOOR = "OUTDOOR"
+    KIDS = "KIDS"
+    ERRAND = "ERRAND"
+    OTHER = "OTHER"
+
+
+class Daypart(StrEnum):
+    MORNING = "MORNING"
+    AFTERNOON = "AFTERNOON"
+    EVENING = "EVENING"
+    NIGHT = "NIGHT"
+
+
+class OutingEventType(StrEnum):
+    SELECTED = "SELECTED"
+    HANDOFF_LAUNCHED = "HANDOFF_LAUNCHED"
+    REMINDER_SET = "REMINDER_SET"
+    VISITED_CONFIRMED = "VISITED_CONFIRMED"
+    SKIPPED = "SKIPPED"
+
+
+class OutingEvent(Frozen):
+    type: OutingEventType
+    at: AwareDatetime
+
+
+class Thumb(StrEnum):
+    UP = "UP"
+    DOWN = "DOWN"
+
+
+class FeedbackReason(StrEnum):
+    NOT_RELEVANT = "NOT_RELEVANT"
+    TOO_FAR = "TOO_FAR"
+    CLOSED = "CLOSED"
+    WRONG_VIBE = "WRONG_VIBE"
+    OTHER = "OTHER"
+
+
+class OutingFeedback(Frozen):
+    thumb: Thumb | None = None
+    reason_enum: FeedbackReason | None = None
+    note: Annotated[str, StringConstraints(max_length=500)] | None = None  # excluded from logs
+
+
+class OutingStrength(StrEnum):
+    """A handoff is not proof of a visit."""
+
+    HANDOFF = "HANDOFF"
+    SELF_REPORTED_VISIT = "SELF_REPORTED_VISIT"
+
+
+class OutingRecord(Frozen):
+    schema_version: int = Field(default=SCHEMA_VERSION, ge=1)
+    kind: Literal["outing_record"] = "outing_record"
+    id: Ident
+    owner_id: Ident
+    workspace_id: Ident
+    plan_version: int = Field(ge=1)
+    occurred_at: AwareDatetime  # UTC
+    tz: Annotated[str, StringConstraints(max_length=64)]
+    local_dow: int = Field(ge=0, le=6)  # Monday=0, derived at write
+    local_daypart: Daypart
+    place_ref: PlaceRef
+    user_label: UserLabel | None = None  # never a Maps name
+    intent_tag: IntentTag
+    events: tuple[OutingEvent, ...] = Field(default=(), max_length=50)
+    feedback: OutingFeedback = OutingFeedback()
+    strength: OutingStrength
+    consent_id: Ident
+    retention_expires_at: AwareDatetime
+
+    @model_validator(mode="after")
+    def _consistent(self) -> OutingRecord:
+        if self.occurred_at.utcoffset() != timedelta(0):
+            raise ValueError("occurred_at must be UTC")
+        try:
+            zone = ZoneInfo(self.tz)
+        except (ZoneInfoNotFoundError, ValueError, OSError) as error:
+            raise ValueError("tz must be an IANA time zone") from error
+        if self.occurred_at.astimezone(zone).weekday() != self.local_dow:
+            raise ValueError("local_dow does not match occurred_at in tz")
+        if self.retention_expires_at <= self.occurred_at:
+            raise ValueError("retention_expires_at must follow occurred_at")
+        if self.retention_expires_at > self.occurred_at + MAX_OUTING_RETENTION:
+            raise ValueError("retention_expires_at exceeds MAX_OUTING_RETENTION")
+        visited = any(event.type == OutingEventType.VISITED_CONFIRMED for event in self.events)
+        if visited != (self.strength == OutingStrength.SELF_REPORTED_VISIT):
+            raise ValueError("a visit exists only when the user confirmed it")
+        return self
+
+
+class ConsentPurpose(StrEnum):
+    LOCATION_FOREGROUND = "LOCATION_FOREGROUND"
+    HISTORY_STORE = "HISTORY_STORE"
+    PATTERN_INFERENCE = "PATTERN_INFERENCE"
+    PROACTIVE_NOTIFY = "PROACTIVE_NOTIFY"
+    CLOUD_SYNC = "CLOUD_SYNC"
+    CALENDAR_READ = "CALENDAR_READ"  # later phase
+
+
+class ConsentProcessor(StrEnum):
+    """Processors the notice must name (docs/data-and-history-design.md)."""
+
+    GOOGLE = "GOOGLE"
+    OPENROUTER = "OPENROUTER"
+    UPSTREAM_MODEL_HOST = "UPSTREAM_MODEL_HOST"
+
+
+class ConsentChannel(StrEnum):
+    WEBPUSH = "WEBPUSH"
+    FCM_ANDROID = "FCM_ANDROID"  # later
+    IN_APP = "IN_APP"
+
+
+class ConsentScope(Frozen):
+    retention_days: int | None = Field(default=None, ge=1)
+    channels: tuple[ConsentChannel, ...] = Field(default=(), max_length=5)
+
+
+class ConsentRecord(Frozen):
+    """Append-only ledger entry; storage and the withdrawal cascade are out of scope here."""
+
+    schema_version: int = Field(default=SCHEMA_VERSION, ge=1)
+    kind: Literal["consent_record"] = "consent_record"
+    id: Ident
+    owner_id: Ident
+    purpose: ConsentPurpose
+    notice_version: VersionText
+    processors: tuple[ConsentProcessor, ...] = Field(min_length=1, max_length=5)
+    scope: ConsentScope
+    granted_at: AwareDatetime
+    withdrawn_at: AwareDatetime | None = None
+    context: Annotated[str, StringConstraints(pattern=r"^[a-z0-9_.-]{1,64}$")]
+
+    @model_validator(mode="after")
+    def _withdrawal_follows_grant(self) -> ConsentRecord:
+        if self.withdrawn_at is not None and self.withdrawn_at < self.granted_at:
+            raise ValueError("withdrawn_at precedes granted_at")
+        return self
+
+
+# --- Runtime configuration (docs/model-hosting-decision.md) ------------------------
+
+
+class TokenCeilings(Frozen):
+    run_input_tokens: int = Field(default=40_000, ge=1)
+    run_output_tokens: int = Field(default=4_000, ge=1)
+    run_model_calls: int = Field(default=6, ge=1)
+    run_tool_calls: int = Field(default=12, ge=1)
+    run_escalations: int = Field(default=1, ge=0)
+    interactive_budget_seconds: int = Field(default=20, ge=1)
+
+
+class RuntimeTTLs(Frozen):
+    # Never above the Evidence cache cap, so a config cannot out-live the legal maximum.
+    grounded_cache_hours: int = Field(default=24, ge=1, le=MAX_MAPS_CACHE_HOURS)
+    guest_workspace_inactive_days: int = Field(default=7, ge=1)
+    outing_retention_days: int = Field(default=180, ge=1, le=MAX_OUTING_RETENTION_DAYS)
+    pending_action_ttl_minutes: int | None = Field(
+        default=None, ge=1, le=int(MAX_PENDING_ACTION_TTL.total_seconds() // 60)
+    )  # unspecified in docs
+
+
+class PhaseFlags(Frozen):
+    phase0_discovery: bool = True
+    phase1_history: bool = False
+    phase2_patterns: bool = False
+    phase3_notifications: bool = False
+
+
+class PromptHash(Frozen):
+    name: Ident
+    sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
+class ToolSchemaVersion(Frozen):
+    name: Ident
+    version: VersionText
+
+
+class RuntimeConfig(Frozen):
+    """Versioned bundle recorded on every turn; change the version to audit or roll back.
+
+    Sub-objects are required (no shared default instances); collections are tuples so the
+    bundle is deeply immutable and hashable.
+    """
+
+    schema_version: int = Field(default=SCHEMA_VERSION, ge=1)
+    kind: Literal["runtime_config"] = "runtime_config"
+    version: VersionText
+    model_id: Annotated[str, StringConstraints(min_length=1, max_length=200)]
+    provider: Annotated[str, StringConstraints(min_length=1, max_length=100)]
+    prompt_version_hashes: tuple[PromptHash, ...]
+    tool_schema_versions: tuple[ToolSchemaVersion, ...]
+    classifier_version: VersionText
+    policy_version: VersionText
+    entitlement_version: VersionText
+    token_ceilings: TokenCeilings
+    ttls: RuntimeTTLs
+    flags: PhaseFlags
+
+    @model_validator(mode="after")
+    def _unique_names(self) -> RuntimeConfig:
+        for items in (self.prompt_version_hashes, self.tool_schema_versions):
+            names = [item.name for item in items]
+            if len(names) != len(set(names)):
+                raise ValueError("duplicate name in runtime config")
+        return self
+
+
+# --- API payloads -------------------------------------------------------------------
+
+
+class ErrorCode(StrEnum):
+    QUOTA = "QUOTA"  # not emitted yet: quota exhaustion is still a 200 with a flag
+    POLICY = "POLICY"
+    PROVIDER = "PROVIDER"  # also used for unhandled server faults until a code exists
+    VALIDATION = "VALIDATION"
+    CONFLICT = "CONFLICT"
+
+
+class ErrorBody(Frozen):
+    schema_version: int = Field(default=SCHEMA_VERSION, ge=1)
+    kind: Literal["error"] = "error"
+    code: ErrorCode
+    message: str = Field(max_length=500)  # server-authored, never provider or user content
+
+
+class TurnResponse(Frozen):
+    schema_version: int = Field(default=SCHEMA_VERSION, ge=1)
+    kind: Literal["turn_response"] = "turn_response"
+    reply: str = Field(max_length=5_000)
+    domain: DomainClass | None
+    allowed_tools: tuple[str, ...]
+    workspace_id: Ident | None
+    allowance_exhausted: bool
+    policy_version: str = Field(max_length=100)

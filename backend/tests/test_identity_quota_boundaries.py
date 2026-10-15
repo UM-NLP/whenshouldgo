@@ -116,7 +116,12 @@ def test_malformed_or_unknown_authorization_is_401_without_side_effects(authoriz
         headers={"Idempotency-Key": "k1", "Authorization": authorization},
     )
     assert response.status_code == 401
-    assert response.json() == {"detail": "authentication required"}
+    assert response.json() == {
+        "schema_version": 1,
+        "kind": "error",
+        "code": "POLICY",
+        "message": "authentication required",
+    }
     assert "tok-guest-a" not in response.text.lower()
     assert orch.quotas._usage == {}
     assert orch.workspaces == {}
@@ -219,7 +224,7 @@ def test_duplicate_key_with_different_body_is_rejected_without_side_effects() ->
     post(client, key="dup")
     workspace = orch.workspaces[("guest-a", "default")]
     response = post(client, key="dup", body={"message": "Plan a different Toronto trip"})
-    assert response.status_code == 422
+    assert response.status_code == 409  # was 422; now a typed CONFLICT
     assert orch.workspaces[("guest-a", "default")] is workspace
     assert turns(orch, "guest-a") == 1
 
