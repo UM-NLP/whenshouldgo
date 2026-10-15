@@ -27,8 +27,11 @@ NAIVE = datetime(2026, 10, 10, 15)
 
 
 # --- 1. kind <-> content_class laundering --------------------------------------
-@pytest.mark.parametrize("kind", ["WEATHER", "USER"])
-@pytest.mark.parametrize("content_class", ["MAPS_PLACES", "MAPS_ROUTE", "MAPS_GROUNDED"])
+@pytest.mark.parametrize(
+    ("kind", "content_class"),
+    [(k, c) for k in ("WEATHER", "USER") for c in ("MAPS_PLACES", "MAPS_ROUTE", "MAPS_GROUNDED")
+     if (k, c) != ("WEATHER", "MAPS_GROUNDED")],  # weather via Grounding Lite is MAPS_GROUNDED
+)
 def test_f1_weather_and_user_cannot_carry_maps_classes(kind, content_class) -> None:
     with pytest.raises(ValidationError):
         evidence(
@@ -127,10 +130,12 @@ def test_f3_phase_2_3_effects_are_not_in_the_enum_yet() -> None:
 
 
 def test_f3_pending_action_bounds() -> None:
-    assert domain_module.MAX_PENDING_ACTION_TTL == timedelta(minutes=60)
-    assert pending(expires_at=T0 + timedelta(minutes=60))
+    assert domain_module.MAX_PENDING_ACTION_TTL == timedelta(minutes=15)
+    assert pending(expires_at=T0 + timedelta(minutes=15))
+    with pytest.raises(ValidationError):
+        pending(expires_at=T0 + timedelta(minutes=15, seconds=1))
     for bad in (
-        dict(expires_at=T0 + timedelta(minutes=60, seconds=1)),
+        dict(expires_at=T0 + timedelta(minutes=16)),
         dict(expires_at=T0),
         dict(nonce="short"),
         dict(idempotency_key="x"),
@@ -381,9 +386,59 @@ def test_f7_quota_exhausted_stays_200_with_flag() -> None:
     assert flags == [False, False, True]  # QUOTA/PROVIDER codes are not emitted for this
 
 
+# --- owner decisions 2026-10-15: weather ----------------------------------------------------
+def weather(**overrides):
+    values = dict(
+        kind="WEATHER", content_class="MAPS_GROUNDED", llm_visible=True,
+        storage_class="DISPLAY_CACHE", attribution_required=True,
+    )  # fmt: skip
+    return evidence(**{**values, **overrides})
+
+
+def test_weather_from_grounding_lite_is_maps_grounded_content() -> None:
+    assert weather()
+    with pytest.raises(ValidationError):
+        weather(attribution_required=False)
+    with pytest.raises(ValidationError):
+        weather(cache_expires_at=T0 + timedelta(days=30, seconds=1))  # 30-day cap
+    assert weather(cache_expires_at=T0 + timedelta(days=30))
+    for storage in ("PLACE_ID_ONLY",):
+        assert weather(storage_class=storage, place_id="synthetic-place", cache_expires_at=None,
+                       content_hash=None)  # fmt: skip
+    with pytest.raises(ValidationError):
+        weather(storage_class="EPHEMERAL")  # cache_expires_at only for DISPLAY_CACHE
+
+
+def test_non_google_weather_is_none_and_not_attribution_required_maps_content() -> None:
+    assert weather(content_class="NONE", attribution_required=False, storage_class="EPHEMERAL",
+                   cache_expires_at=None)  # fmt: skip
+    with pytest.raises(ValidationError):
+        weather(content_class="NONE", attribution_required=True, storage_class="EPHEMERAL",
+                cache_expires_at=None)  # fmt: skip
+    with pytest.raises(ValidationError):
+        weather(content_class="NONE", attribution_required=False)  # no DISPLAY_CACHE for NONE
+
+
+def test_maps_grounded_is_only_for_grounded_answer_and_weather() -> None:
+    assert evidence(kind="GROUNDED_ANSWER", content_class="MAPS_GROUNDED")
+    for kind in ("USER", "PLACES_DIRECT", "ROUTE_DIRECT"):
+        with pytest.raises(ValidationError):
+            evidence(kind=kind, content_class="MAPS_GROUNDED")
+
+
+def test_direct_maps_evidence_stays_hidden_from_the_model() -> None:
+    for kind, cls in (("PLACES_DIRECT", "MAPS_PLACES"), ("ROUTE_DIRECT", "MAPS_ROUTE")):
+        with pytest.raises(ValidationError):
+            evidence(kind=kind, content_class=cls, llm_visible=True, storage_class="EPHEMERAL",
+                     cache_expires_at=None)  # fmt: skip
+
+
 # --- 8. retention cap -------------------------------------------------------------------------
 def test_f8_outing_retention_is_capped_at_180_days() -> None:
     assert domain_module.MAX_OUTING_RETENTION == timedelta(days=180)
     assert outing(retention_expires_at=T0 + timedelta(days=180))
     with pytest.raises(ValidationError):
         outing(retention_expires_at=T0 + timedelta(days=181))
+    assert domain_module.RuntimeTTLs(outing_retention_days=180)
+    with pytest.raises(ValidationError):
+        domain_module.RuntimeTTLs(outing_retention_days=181)  # shorten only, never extend

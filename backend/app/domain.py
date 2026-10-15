@@ -34,11 +34,10 @@ from pydantic import (
 SCHEMA_VERSION = 1
 MAX_MAPS_CACHE = timedelta(days=30)
 MAX_MAPS_CACHE_HOURS = 24 * 30
-# PLACEHOLDER: the owner has not chosen a pending-action lifetime. 60 minutes is a
-# conservative ceiling so that a stale preview can never be confirmed much later.
-MAX_PENDING_ACTION_TTL = timedelta(minutes=60)
-# Default retention for history (decision 19). The user may extend it, but a larger
-# value must be allowed deliberately by raising this constant.
+# Owner decision (2026-10-15): a pending action lives at most 15 minutes.
+MAX_PENDING_ACTION_TTL = timedelta(minutes=15)
+# Owner decision (2026-10-15): history retention is hard-capped at 180 days. Users may
+# shorten it but not extend it past 180 days until the owner decides otherwise.
 MAX_OUTING_RETENTION_DAYS = 180
 MAX_OUTING_RETENTION = timedelta(days=MAX_OUTING_RETENTION_DAYS)
 
@@ -211,14 +210,16 @@ class EvidenceStorageClass(StrEnum):
 _S = EvidenceStorageClass
 _C = ContentClass
 # Bidirectional: each kind allows only these classes, and each Maps class only its kind.
-# OPEN QUESTION (owner): WEATHER is pinned to NONE until its class is decided; weather
-# obtained through Grounding Lite may turn out to be Maps content.
+# Owner decision (2026-10-15): weather obtained through Grounding Lite is Maps content.
+# It stays MAPS_GROUNDED (attribution, display-cache-only storage, 30-day cap) until
+# Google answers the question in writing. NONE is reserved for weather from a non-Google
+# source. MAPS_GROUNDED is allowed only for GROUNDED_ANSWER and WEATHER.
 _KIND_CLASSES = {
     EvidenceKind.GROUNDED_ANSWER: {_C.MAPS_GROUNDED},
     EvidenceKind.PLACES_DIRECT: {_C.MAPS_PLACES},
     EvidenceKind.ROUTE_DIRECT: {_C.MAPS_ROUTE},
     EvidenceKind.USER: {_C.USER, _C.NONE},
-    EvidenceKind.WEATHER: {_C.NONE},
+    EvidenceKind.WEATHER: {_C.MAPS_GROUNDED, _C.NONE},
 }
 # Explicit allowed storage per content class. Only grounded answers may be display-cached
 # (24 h default, 30 days max); Places payloads are re-fetched by place ID and Routes
@@ -268,6 +269,12 @@ class Evidence(Frozen):
             raise ValueError("direct Places/Routes evidence must not be LLM-visible")
         if self.content_class.value.startswith("MAPS_") and not self.attribution_required:
             raise ValueError("Maps content requires attribution")
+        if (
+            self.kind == EvidenceKind.WEATHER
+            and self.content_class == _C.NONE
+            and self.attribution_required
+        ):
+            raise ValueError("non-Google weather cannot be tagged as attribution-required Maps content")
         if self.expires_at <= self.retrieved_at:
             raise ValueError("expires_at must follow retrieved_at")
         if self.storage_class == _S.DISPLAY_CACHE:
@@ -316,7 +323,7 @@ class PendingAction(Frozen):
     """Two-step side effect: shown as ``preview``, committed only on explicit confirmation.
 
     Confirmation produces a new copy via ``confirm_pending_action``; the field is never
-    assigned. The lifetime ceiling is MAX_PENDING_ACTION_TTL (a placeholder, see above).
+    assigned. The lifetime ceiling is MAX_PENDING_ACTION_TTL (owner decision, 15 minutes).
     """
 
     schema_version: int = Field(default=SCHEMA_VERSION, ge=1)
