@@ -35,6 +35,9 @@ class GatewayError(Exception):
     code: ErrorCode = ErrorCode.PROVIDER
     retryable: bool = False
     default_message = "model gateway failure"
+    # True only when the provider said (HTTP 429 or 503) it rejected the request before
+    # processing it. Such a call costs no tokens, but it still counts as a call.
+    rejected_before_processing = False
 
     def __init__(
         self, message: str | None = None, *, usage: Usage | None = None, calls: int = 0

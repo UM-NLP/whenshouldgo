@@ -144,6 +144,12 @@ class ToolName(StrEnum):
     MAPS_GROUNDED_DISCOVERY = "maps_grounded_discovery"
     ROUTE_ESTIMATE = "route_estimate"
     DEADLINE_VALIDATOR = "deadline_validator"
+    # The five Grounding Lite tools (docs/model-hosting-decision.md). TODO(verify): names.
+    SEARCH_PLACES = "search_places"
+    LOOKUP_WEATHER = "lookup_weather"
+    COMPUTE_ROUTES = "compute_routes"
+    RESOLVE_NAMES = "resolve_names"
+    RESOLVE_MAPS_URLS = "resolve_maps_urls"
 
 
 class ToolOutcome(StrEnum):

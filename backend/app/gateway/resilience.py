@@ -159,7 +159,13 @@ class ResilientGateway:
             # Retryable failure: decide whether a retry fits the run budget.
             failed_calls += calls
             # A call went out: charge what came back, else assume the worst case.
-            spent: Usage = failure.usage if failure.usage is not None else current.worst_case_usage
+            spent: Usage
+            if failure.usage is not None:
+                spent = failure.usage
+            elif failure.rejected_before_processing:
+                spent = ZERO_USAGE  # rejected before processing: free, but the call counted
+            else:
+                spent = current.worst_case_usage
             charged = charged.plus(spent)
             if attempt == self._policy.max_attempts:
                 raise failure

@@ -107,6 +107,11 @@ def _guarded(fn: Callable[..., Any], *args: Any) -> tuple[Any, bool]:
         return None, False
 
 
+# Public aliases for sibling packages (discovery) that need the same guarded parsing.
+guarded = _guarded
+strict_loads = _loads
+
+
 def validate_url(url: str) -> None:
     """https, the exact host openrouter.ai, the chat path; no userinfo, port, query or fragment."""
     if (
@@ -517,8 +522,13 @@ class OpenRouterGateway:
                 turn = self._attempt(request, credential, repair, deadline, sent, budget)
             except GatewayError as error:
                 spent = error.usage
-                if spent is None and sent[0] > sent_before:
-                    # A call went out and nothing trustworthy came back: assume the worst.
+                if (
+                    spent is None
+                    and sent[0] > sent_before
+                    and not error.rejected_before_processing
+                ):
+                    # A call may have been processed and no usage came back (timeout,
+                    # reset, bad usage): assume the worst. A 429/503 rejection is free.
                     spent = request.worst_case_usage
                 if spent is not None:
                     total = total.plus(spent)
@@ -613,14 +623,14 @@ class OpenRouterGateway:
         body = response.body
         worst = request.worst_case_usage
         if response.status_code != 200:
-            raise _map_http_error(response.status_code)
+            raise _map_http_error(response.status_code, http=True)
         if body is None:
             raise MalformedOutputError()
         if (response.size_bytes or 0) > MAX_RESPONSE_BYTES:
             raise MalformedOutputError("provider response is too large", usage=worst)
         if "error" in body:
             code = body["error"].get("code") if isinstance(body["error"], dict) else None
-            raise _map_http_error(code if isinstance(code, int) else 502)
+            raise _map_http_error(code if isinstance(code, int) else 502, http=False)
 
         usage = self._parse_usage(request, body)
         if self._clock() > deadline:
@@ -771,13 +781,22 @@ class OpenRouterGateway:
         return tuple(calls)
 
 
-def _map_http_error(status: int) -> GatewayError:
+def _map_http_error(status: int, *, http: bool) -> GatewayError:
+    """Map a status to a typed error. ``http`` is True only for the real HTTP status line.
+
+    Only a real HTTP 429 is "rejected before processing" (free). A 503 is charged: the
+    OpenRouter error page defines it as "no available model provider" or provider_overloaded
+    and says nothing about billing. An error object inside a 200 body is never free."""
+    error: GatewayError
     if status == 429:
-        return ProviderRateLimitError()
-    if status == 402:
-        return ProviderQuotaError()
-    if status in (408, 504):
-        return ProviderTimeoutError()
-    if status >= 500:
-        return ProviderUnavailableError()
-    return ProviderRejectedError()
+        error = ProviderRateLimitError()
+    elif status == 402:
+        error = ProviderQuotaError()
+    elif status in (408, 504):
+        error = ProviderTimeoutError()
+    elif status >= 500:
+        error = ProviderUnavailableError()
+    else:
+        error = ProviderRejectedError()
+    error.rejected_before_processing = http and status == 429
+    return error

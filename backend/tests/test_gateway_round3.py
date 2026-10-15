@@ -216,9 +216,12 @@ def _ladder(script, *, config=None, table=None):
 
 
 def test_f4_failed_attempts_without_usage_are_charged_at_the_worst_case() -> None:
+    # Updated deliberately: 429 and 503 are rejected before processing and cost nothing
+    # (see test_gateway_rejection_charging.py). Only calls that may have been processed
+    # without usage coming back (timeout, connection reset) are charged at the worst case.
     config, table = priced_config(), priced_table()
-    for failure in (TransportResponse(status_code=429, body=None), TransportTimeout(),
-                    TransportResponse(status_code=503, body=None)):
+    for failure in (TransportTimeout(), TransportFailure(),
+                    TransportResponse(status_code=504, body=None)):
         _, ladder = _ladder([failure, completion_response(GOOD)], config=config, table=table)
         turn = ladder.generate(make_request(runtime_config=config))
         # worst case of the failed call (1,000 in / 600 out) plus the success (100 / 20)

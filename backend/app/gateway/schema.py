@@ -18,6 +18,7 @@ MAX_TOOL_ARGUMENT_BYTES = 8_192
 _STRUCTURAL = {
     "type", "properties", "required", "additionalProperties", "enum", "const", "items",
     "minimum", "maximum", "minLength", "maxLength", "minItems", "maxItems",
+    "x_exactly_one_of",  # explicit extension: exactly one of the listed properties is present
 }  # fmt: skip
 _ANNOTATIONS = {"title", "description", "default", "examples", "$schema"}
 _TYPES = {"object", "array", "string", "integer", "number", "boolean", "null"}
@@ -54,6 +55,13 @@ def schema_is_supported(schema: Any, depth: int = 0) -> bool:
         return False
     if "items" in schema and not schema_is_supported(schema["items"], depth + 1):
         return False
+    if "x_exactly_one_of" in schema:
+        choices = schema["x_exactly_one_of"]
+        if (
+            not isinstance(choices, list) or len(choices) < 2 or len(set(choices)) != len(choices)
+            or not all(isinstance(c, str) and c in properties for c in choices)
+        ):
+            return False
     if "enum" in schema and not isinstance(schema["enum"], list):
         return False
     return all(
@@ -128,6 +136,9 @@ def validate(schema: dict[str, Any], value: Any, depth: int = 0) -> bool:
         if any(name not in value for name in schema.get("required", [])):
             return False
         if schema.get("additionalProperties", True) is False and set(value) - set(properties):
+            return False
+        choices = schema.get("x_exactly_one_of")
+        if choices is not None and sum(1 for name in choices if name in value) != 1:
             return False
         for name, sub in properties.items():
             if name in value and not validate(sub, value[name], depth + 1):
