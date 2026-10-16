@@ -95,15 +95,17 @@ Trigger path:
 
 ```text
 Orchestrator -> ModelGateway (OpenRouter, pinned provider, zero retention, no fallbacks)
-  call A  FRAME:    intent_tag, assumptions, WorkspacePatch from user facts only (no Maps content)
-  call B  DISCOVER: server-side MCP client for Grounding Lite with a tool allowlist
+  FRAME (one model call): WorkspacePatch + intent + typed search arguments, from user-derived
+                    context only (user message, user facts; never Maps content; no tools)
+  DISCOVER (no model call): server-side MCP client for Grounding Lite runs search_places from the
+                    validated search arguments under a per-run budget
                     -> GroundedAnswer { summary text, places[{place_id, attribution{title,url}, place_url}] }
-                       (shape from Google's Grounding Lite docs, to be confirmed by a live capture)
+                       (shape verified by a live capture on 2026-10-15)
 Validator: accepts or rejects, never edits
 Direct path (no LLM): Places Details by place ID, Routes check -> server-rendered components
 ```
 
-- The output of call B is `MAPS_GROUNDED`. It is never logged, never summarized into history, and never used to produce a patch. The model's `WorkspacePatch` comes only from call A and may reference place IDs but never names, hours or ratings.
+- In Phase 0 the model never sees Maps content (decision 23). The output of the discovery step is `MAPS_GROUNDED`. It is never logged, never summarized into history, never given to any model, and never used to produce a patch. It exists only in the HTTP response and the display cache. The model's `WorkspacePatch` comes only from the FRAME call and may reference place IDs but never names, hours or ratings. The assistant therefore cannot discuss or compare specific places in its own words; every follow-up becomes a new search steered by the user's text, and the server writes all reply text.
 - The validator checks that each source came from a tool call in this run, that source URIs are on the allowlist, finish reason, truncation, budgets and schema. It may reject the whole block and fall back. It cannot redact, trim or reorder it.
 - The server carries the grounded summary as raw text to be inserted as text, never HTML (escaping happens only at one named HTML sink). Each place's attribution title, exactly as provided and linked to its URL, follows immediately after it with Google Maps branding and no interstitial content. A hash over everything displayed is anchored to the tool-call ledger, so a block that does not match what the tool returned is rejected. Coordinates and other links in the payload are discarded, never stored. Grounded text is held only in the display cache. Server-authored framing above it is visually distinct. Route and place components are separate and labelled.
 - Selecting a source sets `selected_place_id`. The server then calls Places Details and Routes directly for the feasibility check.
