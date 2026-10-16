@@ -55,6 +55,7 @@ Start with `architect` for new or cross-cutting work.
 | `evaluation` | Tests, synthetic fixtures, release evidence, eval gates | `agent-evaluation-plan` |
 | `security-reviewer` | Read-only review of a change | `trip-assistant-security`, `access-tiers`, `voice-and-domain-controls` |
 | `legal` | Provider-terms, licensing and privacy research; no edits, not legal advice | `decisions`, `trip-assistant-security`, `model-hosting-decision`, `docs/legal/` |
+| `gcp` | Google Cloud and Firebase setup, keys, IAM, budgets, quotas, runbooks; plans first and runs only approved changes | `trip-assistant-architecture`, `trip-assistant-security`, `access-tiers`, `model-hosting-decision`, `data-and-history-design`, `docs/legal/` |
 
 ## Stack
 
