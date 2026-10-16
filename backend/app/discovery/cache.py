@@ -1,11 +1,17 @@
-"""In-memory display cache for grounded answers (docs/legal/google-maps-llm-policy-summary.md
-section 5). Firestore comes later behind ``DisplayCacheStore``.
+"""In-memory display cache for VALIDATED grounded answers (docs/legal/
+google-maps-llm-policy-summary.md section 5). Firestore comes later behind ``DisplayCacheStore``.
 
-An entry is never served at or after its ``cache_expires_at``, and never past 30 days from
-retrieval even if the stored answer claims longer: ``put`` refuses such an answer (and one
-retrieved in the future) and ``get`` re-checks both limits and both content hashes. A per-owner
-capacity cap keeps one tenant from evicting another's entries. Expired entries are removed on
-read and by ``purge``; ``delete_owner`` supports account deletion and consent withdrawal.
+Only a ``ValidatedAnswer`` (minted by the validator) can be stored: ``put`` refuses a bare
+``GroundedAnswer`` or a forged wrapper. An entry is never served at or after its
+``cache_expires_at``, and never past 30 days from retrieval even if the answer claims longer:
+``put`` refuses such an answer (and one retrieved in the future) and ``get`` re-checks both
+limits plus the hashes recorded at validation time.
+
+Capacity is fair per owner: entries are indexed by owner, an owner is capped, and when the global
+cap is hit the OLDEST entry of the owner holding the MOST entries is evicted (ties go to the owner
+that is inserting), so many owners or one flooder cannot push a well-behaved owner below its
+share. Owners can never outnumber entries, so their number is bounded by ``max_entries``. The
+eviction scan is over owners only (at most ``max_entries``), not over entries.
 """
 from __future__ import annotations
 
@@ -17,6 +23,7 @@ from datetime import datetime
 from typing import Protocol, runtime_checkable
 
 from ..domain import MAX_MAPS_CACHE, ContentClass, EvidenceStorageClass
+from ._validated import ValidatedAnswer, is_validated
 from .contracts import GroundedAnswer, content_hash, display_hash
 from .errors import CacheError
 
@@ -25,8 +32,8 @@ _ID = re.compile(r"^[A-Za-z0-9_.:-]{1,128}$")
 
 @runtime_checkable
 class DisplayCacheStore(Protocol):
-    def put(self, owner_id: str, key: str, answer: GroundedAnswer) -> None: ...
-    def get(self, owner_id: str, key: str) -> GroundedAnswer | None: ...
+    def put(self, owner_id: str, key: str, validated: ValidatedAnswer) -> None: ...
+    def get(self, owner_id: str, key: str) -> ValidatedAnswer | None: ...
     def purge(self) -> int: ...
     def delete_owner(self, owner_id: str) -> int: ...
 
@@ -41,12 +48,18 @@ class DisplayCache:
         self._max = max_entries
         self._max_owner = max_per_owner
         self._lock = threading.Lock()
-        self._entries: OrderedDict[tuple[str, str], GroundedAnswer] = OrderedDict()
+        self._entries: dict[str, OrderedDict[str, ValidatedAnswer]] = {}
+        self._count = 0
 
     def __repr__(self) -> str:  # never shows keys, owners or content
         return f"DisplayCache(entries={len(self)})"
 
     def __len__(self) -> int:
+        with self._lock:
+            return self._count
+
+    @property
+    def owner_count(self) -> int:
         with self._lock:
             return len(self._entries)
 
@@ -68,71 +81,102 @@ class DisplayCache:
         return now >= answer.cache_expires_at or now >= answer.retrieved_at + MAX_MAPS_CACHE
 
     @staticmethod
-    def _intact(answer: GroundedAnswer) -> bool:
-        """Both content hashes still match what is stored (catches in-memory corruption)."""
+    def _intact(validated: ValidatedAnswer) -> bool:
+        """The answer still hashes to what was recorded when the validator accepted it."""
         try:
+            answer = validated.answer
             fields = [(p.place_id, p.attribution_title, p.attribution_url, p.place_url) for p in answer.places]
-            return (content_hash(answer.text) == answer.content_hash
-                    and display_hash(answer.text, fields) == answer.display_hash)
+            return (
+                content_hash(answer.text) == answer.content_hash == validated.content_hash
+                and display_hash(answer.text, fields) == answer.display_hash == validated.display_hash
+            )
         except (AttributeError, TypeError, ValueError):
             return False
 
     @staticmethod
-    def _storable(answer: object, now: datetime) -> bool:
-        if not isinstance(answer, GroundedAnswer):
+    def _storable(validated: object, now: datetime) -> bool:
+        if not is_validated(validated):
             return False
         try:
+            answer = validated.answer  # type: ignore[attr-defined]
             return (
-                answer.content_class == ContentClass.MAPS_GROUNDED
+                isinstance(answer, GroundedAnswer)
+                and answer.content_class == ContentClass.MAPS_GROUNDED
                 and answer.storage_class == EvidenceStorageClass.DISPLAY_CACHE
                 and answer.retrieved_at < answer.cache_expires_at <= answer.retrieved_at + MAX_MAPS_CACHE
                 and answer.retrieved_at <= now
                 and not DisplayCache._expired(answer, now)
-                and DisplayCache._intact(answer)
+                and DisplayCache._intact(validated)  # type: ignore[arg-type]
             )
         except (AttributeError, TypeError):
             return False
 
-    def put(self, owner_id: str, key: str, answer: GroundedAnswer) -> None:
-        slot = self._key(owner_id, key)
+    def _largest_owner(self, prefer: str) -> str:
+        best, size = prefer, len(self._entries.get(prefer, ()))
+        for owner, bucket in self._entries.items():
+            if len(bucket) > size:
+                best, size = owner, len(bucket)
+        return best
+
+    def put(self, owner_id: str, key: str, validated: ValidatedAnswer) -> None:
+        self._key(owner_id, key)
         now = self._now()
-        if not self._storable(answer, now):
+        if not self._storable(validated, now):
             raise CacheError()
         with self._lock:
-            self._entries.pop(slot, None)
-            self._entries[slot] = answer
-            # A per-owner cap first, so one tenant cannot evict another tenant's entries.
-            mine = [s for s in self._entries if s[0] == owner_id]
-            for old in mine[: max(0, len(mine) - self._max_owner)]:
-                del self._entries[old]  # this owner's oldest
-            while len(self._entries) > self._max:
-                self._entries.popitem(last=False)  # then the global cap, oldest first
+            bucket = self._entries.setdefault(owner_id, OrderedDict())
+            if key in bucket:
+                del bucket[key]
+                self._count -= 1
+            bucket[key] = validated
+            self._count += 1
+            while len(bucket) > self._max_owner:  # this owner's own cap: its oldest goes
+                bucket.popitem(last=False)
+                self._count -= 1
+            while self._count > self._max:
+                victim = self._largest_owner(owner_id)
+                self._entries[victim].popitem(last=False)
+                self._count -= 1
+                if not self._entries[victim]:
+                    del self._entries[victim]
+            if owner_id in self._entries and not self._entries[owner_id]:
+                del self._entries[owner_id]
 
-    def get(self, owner_id: str, key: str) -> GroundedAnswer | None:
-        slot = self._key(owner_id, key)
+    def get(self, owner_id: str, key: str) -> ValidatedAnswer | None:
+        self._key(owner_id, key)
         now = self._now()
         with self._lock:
-            answer = self._entries.get(slot)
-            if answer is None:
+            bucket = self._entries.get(owner_id)
+            validated = bucket.get(key) if bucket is not None else None
+            if validated is None or bucket is None:
                 return None
-            if self._expired(answer, now) or not self._intact(answer):
-                del self._entries[slot]
+            if not is_validated(validated) or self._expired(validated.answer, now) or not self._intact(validated):
+                del bucket[key]
+                self._count -= 1
+                if not bucket:
+                    del self._entries[owner_id]
                 return None
-            return answer
+            return validated
 
     def purge(self) -> int:
         now = self._now()
+        removed = 0
         with self._lock:
-            stale = [slot for slot, a in self._entries.items() if self._expired(a, now)]
-            for slot in stale:
-                del self._entries[slot]
-            return len(stale)
+            for owner in list(self._entries):
+                bucket = self._entries[owner]
+                for key in [k for k, v in bucket.items() if not is_validated(v) or self._expired(v.answer, now)]:
+                    del bucket[key]
+                    removed += 1
+                if not bucket:
+                    del self._entries[owner]
+            self._count -= removed
+        return removed
 
     def delete_owner(self, owner_id: str) -> int:
         if not (isinstance(owner_id, str) and _ID.fullmatch(owner_id)):
             raise CacheError("owner id must be a bounded identifier")
         with self._lock:
-            mine = [slot for slot in self._entries if slot[0] == owner_id]
-            for slot in mine:
-                del self._entries[slot]
-            return len(mine)
+            bucket = self._entries.pop(owner_id, None)
+            count = len(bucket) if bucket is not None else 0
+            self._count -= count
+            return count

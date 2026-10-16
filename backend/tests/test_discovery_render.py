@@ -6,7 +6,14 @@ render of the same object."""
 from __future__ import annotations
 
 import pytest
-from maps_simulator import INJECTION, SYNTH_TEXT, SyntheticMapsClient, new_run, synthetic_payload
+from maps_simulator import (
+    INJECTION,
+    SYNTH_TEXT,
+    SyntheticMapsClient,
+    new_run,
+    synthetic_payload,
+    wrap_unvalidated as V,
+)
 from test_discovery_contracts import TTLS
 
 from app.discovery import (
@@ -29,7 +36,7 @@ def fixture(payload=None):
     run = new_run()
     result = SyntheticMapsClient(payload=payload).call_tool(run, "search_places", {"text_query": "q"})
     answer = parse_grounded_answer(result, TTLS)
-    return run, answer, render_grounded_block(answer)
+    return run, answer, render_grounded_block(V(answer))
 
 
 def test_the_block_is_the_raw_text_then_every_source_in_order_bound_to_the_ledger() -> None:
@@ -40,7 +47,7 @@ def test_the_block_is_the_raw_text_then_every_source_in_order_bound_to_the_ledge
     assert [p.place_id for p in block.parts[1:]] == [p.place_id for p in answer.places]
     assert block.render_mode == "text" and block.branding == "Google Maps"
     assert block.translate_no is True  # "Google Maps" must never be translated or localized
-    verify_verbatim(block, answer, run)
+    verify_verbatim(block, V(answer), run)
 
 
 def test_sources_show_the_attribution_title_exactly_and_link_with_the_returned_urls() -> None:
@@ -61,17 +68,17 @@ def test_text_is_never_html_escaped_inside_the_block_only_at_the_named_sink() ->
     import html
 
     assert html.unescape(html_sink_escape(INJECTION)) == INJECTION  # lossless at the sink
-    verify_verbatim(block, answer, run)
+    verify_verbatim(block, V(answer), run)
 
 
 def test_server_framing_is_a_separate_typed_field_and_never_inside_the_block() -> None:
     run, answer, _ = fixture()
-    block = render_grounded_block(answer, framing=FramingKind.RESULTS_INTRO)
+    block = render_grounded_block(V(answer), framing=FramingKind.RESULTS_INTRO)
     assert block.framing == FramingKind.RESULTS_INTRO and FRAMING_TEXT[FramingKind.RESULTS_INTRO]
     assert all(not isinstance(p, ServerTextPart) for p in block.parts)
-    verify_verbatim(block, answer, run)
+    verify_verbatim(block, V(answer), run)
     with pytest.raises(ValueError):
-        render_grounded_block(answer, framing="free text from the server")  # type: ignore[arg-type]
+        render_grounded_block(V(answer), framing="free text from the server")  # type: ignore[arg-type]
     assert set(FRAMING_TEXT) == set(FramingKind)
 
 
@@ -120,7 +127,7 @@ def test_any_modification_truncation_reorder_or_interspersing_is_rejected(case: 
         "translate_allowed": lambda: evolve(block, translate_no=False),
     }[case]()
     with pytest.raises((VerbatimViolation, ValueError)):
-        verify_verbatim(mutated, answer, run)
+        verify_verbatim(mutated, V(answer), run)
 
 
 def test_a_block_and_answer_that_agree_with_each_other_but_not_with_the_ledger_are_rejected() -> None:
@@ -135,18 +142,18 @@ def test_a_block_and_answer_that_agree_with_each_other_but_not_with_the_ledger_a
                   display_hash=display_hash(answer.text, [
                       (p.place_id, p.attribution_title, p.attribution_url, p.place_url)
                       for p in (fake_place, answer.places[1])]))
-    block = render_grounded_block(fake)
+    block = render_grounded_block(V(fake))
     with pytest.raises(VerbatimViolation):
-        verify_verbatim(block, fake, run)  # a fresh render of the forgery matches; the ledger does not
+        verify_verbatim(block, V(fake), run)  # a fresh render of the forgery matches; the ledger does not
 
 
 def test_a_block_for_a_different_answer_or_another_run_is_rejected() -> None:
     run, answer, block = fixture()
     _, other_answer, _ = fixture(synthetic_payload(text="A different invented answer [0]."))
     with pytest.raises(VerbatimViolation):
-        verify_verbatim(block, other_answer, run)
+        verify_verbatim(block, V(other_answer), run)
     with pytest.raises(VerbatimViolation):
-        verify_verbatim(block, answer, new_run(run_id="run-2"))  # that run never made this call
+        verify_verbatim(block, V(answer), new_run(run_id="run-2"))  # that run never made this call
 
 
 def test_verification_error_never_echoes_content() -> None:
@@ -154,12 +161,12 @@ def test_verification_error_never_echoes_content() -> None:
     text = block.parts[0]
     bad = _swap(block, [evolve(text, text=text.text + "x"), *block.parts[1:]])
     with pytest.raises(VerbatimViolation) as caught:
-        verify_verbatim(bad, answer, run)
+        verify_verbatim(bad, V(answer), run)
     assert "alert(1)" not in str(caught.value) + repr(caught.value)
     assert caught.value.__context__ is None
 
 
 def test_rendering_is_pure_and_content_stays_out_of_reprs() -> None:
     _, answer, _ = fixture()
-    assert render_grounded_block(answer) == render_grounded_block(answer)
-    assert SYNTH_TEXT not in repr(render_grounded_block(answer))
+    assert render_grounded_block(V(answer)) == render_grounded_block(V(answer))
+    assert SYNTH_TEXT not in repr(render_grounded_block(V(answer)))

@@ -24,6 +24,22 @@ _ANNOTATIONS = {"title", "description", "default", "examples", "$schema"}
 _TYPES = {"object", "array", "string", "integer", "number", "boolean", "null"}
 
 
+def outbound_schema(schema: Any, _names: bool = False) -> Any:
+    """A copy with every internal-only keyword (``x_*``, e.g. ``x_exactly_one_of``) removed,
+    for any schema that leaves the process. The server keeps the original for validation.
+    Property NAMES (keys of a ``properties`` map) are data, never keywords, and are kept."""
+    if isinstance(schema, dict):
+        out: dict[str, Any] = {}
+        for key, value in schema.items():
+            if not _names and isinstance(key, str) and key.startswith("x_"):
+                continue
+            out[key] = outbound_schema(value, _names=(key == "properties" and not _names))
+        return out
+    if isinstance(schema, list):
+        return [outbound_schema(v) for v in schema]
+    return schema
+
+
 def schema_is_supported(schema: Any, depth: int = 0) -> bool:
     """True only if every keyword is implemented here. Used when a ToolSpec is built."""
     if not isinstance(schema, dict) or depth > MAX_SCHEMA_DEPTH:

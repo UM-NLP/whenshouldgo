@@ -14,13 +14,14 @@ from typing import Any
 
 from .. import telemetry
 from ..domain import MAX_MAPS_CACHE, ContentClass, EvidenceStorageClass, RuntimeTTLs
+from ._validated import ValidatedAnswer, mint_validated
 from .client import ToolRun
 from .contracts import (
     GROUNDED_TEXT_MAX_CHARS,
     MAX_PLACES,
     MAX_TITLE_CHARS,
     GroundedAnswer,
-    citation_indexes,
+    cited_flags,
     content_hash,
     display_hash,
 )
@@ -53,7 +54,11 @@ class GroundedAnswerValidator:
         self._max_text = max_text_chars
         self._sink = sink
 
-    def validate(self, answer: GroundedAnswer, run: ToolRun, now: datetime, *, principal_id: str) -> None:
+    def validate(
+        self, answer: GroundedAnswer, run: ToolRun, now: datetime, *, principal_id: str
+    ) -> ValidatedAnswer:
+        """Accept (returning the only object the renderer and cache take) or reject the whole
+        answer. The wrapper holds the SAME answer, unchanged; nothing here can edit it."""
         if now.tzinfo is None or now.utcoffset() is None:
             raise ValueError("now must be timezone-aware")
         reason = self._reason(answer, run, now, principal_id)
@@ -64,6 +69,7 @@ class GroundedAnswerValidator:
                 reason=_TELEMETRY_REASON[reason], phase=telemetry.Phase.TOOL,
             )
             raise GroundedAnswerRejected(reason)
+        return mint_validated(answer, principal_id)
 
     # -- checks, in a fixed order; each returns a reason or None ----------------------------------
     def _reason(self, answer: Any, run: ToolRun, now: datetime, principal_id: str) -> RejectionReason | None:
@@ -96,10 +102,9 @@ class GroundedAnswerValidator:
                 return RejectionReason.URI
         if content_hash(text) != values["content_hash"] or display_hash(text, fields) != values["display_hash"]:
             return RejectionReason.HASH
-        cited = citation_indexes(text)
-        if (cited and max(cited) >= len(places)) or [p.cited for p in places] != [
-            i in cited for i in range(len(places))
-        ]:
+        # Best effort (TODO(verify-live)): flags must match the in-range brackets; an out-of-range
+        # bracket such as a year is ignored and never a reason to reject.
+        if [p.cited for p in places] != cited_flags(text, len(places)):
             return RejectionReason.FORMAT
         cache = self._cache_reason(values, now)
         if cache is not None:

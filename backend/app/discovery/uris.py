@@ -10,7 +10,7 @@ narrow so an unexpected real shape fails closed until a live capture widens them
 from __future__ import annotations
 
 import re
-from urllib.parse import urlsplit
+from urllib.parse import parse_qsl, urlsplit
 
 MAX_URI_CHARS = 2_048
 MAPS_LINK_HOSTS = frozenset({"maps.app.goo.gl", "www.google.com", "google.com"})
@@ -20,7 +20,7 @@ _QUERY = re.compile(r"^[A-Za-z0-9_=&:.,+-]{0,512}$")
 _FORBIDDEN_CHARS = frozenset("\x5c%;#")
 
 
-def _split(uri: object) -> tuple[str, list[str]]:
+def _split(uri: object) -> tuple[str, list[str], str]:
     if not isinstance(uri, str) or not 0 < len(uri) <= MAX_URI_CHARS:
         raise ValueError("uri is not a bounded string")
     if not uri.isascii() or not uri.isprintable() or any(ch.isspace() for ch in uri):
@@ -40,7 +40,7 @@ def _split(uri: object) -> tuple[str, list[str]]:
         not _QUERY.fullmatch(parts.query) or "http" in parts.query.lower() or "//" in parts.query
     ):
         raise ValueError("uri query is not allowed")
-    return parts.hostname or "", segments
+    return parts.hostname or "", segments, parts.query
 
 
 def _maps_shape(host: str, segments: list[str]) -> bool:
@@ -53,15 +53,19 @@ def _maps_shape(host: str, segments: list[str]) -> bool:
 
 def check_maps_link(uri: str) -> None:
     """A place link (``placeUrl``) or save link: only the pinned Maps shapes."""
-    host, segments = _split(uri)
+    host, segments, _ = _split(uri)
     if host not in MAPS_LINK_HOSTS or not _maps_shape(host, segments):
         raise ValueError("uri is not a Google Maps link shape")
 
 
 def check_attribution_url(uri: str) -> None:
     """An attribution url: Maps shapes, or www.google.com/search (documented as possible)."""
-    host, segments = _split(uri)
+    host, segments, query = _split(uri)
     if host == "www.google.com" and segments == ["search"]:
+        # Exactly one non-empty q= parameter: no btnI ("I'm feeling lucky" redirect) or others.
+        pairs = parse_qsl(query, keep_blank_values=True, strict_parsing=True) if query else []
+        if len(pairs) != 1 or pairs[0][0] != "q" or not pairs[0][1]:
+            raise ValueError("a search attribution url must be exactly one q= parameter")
         return
     if host not in MAPS_LINK_HOSTS or not _maps_shape(host, segments):
         raise ValueError("uri is not an attribution link shape")
@@ -69,7 +73,7 @@ def check_attribution_url(uri: str) -> None:
 
 def check_input_maps_url(uri: str) -> None:
     """An INPUT url for resolve_maps_urls: the three documented single-place forms."""
-    host, segments = _split(uri)
+    host, segments, _ = _split(uri)
     if host == "maps.app.goo.gl":
         ok = _maps_shape(host, segments)
     elif host in ("www.google.com", "google.com"):

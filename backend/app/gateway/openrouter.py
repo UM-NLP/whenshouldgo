@@ -49,7 +49,7 @@ from .errors import (
 )
 from .policy import GatewayPolicy, check_request, is_pinned_model_id, self_check
 from .pricing import PriceTable
-from .schema import MAX_ARGUMENT_DEPTH, MAX_TOOL_ARGUMENT_BYTES, json_depth, validate
+from .schema import MAX_ARGUMENT_DEPTH, MAX_TOOL_ARGUMENT_BYTES, json_depth, outbound_schema, validate
 from .types import (
     ZERO_USAGE,
     CallRole,
@@ -93,9 +93,19 @@ def _reject_constant(name: str) -> Any:
     raise ValueError("non-finite JSON constant")
 
 
+def _reject_duplicates(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    keys = [key for key, _ in pairs]
+    if len(keys) != len(set(keys)):
+        raise ValueError("duplicate object key")
+    return dict(pairs)
+
+
 def _loads(text: str | bytes) -> Any:
-    """json.loads that refuses NaN, Infinity and -Infinity."""
-    return json.loads(text, parse_constant=_reject_constant)
+    """json.loads that refuses NaN, Infinity, -Infinity and duplicate object keys, and decodes
+    bytes as strict UTF-8 only (json.loads would sniff UTF-16 and UTF-32 and skip a BOM)."""
+    if isinstance(text, (bytes, bytearray)):
+        text = bytes(text).decode("utf-8")
+    return json.loads(text, parse_constant=_reject_constant, object_pairs_hook=_reject_duplicates)
 
 
 def _guarded(fn: Callable[..., Any], *args: Any) -> tuple[Any, bool]:
@@ -420,7 +430,7 @@ def build_body(
                 "function": {
                     "name": tool.name,
                     "description": tool.description,
-                    "parameters": tool.parameters,
+                    "parameters": outbound_schema(tool.parameters),
                 },
             }
             for tool in request.allowed_tools

@@ -67,6 +67,17 @@ def _digest(value: object) -> str:
     return hashlib.sha256(canonical.encode("ascii")).hexdigest()
 
 
+def canonical_json(value: object) -> str:
+    """Deterministic JSON: sorted keys, ASCII only (surrogate-safe), no NaN or Infinity."""
+    return json.dumps(value, sort_keys=True, ensure_ascii=True, separators=(",", ":"), allow_nan=False)
+
+
+def payload_digest(payload: object) -> str:
+    """Hash of a whole tool payload: pass the payload, or its canonical JSON string."""
+    text = payload if isinstance(payload, str) else canonical_json(payload)
+    return hashlib.sha256(text.encode("ascii")).hexdigest()
+
+
 def content_hash(text: str) -> str:
     """Hash of the exact summary string the user sees."""
     return _digest(text)
@@ -85,6 +96,15 @@ def citation_indexes(text: str) -> set[int]:
     for group in _CITATION.findall(text):
         found.update(int(part) for part in group.split(","))
     return found
+
+
+def cited_flags(text: str, count: int) -> list[bool]:
+    """Best effort: which places a bracketed index in the summary points at. Only indexes that
+    fall inside ``range(count)`` matter; years like [2019] and anything else out of range are
+    ignored, never a reason to reject. TODO(verify-live): the docs say citations are zero-based
+    ("[0]"); a different real convention would flag the wrong place but cannot fail validation."""
+    cited = citation_indexes(text)
+    return [i in cited for i in range(count)]
 
 
 class GroundedPlace(GroundFrozen):
@@ -132,10 +152,7 @@ class GroundedAnswer(GroundFrozen):
             raise ValueError("duplicate place_id")
         if any(p.tool_call_id != self.tool_call_id for p in self.places):
             raise ValueError("every place must come from the summary's tool call")
-        cited = citation_indexes(self.text)
-        if cited and max(cited) >= len(self.places):
-            raise ValueError("a citation index is out of range")
-        if [p.cited for p in self.places] != [i in cited for i in range(len(self.places))]:
+        if [p.cited for p in self.places] != cited_flags(self.text, len(self.places)):
             raise ValueError("cited flags do not match the summary")
         if not self.retrieved_at < self.cache_expires_at <= self.retrieved_at + MAX_MAPS_CACHE:
             raise ValueError("cache_expires_at must be within (retrieved_at, retrieved_at + 30 days]")
@@ -244,11 +261,11 @@ def _build_answer(result: Any, ttls: RuntimeTTLs) -> GroundedAnswer:
     summary, fields = extracted
     if has_lone_surrogate(summary) or any(has_lone_surrogate(f) for place in fields for f in place):
         raise ValueError("lone surrogate")
-    cited = citation_indexes(summary)
+    flags = cited_flags(summary, len(fields))
     places = tuple(
         GroundedPlace(
             place_id=pid, attribution_title=title, attribution_url=url, place_url=place_url,
-            tool_call_id=result.tool_call_id, cited=index in cited,
+            tool_call_id=result.tool_call_id, cited=flags[index],
         )
         for index, (pid, title, url, place_url) in enumerate(fields)
     )

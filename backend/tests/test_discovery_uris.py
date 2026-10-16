@@ -106,12 +106,13 @@ def test_the_output_link_hosts_are_pinned_not_guessed() -> None:
 
 def test_attribution_urls_may_also_be_a_search_page_but_place_links_may_not() -> None:
     # TODO(verify-live): "www.google.com/search" is documented only as a possible attribution url.
-    for uri in ("https://www.google.com/search?q=place_id:SYNTH_PLACE_0001", "https://www.google.com/search"):
+    for uri in ("https://www.google.com/search?q=place_id:SYNTH_PLACE_0001", "https://www.google.com/search?q=x"):
         check_attribution_url(uri)
         with pytest.raises(ValueError):
             check_maps_link(uri)
     for uri in ("https://www.google.com/search/../url?q=x", "https://www.google.com/search/x",
                 "https://www.google.com/search?q=https://evil.example", "https://www.google.com/search?q=%2e",
+                "https://www.google.com/search",
                 "https://google.com/url?q=x"):
         with pytest.raises(ValueError):
             check_attribution_url(uri)

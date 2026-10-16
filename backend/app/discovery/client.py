@@ -40,7 +40,14 @@ from ..gateway.openrouter import Credential, guarded, strict_loads
 from ..gateway.schema import MAX_ARGUMENT_DEPTH, json_depth, validate
 from ..gateway.types import ToolSpec
 from . import _mint
-from .contracts import GroundFrozen, content_hash, display_hash, extract_search_places
+from .contracts import (
+    GroundFrozen,
+    canonical_json,
+    content_hash,
+    display_hash,
+    extract_search_places,
+    payload_digest,
+)
 from .errors import (
     DiscoveryAccessDenied,
     DiscoveryBadRequest,
@@ -171,8 +178,9 @@ class LedgerInfo:
     """What a tool returned that later claims are checked against: ids and hashes only."""
 
     place_ids: frozenset[str] = frozenset()
-    text_hash: str | None = None
+    text_hash: str | None = None  # search_places only
     display_hash: str | None = None  # search_places only
+    payload_hash: str | None = None  # EVERY tool: hash of the whole canonical payload
 
 
 @dataclass(frozen=True)
@@ -181,6 +189,15 @@ class CallRecord:
     place_ids: frozenset[str] = frozenset()
     text_hash: str | None = None
     display_hash: str | None = None
+    payload_hash: str | None = None
+
+
+@dataclass(frozen=True)
+class CallTicket:
+    """A reserved call: its id and a per-run sequence number used as the JSON-RPC request id."""
+
+    call_id: str
+    seq: int
 
 
 def _check_authority(authority: object) -> None:
@@ -215,7 +232,7 @@ class ToolRun:
         with self._lock:
             return self._used
 
-    def begin(self, tool: ToolId, *, authority: object) -> str:
+    def begin(self, tool: ToolId, *, authority: object) -> CallTicket:
         """Reserve one call. Failed calls count too; refused-before-sending ones never begin."""
         _check_authority(authority)
         with self._lock:
@@ -224,7 +241,7 @@ class ToolRun:
             self._used += 1
             call_id = f"tc-{uuid4().hex[:16]}"
             self._records[call_id] = CallRecord(tool=tool)
-            return call_id
+            return CallTicket(call_id, self._used)
 
     def record(self, call_id: str, info: LedgerInfo, *, authority: object) -> None:
         _check_authority(authority)
@@ -233,7 +250,7 @@ class ToolRun:
             if current is None:
                 raise KeyError("unknown call id")
             self._records[call_id] = CallRecord(
-                current.tool, info.place_ids, info.text_hash, info.display_hash)
+                current.tool, info.place_ids, info.text_hash, info.display_hash, info.payload_hash)
 
     def record_for(self, call_id: str) -> CallRecord | None:
         with self._lock:
@@ -242,24 +259,28 @@ class ToolRun:
 
 def payload_ledger_info(tool: ToolId, payload: object) -> LedgerInfo:
     """Ids and hashes of a raw tool payload, computed with the same extraction the parser
-    uses. Tolerant of any shape: a payload that is not the documented search_places shape
-    yields an empty entry, which can never match a GroundedAnswer."""
+    uses. Every tool gets a whole-payload hash; a payload that is not the documented
+    search_places shape gets no text or display hash, so it can never match a GroundedAnswer."""
+    whole = payload_digest(payload)  # every tool: anchors the whole payload
     if tool != ToolId.SEARCH_PLACES:
-        return LedgerInfo()
+        return LedgerInfo(payload_hash=whole)
     extracted = extract_search_places(payload)
     if extracted is None:
-        return LedgerInfo()
+        return LedgerInfo(payload_hash=whole)
     text, places = extracted
     return LedgerInfo(
         place_ids=frozenset(p[0] for p in places),
         text_hash=content_hash(text),
         display_hash=display_hash(text, places),
+        payload_hash=whole,
     )
 
 
 class ToolResult(GroundFrozen):
-    """An untrusted tool result. The payload is data: it appears in no repr. Built only by
-    the client (it carries a private token)."""
+    """An untrusted tool result. The payload is stored as canonical JSON and re-parsed on every
+    access, so it cannot be mutated through the result and ``model_copy`` cannot swap it
+    unnoticed: the parsers also check its hash against the run ledger. It appears in no repr.
+    Built only by the client: it carries a private, REQUIRED token."""
 
     model_config = ConfigDict(extra="forbid", frozen=True, hide_input_in_errors=True,
                               arbitrary_types_allowed=True)
@@ -268,12 +289,25 @@ class ToolResult(GroundFrozen):
     tool_call_id: Ident
     run_id: Ident
     retrieved_at: AwareDatetime
-    payload: dict[str, Any] = Field(repr=False)
+    payload_json: str = Field(repr=False)
     size_bytes: int = Field(ge=0)
     billable_units: int = Field(ge=0)
     content_class: ContentClass = ContentClass.MAPS_GROUNDED
     travel_mode: str | None = None  # compute_routes only: the mode that was requested
-    issued: _mint.IssuedToken | None = Field(default=None, repr=False)
+    issued: _mint.IssuedToken = Field(repr=False)
+
+    def __init__(self, /, **data: Any) -> None:
+        if "payload" in data:  # the constructor takes the payload; the model stores frozen JSON
+            data["payload_json"] = canonical_json(data.pop("payload"))
+        super().__init__(**data)
+
+    @property
+    def payload(self) -> dict[str, Any]:
+        """A fresh copy every time: mutating it changes nothing."""
+        parsed = json.loads(self.payload_json)
+        if not isinstance(parsed, dict):
+            raise ValueError("payload is not an object")
+        return parsed
 
 
 # --- kill switch ----------------------------------------------------------------------------------
@@ -369,28 +403,38 @@ class McpTransport(Protocol):
 
 
 def parse_single_sse_event(data: bytes) -> dict[str, Any] | None:
-    """The JSON object in a text/event-stream reply that carries exactly one data event, else
-    None. Comments and other fields are ignored; multi-line data is joined with newlines.
-    TODO(verify-live): whether the server really answers with one event per call."""
+    """The JSON object in a text/event-stream reply that carries exactly one COMPLETE data event
+    of type ``message`` (or no type), else None. An event is complete only when a blank line ends
+    it, so a final unterminated event is discarded. Comments and other fields are ignored,
+    multi-line data is joined with newlines, and any other event type (``error``, ``ping`` ...)
+    rejects the reply. TODO(verify-live): whether the server really answers with one event."""
     text, ok = guarded(lambda: data.decode("utf-8"))
     if not ok or not text:
         return None
-    events: list[list[str]] = []
-    current: list[str] = []
-    for line in text.replace("\r\n", "\n").replace("\r", "\n").split("\n"):
+    events: list[tuple[str | None, list[str]]] = []
+    kind: str | None = None
+    lines: list[str] = []
+    # The last element after the final newline is an unterminated fragment (or empty): drop it.
+    for line in text.replace("\r\n", "\n").replace("\r", "\n").split("\n")[:-1]:
         if line == "":
-            if current:
-                events.append(current)
-                current = []
+            if lines or kind is not None:
+                events.append((kind, lines))
+            kind, lines = None, []
             continue
         if line.startswith("data:"):
             value = line[5:]
-            current.append(value[1:] if value.startswith(" ") else value)
-    if current:
-        events.append(current)
-    if len(events) != 1:
+            lines.append(value[1:] if value.startswith(" ") else value)
+        elif line.startswith("event:"):
+            value = line[6:]
+            kind = value[1:] if value.startswith(" ") else value
+    # whatever follows the last blank line was never terminated: discarded
+    complete = [event for event in events if event[1]]
+    if len(complete) != 1:
         return None
-    parsed, ok = guarded(strict_loads, "\n".join(events[0]))
+    event_kind, event_lines = complete[0]
+    if event_kind not in (None, "message"):
+        return None
+    parsed, ok = guarded(strict_loads, "\n".join(event_lines))
     return parsed if ok and isinstance(parsed, dict) else None
 
 
@@ -586,12 +630,12 @@ class GroundingLiteMcpClient:
         credential = self._credential()
         if isinstance(credential, DiscoveryError):
             return credential
-        call_id = self._begin(run, tool_id)
-        if isinstance(call_id, DiscoveryError):
-            return call_id
-        outcome = self._send_and_parse(run, tool_id, clean, credential, call_id)
+        ticket = self._begin(run, tool_id)
+        if isinstance(ticket, DiscoveryError):
+            return ticket
+        outcome = self._send_and_parse(run, tool_id, clean, credential, ticket)
         if isinstance(outcome, DiscoveryError):
-            outcome.call_id = call_id
+            outcome.call_id = ticket.call_id
         return outcome
 
     @staticmethod
@@ -637,21 +681,21 @@ class GroundingLiteMcpClient:
         return Credential(key)
 
     @staticmethod
-    def _begin(run: ToolRun, tool_id: ToolId) -> str | DiscoveryError:
-        call_id: str | None = None
+    def _begin(run: ToolRun, tool_id: ToolId) -> CallTicket | DiscoveryError:
+        ticket: CallTicket | None = None
         try:
-            call_id = run.begin(tool_id, authority=_mint.AUTHORITY)
+            ticket = run.begin(tool_id, authority=_mint.AUTHORITY)
         except ToolBudgetExceeded:
-            call_id = None
-        return call_id if call_id is not None else ToolBudgetExceeded()
+            ticket = None
+        return ticket if ticket is not None else ToolBudgetExceeded()
 
     def _send_and_parse(
-        self, run: ToolRun, tool_id: ToolId, args: dict[str, Any], credential: Credential, call_id: str
+        self, run: ToolRun, tool_id: ToolId, args: dict[str, Any], credential: Credential, ticket: CallTicket
     ) -> ToolResult | DiscoveryError:
         request, built = guarded(
             lambda: McpRequest(
                 url=self._endpoint, headers=dict(ALLOWED_HEADERS), timeout_seconds=self._timeout,
-                body={"jsonrpc": "2.0", "id": run.calls_used, "method": "tools/call",
+                body={"jsonrpc": "2.0", "id": ticket.seq, "method": "tools/call",
                       "params": {"name": tool_id.value, "arguments": args}},
             )
         )
@@ -673,7 +717,7 @@ class GroundingLiteMcpClient:
             failure.calls = max(failure.calls, 1)
             return failure
         assert response is not None
-        outcome = self._parse(run, tool_id, args, call_id, response)
+        outcome = self._parse(run, tool_id, args, ticket, response)
         if isinstance(outcome, DiscoveryError):
             outcome.calls = 1
         return outcome
@@ -690,8 +734,9 @@ class GroundingLiteMcpClient:
         if tripped:
             self._kill_switch.trip()
 
-    def _parse(self, run: ToolRun, tool_id: ToolId, args: dict[str, Any], call_id: str,
+    def _parse(self, run: ToolRun, tool_id: ToolId, args: dict[str, Any], ticket: CallTicket,
                response: McpResponse) -> ToolResult | DiscoveryError:
+        call_id = ticket.call_id
         status = response.status_code
         self._note_status(status)
         if status != 200:
@@ -701,7 +746,7 @@ class GroundingLiteMcpClient:
         body = response.body
         if isinstance(body, dict) and "error" in body:
             return DiscoveryProtocolError()  # a JSON-RPC error object; its message is dropped
-        payload = self._payload(body)
+        payload = self._payload(body, ticket.seq)
         if isinstance(payload, DiscoveryError):
             return payload
         depth, depth_ok = guarded(json_depth, payload)
@@ -749,9 +794,13 @@ class GroundingLiteMcpClient:
         return error
 
     @staticmethod
-    def _payload(body: Any) -> dict[str, Any] | DiscoveryError:
-        """The tool payload from a JSON-RPC reply. Nothing in it is interpreted."""
+    def _payload(body: Any, expected_id: int) -> dict[str, Any] | DiscoveryError:
+        """The tool payload from a JSON-RPC reply. Nothing in it is interpreted. The reply must
+        echo the request id exactly (an int, never a bool, float or string)."""
         if not isinstance(body, dict) or body.get("jsonrpc") != "2.0":
+            return MalformedToolResult()
+        reply_id = body.get("id")
+        if isinstance(reply_id, bool) or not isinstance(reply_id, int) or reply_id != expected_id:
             return MalformedToolResult()
         result = body.get("result")
         if not isinstance(result, dict):

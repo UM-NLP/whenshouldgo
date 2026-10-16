@@ -62,7 +62,8 @@ def reason_of(answer, run, now=NOW, principal=PRINCIPAL, **kw) -> RejectionReaso
 
 
 def accept(answer, run, now=NOW) -> None:
-    assert validator.validate(answer, run, now, principal_id=PRINCIPAL) is None
+    validated = validator.validate(answer, run, now, principal_id=PRINCIPAL)
+    assert validated.answer is answer
 
 
 def test_a_sound_answer_from_this_run_is_accepted_unchanged() -> None:
@@ -193,6 +194,9 @@ def test_citations_must_be_in_range_and_flags_consistent() -> None:
     run, answer = run_and_answer()
     flipped = consistent(answer, [forged_place(answer.places[0], cited=not answer.places[0].cited), answer.places[1]])
     assert reason_of(flipped, run) in (RejectionReason.FORMAT, RejectionReason.PROVENANCE)
+    # an out-of-range bracket (a year, say) is ignored, never a reason to reject
+    run2, year = run_and_answer(synthetic_payload(text="Opened in [2019]; see [0]."))
+    accept(year, run2)
 
 
 def test_display_cache_expiry_must_be_within_the_configured_and_hard_limits() -> None:

@@ -1,5 +1,6 @@
 """Phase 0 grounded discovery (docs/data-and-history-design.md): contracts, the Grounding
 Lite client, typed tool results, the verbatim render contract, the validator and the cache."""
+from ._validated import ValidatedAnswer, is_validated
 from .cache import DisplayCache, DisplayCacheStore
 from .client import (
     ACCESS_DENIED_TRIP_THRESHOLD,
@@ -9,6 +10,7 @@ from .client import (
     GROUNDING_LITE_HOST,
     TOOL_SPECS,
     CallRecord,
+    CallTicket,
     GroundingLiteClient,
     GroundingLiteMcpClient,
     HttpxMcpTransport,
@@ -29,10 +31,12 @@ from .contracts import (
     GroundedParseError,
     GroundedPlace,
     citation_indexes,
+    cited_flags,
     content_hash,
     display_hash,
     grounded_evidence,
     parse_grounded_answer,
+    payload_digest,
 )
 from .errors import (
     CacheError,

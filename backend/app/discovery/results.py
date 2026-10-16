@@ -19,7 +19,8 @@ from typing import Annotated, Any, Literal
 from pydantic import Field, StringConstraints, model_validator
 
 from ._mint import IssuedToken
-from .contracts import GroundFrozen
+from .client import ToolRun
+from .contracts import GroundFrozen, payload_digest
 from .errors import MalformedToolResult
 from .ids import ToolId
 from .text import has_lone_surrogate, short_field_problem
@@ -105,12 +106,19 @@ class ResolveResult(GroundFrozen):
         return bool(self.items) and all(i.place_id is None for i in self.items)
 
 
-def _guard(result: Any, tool: ToolId) -> dict[str, Any]:
+def _guard(result: Any, run: ToolRun, principal_id: str, tool: ToolId) -> dict[str, Any]:
+    """The result must be client-issued, for this tool, this run and this principal, and its
+    stored payload must hash to what the client recorded in the ledger for that call."""
     issued = result.issued
     if not isinstance(issued, IssuedToken) or issued.call_id != result.tool_call_id:
         raise ValueError("result was not issued by the discovery client")
-    if result.tool != tool or not isinstance(result.payload, dict):
-        raise ValueError("wrong tool or payload")
+    if not isinstance(run, ToolRun) or run.principal_id != principal_id or result.run_id != run.run_id:
+        raise ValueError("result belongs to another run or principal")
+    record = run.record_for(result.tool_call_id)
+    if record is None or record.tool != tool or result.tool != tool:
+        raise ValueError("wrong tool or unknown call")
+    if record.payload_hash is None or record.payload_hash != payload_digest(result.payload_json):
+        raise ValueError("payload does not match the ledger")
     payload = result.payload
     if any(has_lone_surrogate(s) for s in _all_strings(payload)):
         raise ValueError("lone surrogate")
@@ -146,8 +154,8 @@ def _number(value: Any) -> float:
     return float(value)
 
 
-def _weather(result: Any) -> WeatherResult:
-    payload = _guard(result, ToolId.LOOKUP_WEATHER)
+def _weather(result: Any, run: Any, principal_id: str) -> WeatherResult:
+    payload = _guard(result, run, principal_id, ToolId.LOOKUP_WEATHER)
     if not set(payload) <= _WEATHER_KEYS or "attribution" not in payload:
         raise ValueError("weather keys")
     title, url = _attribution(payload["attribution"])
@@ -183,8 +191,8 @@ def _weather(result: Any) -> WeatherResult:
     )
 
 
-def _route(result: Any) -> RouteResult:
-    payload = _guard(result, ToolId.COMPUTE_ROUTES)
+def _route(result: Any, run: Any, principal_id: str) -> RouteResult:
+    payload = _guard(result, run, principal_id, ToolId.COMPUTE_ROUTES)
     routes = payload.get("routes")
     if set(payload) != {"routes"} or not isinstance(routes, list) or len(routes) != 1:
         raise ValueError("routes shape")  # documented: currently exactly one route
@@ -210,8 +218,8 @@ def _spelled(payload: dict[str, Any], snake: str, camel: str) -> Any:
     return payload.get(snake, payload.get(camel))
 
 
-def _resolve(result: Any, tool: ToolId, items_key: str) -> ResolveResult:
-    payload = _guard(result, tool)
+def _resolve(result: Any, run: Any, principal_id: str, tool: ToolId, items_key: str) -> ResolveResult:
+    payload = _guard(result, run, principal_id, tool)
     allowed = {items_key, "failed_requests", "failedRequests", "save_to_maps_url", "saveToMapsUrl"}
     if not set(payload) <= allowed:
         raise ValueError("resolve keys")
@@ -274,17 +282,17 @@ def _typed(builder: Any, *args: Any) -> Any:
     return built
 
 
-def parse_weather(result: Any) -> WeatherResult:
-    return _typed(_weather, result)  # type: ignore[no-any-return]
+def parse_weather(result: Any, run: ToolRun, principal_id: str) -> WeatherResult:
+    return _typed(_weather, result, run, principal_id)  # type: ignore[no-any-return]
 
 
-def parse_route(result: Any) -> RouteResult:
-    return _typed(_route, result)  # type: ignore[no-any-return]
+def parse_route(result: Any, run: ToolRun, principal_id: str) -> RouteResult:
+    return _typed(_route, result, run, principal_id)  # type: ignore[no-any-return]
 
 
-def parse_resolve_names(result: Any) -> ResolveResult:
-    return _typed(_resolve, result, ToolId.RESOLVE_NAMES, "results")  # type: ignore[no-any-return]
+def parse_resolve_names(result: Any, run: ToolRun, principal_id: str) -> ResolveResult:
+    return _typed(_resolve, result, run, principal_id, ToolId.RESOLVE_NAMES, "results")  # type: ignore[no-any-return]
 
 
-def parse_resolve_urls(result: Any) -> ResolveResult:
-    return _typed(_resolve, result, ToolId.RESOLVE_MAPS_URLS, "entities")  # type: ignore[no-any-return]
+def parse_resolve_urls(result: Any, run: ToolRun, principal_id: str) -> ResolveResult:
+    return _typed(_resolve, result, run, principal_id, ToolId.RESOLVE_MAPS_URLS, "entities")  # type: ignore[no-any-return]

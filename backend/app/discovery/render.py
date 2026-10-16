@@ -20,6 +20,7 @@ from typing import Annotated
 
 from pydantic import Field, StringConstraints
 
+from ._validated import ValidatedAnswer, is_validated
 from .client import ToolRun
 from .contracts import GroundedAnswer, GroundFrozen, content_hash, display_hash
 from .errors import DiscoveryError
@@ -88,9 +89,14 @@ def _source_parts(answer: GroundedAnswer) -> tuple[SourcePart, ...]:
     )
 
 
-def render_grounded_block(answer: GroundedAnswer, framing: FramingKind | None = None) -> RenderedBlock:
+def render_grounded_block(validated: ValidatedAnswer, framing: FramingKind | None = None) -> RenderedBlock:
+    """Render a VALIDATED answer. A bare GroundedAnswer (or a forged wrapper) is refused: only
+    ``GroundedAnswerValidator.validate`` can mint a ValidatedAnswer."""
+    if not is_validated(validated):
+        raise ValueError("only a validated answer can be rendered")
     if framing is not None and not isinstance(framing, FramingKind):
         raise ValueError("framing must be a FramingKind")
+    answer = validated.answer
     return RenderedBlock(
         framing=framing,
         parts=(GroundedTextPart(text=answer.text, content_hash=content_hash(answer.text)),
@@ -112,22 +118,24 @@ def _block_display_hash(rendered: RenderedBlock) -> str | None:
     ])
 
 
-def verify_verbatim(rendered: RenderedBlock, answer: GroundedAnswer, run: ToolRun) -> None:
+def verify_verbatim(rendered: RenderedBlock, validated: ValidatedAnswer, run: ToolRun) -> None:
     """Raise ``VerbatimViolation`` unless the block is exactly text-then-sources for ``answer``
     AND both match what the client recorded for that tool call in ``run``'s ledger."""
-    if not _matches(rendered, answer, run):
+    if not _matches(rendered, validated, run):
         raise VerbatimViolation()
 
 
-def _matches(rendered: object, answer: object, run: object) -> bool:
-    if not (isinstance(rendered, RenderedBlock) and isinstance(answer, GroundedAnswer)
-            and isinstance(run, ToolRun)):
+def _matches(rendered: object, validated: object, run: object) -> bool:
+    if not (isinstance(rendered, RenderedBlock) and is_validated(validated) and isinstance(run, ToolRun)):
+        return False
+    answer = validated.answer  # type: ignore[attr-defined]
+    if not isinstance(answer, GroundedAnswer):
         return False
     if rendered.branding != BRANDING or rendered.render_mode != RENDER_MODE or not rendered.translate_no:
         return False
     # 1. Exact, ordered equality with a fresh render of the answer: nothing interspersed,
     #    reordered, missing, late or edited, and text-then-sources only.
-    expected = render_grounded_block(answer, rendered.framing)
+    expected = render_grounded_block(validated, rendered.framing)  # type: ignore[arg-type]
     parts = rendered.parts
     if len(parts) != len(expected.parts) or len(parts) < 2:
         return False
