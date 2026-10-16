@@ -426,7 +426,8 @@ class FrameEchoTransport(FakeTransport):
 def real_stack(
     before: Sequence[Any] = (), *, attempts: int = 3, discovery: Any = None,
     config: RuntimeConfig | None = None, intent: str = "OTHER", query: str = "quiet restaurant",
-    prompt_tokens: int | None = 100, completion_tokens: int | None = 20, **env_kw: Any,
+    prompt_tokens: int | None = 100, completion_tokens: int | None = 20,
+    breaker_threshold: int = 5, **env_kw: Any,
 ) -> tuple[Env, FrameEchoTransport, Any]:
     """An Env over the REAL ResilientGateway wrapping the REAL OpenRouterGateway (a fake
     transport underneath): the stack ScriptedGateway cannot exercise."""
@@ -435,7 +436,7 @@ def real_stack(
                                    prompt_tokens=prompt_tokens, completion_tokens=completion_tokens)
     inner = make_gateway(transport, config=config)
     gateway = ResilientGateway(
-        inner, ResiliencePolicy(max_attempts=attempts),
+        inner, ResiliencePolicy(max_attempts=attempts, breaker_failure_threshold=breaker_threshold),
         price_table=placeholder_price_table(config.model_id, config.provider),
         sleep=lambda seconds: None)
     maps = discovery or RecordingClient(SyntheticMapsClient(payload=canary_payload()))

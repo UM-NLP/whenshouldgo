@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import threading
 from collections import deque
+from enum import StrEnum
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
@@ -25,6 +26,18 @@ from decimal import Decimal
 from typing import Literal
 
 from .gateway.types import Usage
+
+
+class Attribution(StrEnum):
+    """Whose spend an entry is. USER: a successful turn, or a failure the user's own input can
+    cause (rejected or malformed output, a rejected patch or arguments, truncation). PROVIDER:
+    everything that failed on our provider side (timeouts, resets, 5xx, provider rate limits,
+    quota or latch refusals, a kill switch, deadline partials, server faults). Only USER spend
+    counts toward the user's daily token ceiling; PROVIDER spend stays visible for cost
+    reporting and the whole-pilot budget."""
+
+    USER = "USER"
+    PROVIDER = "PROVIDER"
 
 
 @dataclass(frozen=True)
@@ -42,6 +55,7 @@ class CostEntry:
     # usage, which carries no price).
     estimated_cost_usd: Decimal | None = None
     at: datetime | None = None  # stamped by the ledger's injected clock
+    attribution: Attribution = Attribution.USER
 
 
 class CostLedger:
@@ -61,6 +75,10 @@ class CostLedger:
         # principal id -> when a turn failed AFTER a provider call was sent (abuse-shaped).
         self._failed: dict[str, deque[datetime]] = {}
         self._writes = 0
+        # Process-wide running total of PROVIDER-attributable spend since start (never pruned).
+        # The whole-pilot budget and the shared Firestore ledger (ACCESS-02) will consume this and
+        # the per-principal ``provider_usage_for``; in memory it covers this process only.
+        self._provider_total = Usage(input_tokens=0, output_tokens=0)
         self._lock = threading.Lock()
 
     # -- writes (prune as they go) --------------------------------------------------------------
@@ -91,22 +109,26 @@ class CostLedger:
         now = self._clock()
         stamped = replace(entry, at=now)
         with self._lock:
+            if entry.attribution == Attribution.PROVIDER:
+                self._provider_total = self._provider_total.plus(
+                    Usage(input_tokens=entry.input_tokens, output_tokens=entry.output_tokens))
             self._by_principal.setdefault(entry.principal_id, deque()).append(stamped)
             self._after_write_locked(entry.principal_id, now)
 
     def record_gateway(
         self, principal_id: str, run_id: str, label: str, usage: Usage, model_calls: int,
-        cost_usd: Decimal | None = None,
+        cost_usd: Decimal | None = None, attribution: Attribution = Attribution.USER,
     ) -> None:
         self.record(CostEntry(
             "gateway", principal_id, run_id, label, usage.input_tokens, usage.output_tokens,
-            model_calls=model_calls, estimated_cost_usd=cost_usd))
+            model_calls=model_calls, estimated_cost_usd=cost_usd, attribution=attribution))
 
     def record_tool(
-        self, principal_id: str, run_id: str, label: str, tool_calls: int, billable_units: int
+        self, principal_id: str, run_id: str, label: str, tool_calls: int, billable_units: int,
+        attribution: Attribution = Attribution.USER,
     ) -> None:
         self.record(CostEntry("tool", principal_id, run_id, label, tool_calls=tool_calls,
-                              billable_units=billable_units))
+                              billable_units=billable_units, attribution=attribution))
 
     def record_failed_paid_turn(self, principal_id: str, run_id: str) -> None:
         """Mark a turn that failed after a provider call was sent (``run_id`` is for audit)."""
@@ -122,25 +144,55 @@ class CostLedger:
             rows = [e for dq in self._by_principal.values() for e in dq]
         return tuple(sorted(rows, key=lambda e: e.at or datetime.min.replace(tzinfo=UTC)))
 
-    def usage_for(self, principal_id: str, *, window: timedelta | None = None) -> Usage:
+    def usage_for(
+        self, principal_id: str, *, window: timedelta | None = None,
+        user_attributable_only: bool = False,
+    ) -> Usage:
         """Token usage of one principal over a rolling ``window`` ending now (None: all that is
-        retained). Reads only this principal's own entries."""
+        retained). With ``user_attributable_only`` only USER-attributed spend counts (what the
+        daily ceiling uses); without it the full total, provider-side spend included, is
+        returned for cost reporting. Reads only this principal's own entries."""
         cutoff = self._clock() - window if window is not None else None
         with self._lock:
             rows = [
                 e for e in self._by_principal.get(principal_id, ())
-                if cutoff is None or (e.at and e.at > cutoff)
+                if (cutoff is None or (e.at and e.at > cutoff))
+                and (not user_attributable_only or e.attribution == Attribution.USER)
             ]
         return Usage(input_tokens=sum(e.input_tokens for e in rows),
                      output_tokens=sum(e.output_tokens for e in rows))
 
+    def total_usage_for(self, principal_id: str, *, window: timedelta | None = None) -> Usage:
+        """Everything this principal's turns cost, whoever it is attributed to."""
+        return self.usage_for(principal_id, window=window)
+
+    def provider_usage_for(self, principal_id: str, *, window: timedelta | None = None) -> Usage:
+        """PROVIDER-attributed spend still retained for this principal."""
+        cutoff = self._clock() - window if window is not None else None
+        with self._lock:
+            rows = [
+                e for e in self._by_principal.get(principal_id, ())
+                if e.attribution == Attribution.PROVIDER
+                and (cutoff is None or (e.at and e.at > cutoff))
+            ]
+        return Usage(input_tokens=sum(e.input_tokens for e in rows),
+                     output_tokens=sum(e.output_tokens for e in rows))
+
+    @property
+    def provider_total(self) -> Usage:
+        """Process-wide running total of PROVIDER-attributed tokens since start."""
+        with self._lock:
+            return self._provider_total
+
     def oldest_usage_at(self, principal_id: str, *, window: timedelta) -> datetime | None:
-        """When the oldest counted token-bearing entry was written (for Retry-After)."""
+        """When the oldest USER-attributed token-bearing entry (the ones the ceiling counts) was
+        written, for Retry-After."""
         cutoff = self._clock() - window
         with self._lock:
             times = [
                 e.at for e in self._by_principal.get(principal_id, ())
                 if e.at and e.at > cutoff and (e.input_tokens or e.output_tokens)
+                and e.attribution == Attribution.USER
             ]
         return min(times) if times else None
 

@@ -32,14 +32,14 @@ from __future__ import annotations
 import math
 import uuid
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from time import perf_counter
 
 from pydantic import ValidationError
 
 from . import telemetry
-from .costs import CostLedger
+from .costs import Attribution, CostLedger
 from .discovery import (
     DisplayCache,
     GroundedAnswerRejected,
@@ -179,9 +179,13 @@ class PipelineOutcome:
 
 @dataclass
 class _Spend:
-    """Whether this run sent a provider call (a later failure may then be a paid failure)."""
+    """Whether this run sent a provider call (a later failure may then be a paid failure), and
+    the cost rows it produced. Rows are written to the ledger only when the turn's outcome is
+    known, because WHO the spend is attributed to depends on that outcome."""
 
     paid: bool = False
+    gateway: list = field(default_factory=list)  # (label, usage, calls, cost)
+    tools: list = field(default_factory=list)  # (label, calls, units)
 
 
 def _rejected(status: int = 502) -> TurnFailure:
@@ -332,7 +336,9 @@ class TurnPipeline:
         if daily is None:  # no entitlement for this tier: no paid calls
             raise TurnFailure(429, ErrorCode.QUOTA, ErrorReason.RATE_LIMITED,
                               retry_after=MAX_RETRY_AFTER_SECONDS)
-        used = self._costs.usage_for(principal.uid, window=DAILY_WINDOW)
+        # Only the user's own spend counts; provider-side failures are recorded but not charged.
+        used = self._costs.usage_for(principal.uid, window=DAILY_WINDOW,
+                                     user_attributable_only=True)
         worst = request.worst_case_usage
         if (
             used.input_tokens + worst.input_tokens > daily.input_tokens
@@ -366,12 +372,44 @@ class TurnPipeline:
             outcome = self._run(principal, message, base, allowed, tool_run, cache_key, request,
                                 budget, spend)
         except TurnFailure as failure:
+            self._flush(principal, run_id, spend, self._failure_attribution(failure))
             self._note_failure(principal, run_id, failure, spend)
             raise
+        except Exception:
+            self._flush(principal, run_id, spend, Attribution.PROVIDER)  # not the user's doing
+            raise
         if isinstance(outcome, TurnFailure):
+            self._flush(principal, run_id, spend, self._failure_attribution(outcome))
             self._note_failure(principal, run_id, outcome, spend)
             raise outcome
+        # A deadline or tool-budget partial is a provider-side shortfall, not the user's spend.
+        partial = TurnWarning.TOOL_BUDGET_EXHAUSTED in outcome.warnings
+        self._flush(principal, run_id, spend, Attribution.PROVIDER if partial else Attribution.USER)
         return outcome
+
+    @staticmethod
+    def _failure_attribution(failure: TurnFailure) -> Attribution:
+        """USER only for failures the user's own input can cause (rejected or malformed output,
+        a rejected patch or arguments, truncation). Truncation stays USER-attributed because a
+        cut-off answer cannot be told apart from a model that rambled on hostile input (the output
+        cap is ours); every provider-side failure, including a call that failed without abuse-
+        shaped input, is PROVIDER-attributed."""
+        return Attribution.USER if failure.reason in _ABUSE_REASONS else Attribution.PROVIDER
+
+    def _flush(
+        self, principal: Principal, run_id: str, spend: _Spend, attribution: Attribution
+    ) -> None:
+        """Write the run's cost rows with the turn's attribution. Spend is always recorded
+        (worst-case rules unchanged); attribution only decides whether it counts toward the
+        user's ceiling."""
+        for label, usage, calls, cost in spend.gateway:
+            self._costs.record_gateway(principal.uid, run_id, label, usage, calls, cost,
+                                       attribution=attribution)
+        for label, calls, units in spend.tools:
+            self._costs.record_tool(principal.uid, run_id, label, calls, units,
+                                    attribution=attribution)
+        spend.gateway.clear()
+        spend.tools.clear()
 
     def _note_failure(
         self, principal: Principal, run_id: str, failure: TurnFailure, spend: _Spend
@@ -431,7 +469,7 @@ class TurnPipeline:
         if turn is None:
             raise _fault()
         spend.paid = True
-        self._record_gateway_turn(principal, run_id, request, turn)
+        self._record_gateway_turn(run_id, request, turn, spend)
         frame = self._checked_frame(turn)
         if frame is None:
             self._reject(telemetry.ValidationReason.SCHEMA, telemetry.Phase.MODEL)
@@ -464,7 +502,7 @@ class TurnPipeline:
         )
 
     def _record_gateway_turn(
-        self, principal: Principal, run_id: str, request: GenerateRequest, turn: ModelTurn
+        self, run_id: str, request: GenerateRequest, turn: ModelTurn, spend: _Spend
     ) -> None:
         meta = turn.telemetry
         usage = self._trusted_usage(turn.usage, request, turn.model_calls)
@@ -479,8 +517,9 @@ class TurnPipeline:
             model_calls=min(meta.model_calls, 100), repairs=meta.repairs,
             price_table_version=meta.price_table_version,
         )
-        self._costs.record_gateway(principal.uid, run_id, meta.call_role.value, usage,
-                                   turn.model_calls, turn.estimated_cost_usd)
+        _ = run_id
+        spend.gateway.append((meta.call_role.value, usage, turn.model_calls,
+                              turn.estimated_cost_usd))
 
     def _charge_for(self, error: GatewayError, request: GenerateRequest) -> tuple[Usage, int] | None:
         """What a failed gateway call costs. Trustworthy usage from the gateway is kept (capped at
@@ -521,7 +560,7 @@ class TurnPipeline:
         )
         if charge is not None:
             spend.paid = True
-            self._costs.record_gateway(principal.uid, run_id, "FRAME", usage, calls)
+            spend.gateway.append(("FRAME", usage, calls, None))
 
     def _discover(
         self, principal: Principal, message: str, frame: FrameResult, workspace: TripWorkspace,
@@ -561,8 +600,7 @@ class TurnPipeline:
         if result is None:
             return _fault()
         spend.paid = True
-        self._costs.record_tool(principal.uid, run.run_id, ToolId.SEARCH_PLACES.value,
-                                run.calls_used, result.billable_units)
+        spend.tools.append((ToolId.SEARCH_PLACES.value, run.calls_used, result.billable_units))
         return self._validated(principal, workspace, run, result, cache_key)
 
     def _tool_failed(
@@ -571,8 +609,7 @@ class TurnPipeline:
     ) -> PipelineOutcome | TurnFailure:
         if failure.calls:
             spend.paid = True
-            self._costs.record_tool(principal.uid, run.run_id, ToolId.SEARCH_PLACES.value,
-                                    failure.calls, 0)
+            spend.tools.append((ToolId.SEARCH_PLACES.value, failure.calls, 0))
         if isinstance(failure, ToolBudgetExceeded):
             # Best validated partial result: the patch was validated, discovery was refused.
             return PipelineOutcome(workspace, REPLY_PARTIAL, None, None,
