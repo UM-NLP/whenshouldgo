@@ -36,6 +36,24 @@ Ask in writing, keep the case number and have counsel review the answers.
 > 10. Do the summary text and the place data from `search_places` follow the same display, caching and evaluation rules? May a `save_to_maps_url` be cached? What wording and display rules apply to the walking-route warning?
 > 11. Do the attribution page's voice-first rules (companion UI, disclosure at first use and at least every six months) apply to a mobile web client? May an unmodified summary be shown after the user's session ends, and what counts as "within one user interaction" for sources?
 
+## Status of the answers received 2026-10-15
+
+The owner supplied answers to the eleven questions ([google-maps-grounding-lite-qa-2026-10-15.md](google-maps-grounding-lite-qa-2026-10-15.md)). They are a documentation-based analysis, not Google's written determination, so every row still needs Google's confirmation before it counts as settled.
+
+| # | Reported answer | Design consequence |
+|---|---|---|
+| 1 | Grounding Lite is GA (announced 22 April 2026), 99.9% uptime objective, no Canadian exclusion; not verified for the owner's own account | Phase 0 no longer assumes pre-GA terms; confirm in the Cloud console and keep a degradation path |
+| 2 | Zero retention does not establish compliance: OpenRouter allows implicit in-memory prompt caching; Google bars caching of Maps content by the LLM and publishes no exception | Verify and disable reusable prompt caching on every allowlisted upstream endpoint and fallback, or get Google's written acceptance. Open |
+| 3 | Storing opaque IDs with user-entered labels and visit dates is consistent with the general place-ID exception; Grounding Lite's docs do not expressly confirm it for all three tools | Keep storing IDs only. Written confirmation still wanted. Open |
+| 4 | Grouping activity by Google place ID is unresolved; no unconditional approval | Phase 2 patterns do not group by place ID; they use weekday, daypart, activity tag and the user's label. Open |
+| 5 | Testing and validating with Google content is restricted; connectivity and schema checks differ from content benchmarking; training only on user times and labels is outside the restrictions; training with place IDs is not assumed allowed | Synthetic fixtures only; live captures are shape checks kept outside Git and never used as evaluation data. No place IDs in any trained model. Open for mixed evaluations |
+| 6 | A general "recent answers" view is not authorized by the 30-day allowance | History screen is built from place IDs and user data and re-fetches details; grounded text is cached only for redisplay. Open |
+| 7 | Coordinates from Grounding Lite have no documented cache allowance | Grounding Lite coordinates are discarded, never stored. Open |
+| 8 | The ordinary Places API pipeline to a third-party LLM cannot be approved; no safe-field list | Decision 17 stands. Resolved against the owner's request unless Google says otherwise |
+| 9 | Weather from `lookup_weather` is Google Maps Content with required attribution | Keep `MAPS_GROUNDED` for Grounding Lite weather. Resolved (conservative treatment confirmed) |
+| 10 | Summary and places share the content restrictions; the cache allowance is not blanket permission; `save_to_maps_url` shown as returned, storage unclear; walking warning required | Do not store `save_to_maps_url`; show the walking warning with every walking route. Storage of `save_to_maps_url` open |
+| 11 | Voice-first rules depend on the interface, not on web vs native; a text-only client has no voice-announcement obligation; a persistent explanation must remain accessible | Phase 0 text client: no voice rules. Android voice phase: companion screen, disclosure and persistent explanation |
+
 ## Checklist for counsel: notifications, profiling and privacy
 
 1. Is a web-push or FCM notification an “electronic address” message under CASL? Is a notification such as “You usually go out Saturday morning. Want ideas?” a commercial electronic message, given that the service is free and recommends third-party businesses?

@@ -5,7 +5,7 @@ Updated 2026-10-14. These drafts were prepared for the repository `UM-NLP/whensh
 ## Legal and privacy issues
 
 ### LEGAL-01: Confirm Grounding Lite launch stage and Canadian eligibility
-Phase 0 entry gate. Research found conflicting sources: one says Experimental (no SLA, support or deprecation policy), another lists a paid SKU. Regional availability for Canadian billing accounts was not stated.
+Phase 0 entry gate. Update 2026-10-15: an owner-supplied analysis reports Grounding Lite as Generally Available (announced 22 April 2026) with a 99.9% uptime objective and no Canadian exclusion, but says it did not verify the owner's account. Earlier research had found conflicting sources (one said Experimental). A live capture on 2026-10-15 reached the endpoint and listed tools, but every tool call returned HTTP 403 "blocked" until the key's API restrictions and enablement are fixed. Confirm the stage and eligibility in the Cloud console for the owner's project.
 - Ask Google (question 1 in `docs/legal/open-questions.md`) and test enabling the API on a Canadian-billed project.
 - Record the answer, date and case number in `docs/legal/`.
 - Decide with the owner: if Experimental or Preview, run Phase 0 as pilot-only on pre-GA terms with a degradation path.
@@ -15,7 +15,7 @@ Done when: the launch stage and eligibility are on file, or the owner has record
 Phase 0 entry gate. Grounding Lite terms require that the model provider not store, cache or train on Maps content.
 - Choose candidate hosts from the model bake-off; read each host's retention and training terms.
 - Request a data processing agreement and sub-processor list from OpenRouter (none is published).
-- Get Google's answer on whether zero data retention with in-memory prompt caching meets “not cached by the LLM” (question 2).
+- Get Google's answer on whether zero data retention with in-memory prompt caching meets “not cached by the LLM” (question 2). The 2026-10-15 analysis says it cannot be confirmed compliant: OpenRouter allows implicit in-memory prompt caching under zero retention. Verify and disable reusable prompt caching on every allowlisted upstream endpoint and fallback, or get Google's written acceptance, and record it per provider.
 - Save the terms in `docs/legal/` and review each host's stated retention monthly.
 Done when: terms for the chosen host are on file and Google's answer to question 2 is recorded.
 

@@ -12,7 +12,7 @@ Every field carries one class, enforced in code by a `content_class` on evidence
 | `PLACE_ID` | Google place ID | Store indefinitely; refresh IDs that Google reports obsolete |
 | `MAPS_GROUNDED` | Grounded answer text and its sources | Display cache only, 24 hours by default, 30 consecutive days at most. Never in conversation history, summaries, logs, traces, evaluation data, exports or prompts for any purpose other than display |
 | `MAPS_PLACES` | Names, addresses, hours, ratings, categories, reviews | Not stored. Re-fetched by place ID at display time and held in memory for a short time only |
-| `MAPS_LATLNG` | Venue coordinates | Avoid. If needed, at most 30 consecutive days, then deleted |
+| `MAPS_LATLNG` | Venue coordinates | Coordinates returned by Grounding Lite are not cached or stored. Coordinates from the Places API, if ever needed, at most 30 consecutive days, then deleted |
 | `DERIVED_SAFE` | Day of week, daypart, the user's activity tag, counts | Derived only from `USER` fields and timestamps |
 
 ## Outing history record
@@ -69,7 +69,7 @@ Routine  (schema_version, id, owner_id, label,
 
 A routine is a fact with `source=MEMORY`, `confirmation=CONFIRMED` and `hard=false`. It becomes a hard constraint only through a separate explicit user statement. A model may phrase a pattern from the activity tag, day and daypart only. Place names in the interface come from a component that fetches them by place ID.
 
-Patterns use counts by weekday and time bucket. A trained model over place IDs is not used until Google answers the open question in [legal/open-questions.md](legal/open-questions.md).
+Patterns use counts by weekday, daypart, the user's activity tag and the user's own label. They are not grouped by Google place ID, and no trained model uses place IDs, until Google confirms that use in writing: the 2026-10-15 analysis could not give an unconditional approval for grouping by place ID ([legal/google-maps-grounding-lite-qa-2026-10-15.md](legal/google-maps-grounding-lite-qa-2026-10-15.md), question 4; open items in [legal/open-questions.md](legal/open-questions.md)). A model trained only on user-entered times and labels, with no Google-derived features, is outside Google's content restrictions.
 
 ## Routine reminder notifications (Phase 3)
 
@@ -128,6 +128,8 @@ content_hash                # for the verbatim-display invariant; hash only, nev
 `expires_at` (freshness) and `cache_expires_at` (storage) are separate. `Evidence` holds no content.
 
 Weather obtained through Grounding Lite's weather tool is tagged `MAPS_GROUNDED` (kind `WEATHER`), with the same attribution, display-cache and evaluation rules, until Google answers in writing whether it is Maps content (owner decision, 2026-10-15). Weather from a non-Google source uses content class `NONE`.
+
+Every displayed walking route shows, together with the route, the beta warning "Walking routes are in beta and might sometimes be missing clear sidewalks or pedestrian paths." The Phase 0 client is text-only, so Google's voice-first rules do not apply to it. A voice-first client (Android phase) needs a companion screen with the verbatim conversation and sources, a disclosure shown or spoken at first use and at least every six months, and a persistent explanation.
 
 A `PendingAction` lives at most 15 minutes from creation to confirmation (owner decision, 2026-10-15). Confirmation after expiry is refused and the user starts over.
 

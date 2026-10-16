@@ -39,7 +39,9 @@ Use Grounding Lite for prompts such as “find a relaxed vegetarian restaurant n
 
 The model sees tool results, which contain Maps content, within a single request. The application displays the grounded output unmodified with its Google Maps sources immediately after it, reachable in one interaction, and with the required attribution. It cannot extract, modify, reorder or intersperse the grounded output, and it cannot use it to train, test, validate or improve any model. The grounded output may be cached for redisplay for 30 consecutive days at most. The model provider must not store or cache Maps content, which is why zero data retention is required.
 
-Open launch-stage, availability and terms questions are tracked in [legal/open-questions.md](legal/open-questions.md). If Grounding Lite is Experimental or Preview, Phase 0 runs as a pilot on pre-GA terms with no SLA, with a degradation path to a structured, server-rendered fallback.
+The owner-supplied analysis of 2026-10-15 reports Grounding Lite as Generally Available with a 99.9% uptime objective and no Canadian exclusion; confirming this for the owner's billing account and the remaining questions are tracked in [legal/open-questions.md](legal/open-questions.md). Keep a degradation path to a structured, server-rendered fallback regardless.
+
+Caching by the model provider: zero data retention does not by itself satisfy Google's rule that Maps content is not cached by the model provider, because OpenRouter allows some implicit in-memory prompt caching under its zero-retention policy. Before launch, verify each allowlisted upstream endpoint, including any fallback, and disable reusable prompt caching, or obtain Google's written acceptance. Record the verification per provider in `docs/legal/`.
 
 ## Ordinary Places and Routes APIs
 
