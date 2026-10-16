@@ -107,6 +107,10 @@ class ResilientGateway:
         self._breakers: dict[str, CircuitBreaker] = {}
         self._guard = Lock()
 
+    @property
+    def latched(self) -> bool:
+        return bool(getattr(self._inner, "latched", False))
+
     def breaker_for(self, provider: str) -> CircuitBreaker:
         with self._guard:
             if provider not in self._breakers:

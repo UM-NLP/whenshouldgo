@@ -62,6 +62,15 @@ STATE_BEARING_TYPES: tuple[type[BaseModel], ...] = (
 FRAME_STATE_SCHEMA_ALLOWLIST: frozenset[type[BaseModel]] = frozenset({WorkspacePatch})
 
 
+def _frame_roots() -> frozenset[type[BaseModel]]:
+    """Every root model FRAME may use: the bare patch plus the orchestrator's FrameResult (a
+    patch with an intent and closed search arguments). Imported lazily because app.frame
+    depends on this package; membership is by exact class, a subclass is still refused."""
+    from ..frame import FrameResult
+
+    return FRAME_STATE_SCHEMA_ALLOWLIST | {FrameResult}
+
+
 class ResiliencePolicy(Frozen):
     max_attempts: int = Field(default=3, ge=1, le=5)
     backoff_base_seconds: float = Field(default=0.25, gt=0)
@@ -167,7 +176,7 @@ def _check_output_schema(request: GenerateRequest) -> None:
     state_bearing = any(issubclass(found, STATE_BEARING_TYPES) for found in reachable)
     if not state_bearing:
         return
-    if request.call_role == CallRole.FRAME and root in FRAME_STATE_SCHEMA_ALLOWLIST:
+    if request.call_role == CallRole.FRAME and root in _frame_roots():
         return
     # DISCOVER output is MAPS_GROUNDED and never produces a patch; COMPOSE only words
     # state the server already validated.

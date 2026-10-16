@@ -32,7 +32,10 @@ from pydantic import (
 )
 
 from ..domain import (
+    GROUNDED_TEXT_MAX_CHARS,
     MAX_MAPS_CACHE,
+    MAX_PLACES,
+    MAX_TITLE_CHARS,
     ContentClass,
     Evidence,
     EvidenceKind,
@@ -48,9 +51,6 @@ from .ids import ToolId
 from .text import has_lone_surrogate, short_field_problem, summary_problem
 from .uris import LinkField, check_link, data_token
 
-GROUNDED_TEXT_MAX_CHARS = 8_000
-MAX_PLACES = 20
-MAX_TITLE_CHARS = 200
 _PLACE_ID = re.compile(r"^[A-Za-z0-9_-]{1,300}$")  # same pattern as domain.PlaceId
 _CITATION = re.compile(r"\[(\d{1,4}(?:\s*,\s*\d{1,4})*)\]")
 

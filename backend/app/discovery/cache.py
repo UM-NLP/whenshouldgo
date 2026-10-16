@@ -8,9 +8,9 @@ Only a ``ValidatedAnswer`` (minted by the validator) can be stored: ``put`` refu
 limits plus the hashes recorded at validation time.
 
 Capacity is fair per owner: entries are indexed by owner, an owner is capped, and when the global
-cap is hit the OLDEST entry of the owner holding the MOST entries is evicted (ties go to the owner
-that is inserting), so many owners or one flooder cannot push a well-behaved owner below its
-share. Owners can never outnumber entries, so their number is bounded by ``max_entries``. The
+cap is hit a writer over its fair share evicts its OWN oldest entry, otherwise the OLDEST entry of
+the owner holding the MOST entries is evicted (ties go to the owner that is inserting), so many
+owners or one flooder cannot push a well-behaved owner below its share. Owners can never outnumber entries, so their number is bounded by ``max_entries``. The
 eviction scan is over owners only (at most ``max_entries``), not over entries.
 """
 from __future__ import annotations
@@ -118,6 +118,16 @@ class DisplayCache:
                 best, size = owner, len(bucket)
         return best
 
+    def _eviction_victim(self, writer: str) -> str:
+        """Whose oldest entry goes when the global cap is hit. A writer over its fair share
+        (the cap divided by the number of owners, rounded up) evicts its OWN oldest entry, so a
+        tenant at its share can never push another tenant out; a writer within its share takes
+        from the largest owner (ties go to the writer)."""
+        share = -(-self._max // max(1, len(self._entries)))
+        if len(self._entries.get(writer, ())) > share:
+            return writer
+        return self._largest_owner(writer)
+
     def put(self, owner_id: str, key: str, validated: ValidatedAnswer) -> None:
         self._key(owner_id, key)
         now = self._now()
@@ -134,7 +144,7 @@ class DisplayCache:
                 bucket.popitem(last=False)
                 self._count -= 1
             while self._count > self._max:
-                victim = self._largest_owner(owner_id)
+                victim = self._eviction_victim(owner_id)
                 self._entries[victim].popitem(last=False)
                 self._count -= 1
                 if not self._entries[victim]:

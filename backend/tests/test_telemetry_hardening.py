@@ -32,7 +32,7 @@ class RaisingSink:
 
 def client_for(sink):
     quotas = QuotaService(small_registry())
-    orchestrator = TurnOrchestrator(quotas, sink=sink)
+    orchestrator = TurnOrchestrator(quotas, sink=sink, dev_scaffold=True)
     app = create_app(
         verifier=StaticTokenVerifier(TOKENS),
         resolver=PrincipalResolver(policies=quotas.policies),

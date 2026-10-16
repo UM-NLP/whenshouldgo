@@ -148,7 +148,7 @@ def test_baseexception_at_reserved_event_does_not_leak_the_reservation():
                 raise Interrupt()
 
     quotas = QuotaService(small_registry())
-    orchestrator = TurnOrchestrator(quotas, sink=Boom())
+    orchestrator = TurnOrchestrator(quotas, sink=Boom(), dev_scaffold=True)
     principal = PrincipalResolver(policies=quotas.policies).resolve(VerifiedIdentity("u1", "anonymous"))
     with pytest.raises(Interrupt):
         orchestrator.run_turn(principal, "Plan a trip to a Toronto restaurant", "key-0001")
@@ -342,7 +342,7 @@ def test_real_uvicorn_logs_contain_no_canaries():
 
     quotas = QuotaService(small_registry())
     sink = t.InMemorySink()
-    orchestrator = TurnOrchestrator(quotas, sink=sink)
+    orchestrator = TurnOrchestrator(quotas, sink=sink, dev_scaffold=True)
     application = create_app(
         verifier=StaticTokenVerifier({"canary-tok": VerifiedIdentity("guest-canary", "anonymous")}),
         resolver=PrincipalResolver(policies=quotas.policies),

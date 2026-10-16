@@ -28,11 +28,20 @@ from pydantic import (
     ConfigDict,
     Field,
     StringConstraints,
+    ValidationInfo,
+    field_validator,
     model_validator,
 )
 
 SCHEMA_VERSION = 1
 MAX_MAPS_CACHE = timedelta(days=30)
+# Single source of truth for the size caps of a grounded answer. discovery/contracts.py and
+# discovery/uris.py import these; the API block (DiscoveryBlock) derives its caps from them, so
+# a maximal valid GroundedAnswer always converts.
+GROUNDED_TEXT_MAX_CHARS = 8_000
+MAX_PLACES = 20
+MAX_TITLE_CHARS = 200
+MAX_URI_CHARS = 2_048
 MAX_MAPS_CACHE_HOURS = 24 * 30
 # Owner decision (2026-10-15): a pending action lives at most 15 minutes.
 MAX_PENDING_ACTION_TTL = timedelta(minutes=15)
@@ -665,6 +674,19 @@ class RuntimeConfig(Frozen):
     token_ceilings: TokenCeilings
     ttls: RuntimeTTLs
     flags: PhaseFlags
+    # OWNER-TUNABLE PLACEHOLDER (not a product decision): the most PAID FAILED turns (a turn
+    # that fails after at least one provider call was sent) one principal may cause per rolling
+    # hour. Failures refund the user allowance (documented decision), so this limiter and the
+    # daily token ceiling in the entitlement policy are what bound abuse of paid calls. Enforced
+    # before the model is called; over the limit is a typed 429 QUOTA / OVER_BUDGET.
+    max_paid_failed_turns_per_hour: int = Field(default=10, ge=1, le=1_000)
+    # Decision 17 and legal open question 2 (docs/legal/open-questions.md): in Phase 0 the
+    # model never sees Google Maps content. Prompt caching at OpenRouter's upstream hosts is
+    # therefore not a concern, and the server shows Google's grounded text verbatim. True
+    # would let DISCOVER calls carry MAPS_GROUNDED context (gateway support exists) but that
+    # path is deliberately NOT implemented: the orchestrator raises a typed not-implemented
+    # error when this is True. Flip it only with Google's written answer to question 2.
+    maps_content_to_model: bool = False
 
     @model_validator(mode="after")
     def _unique_names(self) -> RuntimeConfig:
@@ -683,11 +705,31 @@ class RuntimeConfig(Frozen):
 
 
 class ErrorCode(StrEnum):
-    QUOTA = "QUOTA"  # not emitted yet: quota exhaustion is still a 200 with a flag
+    QUOTA = "QUOTA"  # an over-budget run (429); allowance exhaustion is still a 200 with a flag
     POLICY = "POLICY"
     PROVIDER = "PROVIDER"  # also used for unhandled server faults until a code exists
     VALIDATION = "VALIDATION"
     CONFLICT = "CONFLICT"
+
+
+class ErrorReason(StrEnum):
+    """Stable machine-readable refinement of an ``ErrorCode``. Clients switch on this, never on
+    the message. Additive: a client must treat an unknown reason like its ``ErrorCode``."""
+
+    RESULT_EXPIRED = "RESULT_EXPIRED"  # replay of a discovery turn whose cached block is gone
+    TURN_IN_PROGRESS = "TURN_IN_PROGRESS"  # another turn for this tenant is still running
+    SERVER_NOT_CONFIGURED = "SERVER_NOT_CONFIGURED"  # no model gateway and no dev scaffold
+    PROVIDER_RATE_LIMITED = "PROVIDER_RATE_LIMITED"
+    PROVIDER_TIMEOUT = "PROVIDER_TIMEOUT"
+    PROVIDER_UNAVAILABLE = "PROVIDER_UNAVAILABLE"
+    OUTPUT_TRUNCATED = "OUTPUT_TRUNCATED"
+    OUTPUT_MALFORMED = "OUTPUT_MALFORMED"
+    OVER_BUDGET = "OVER_BUDGET"
+    PATCH_REJECTED = "PATCH_REJECTED"
+    TOOL_NOT_ALLOWED = "TOOL_NOT_ALLOWED"
+    TOOL_RESULT_INVALID = "TOOL_RESULT_INVALID"
+    DISCOVERY_UNAVAILABLE = "DISCOVERY_UNAVAILABLE"  # includes a tripped kill switch
+    DISCOVERY_NOT_CONFIGURED = "DISCOVERY_NOT_CONFIGURED"
 
 
 class ErrorBody(Frozen):
@@ -695,6 +737,65 @@ class ErrorBody(Frozen):
     kind: Literal["error"] = "error"
     code: ErrorCode
     message: str = Field(max_length=500)  # server-authored, never provider or user content
+    reason: ErrorReason | None = None  # omitted from the JSON when absent
+
+
+class FramingKind(StrEnum):
+    """Fixed server copy shown above a grounded block, selected by enum: free text can never be
+    framing. Lives here (not in discovery.render, which re-exports it) so the API contract can
+    name it."""
+
+    RESULTS_INTRO = "RESULTS_INTRO"
+    NO_RESULTS = "NO_RESULTS"
+
+
+class _ApiFrozen(Frozen):
+    """API contract that may hold Maps text: validation errors never echo input."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, hide_input_in_errors=True)
+
+
+class DiscoveryPlace(_ApiFrozen):
+    """One source, exactly as Google provided it (shown as text, linked to its urls)."""
+
+    title: str = Field(max_length=MAX_TITLE_CHARS, repr=False)
+    attribution_url: str = Field(max_length=MAX_URI_CHARS, repr=False)
+    place_url: str = Field(max_length=MAX_URI_CHARS, repr=False)
+
+    @field_validator("attribution_url", "place_url")
+    @classmethod
+    def _google_link(cls, value: str, info: ValidationInfo) -> str:
+        """https and the pinned Google host and path shape of the field (discovery/uris rules).
+        Imported lazily: the discovery package imports this module."""
+        from .discovery.uris import LinkField, check_link
+
+        field = (
+            LinkField.PLACE_ATTRIBUTION_URL if info.field_name == "attribution_url"
+            else LinkField.PLACE_URL
+        )
+        check_link(field, value)
+        return value
+
+
+class DiscoveryBlock(_ApiFrozen):
+    """Google's grounded answer, verbatim: the raw summary text, then every place's attribution
+    in order. ``render_mode`` "text" means a client inserts each field with textContent, never as
+    HTML or Markdown. The server framing sits OUTSIDE this block (``TurnResponse.reply``)."""
+
+    render_mode: Literal["text"] = "text"
+    text: str = Field(min_length=1, max_length=GROUNDED_TEXT_MAX_CHARS, repr=False)  # raw
+    places: tuple[DiscoveryPlace, ...] = Field(min_length=1, max_length=MAX_PLACES)
+    branding: Literal["Google Maps"] = "Google Maps"
+    translate_no: Literal[True] = True  # the name "Google Maps" must not be translated
+    framing: FramingKind
+    retrieved_at: AwareDatetime  # when Google answered: a replay shows its age
+    cache_expires_at: AwareDatetime
+
+
+class TurnWarning(StrEnum):
+    """Typed, content-free warnings on a partial result."""
+
+    TOOL_BUDGET_EXHAUSTED = "TOOL_BUDGET_EXHAUSTED"
 
 
 class TurnResponse(Frozen):
@@ -706,3 +807,6 @@ class TurnResponse(Frozen):
     workspace_id: Ident | None
     allowance_exhausted: bool
     policy_version: str = Field(max_length=100)
+    # Additive (schema_version stays 1): present only for a turn that ran discovery.
+    discovery: DiscoveryBlock | None = None
+    warnings: tuple[TurnWarning, ...] = Field(default=(), max_length=10)

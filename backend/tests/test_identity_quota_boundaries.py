@@ -41,7 +41,7 @@ def registry(guest_turns: int = 2, registered_turns: int = 3) -> PolicyRegistry:
 
 
 def make(reg: PolicyRegistry | None = None) -> tuple[TestClient, TurnOrchestrator]:
-    orchestrator = TurnOrchestrator(QuotaService(reg or registry()))
+    orchestrator = TurnOrchestrator(QuotaService(reg or registry()), dev_scaffold=True)
     application = create_app(
         verifier=StaticTokenVerifier(TOKENS),
         resolver=PrincipalResolver(policies=orchestrator.quotas.policies),
@@ -289,7 +289,7 @@ def test_concurrent_same_key_counts_once() -> None:
 def test_check_then_commit_race_through_orchestrator_does_not_overspend() -> None:
     """Both requests pass allowed() before either commits; only one may commit."""
     quotas = QuotaService(registry(guest_turns=1))
-    orch = TurnOrchestrator(quotas)
+    orch = TurnOrchestrator(quotas, dev_scaffold=True)
     guest = Principal("g", PrincipalKind.GUEST, "test-boundary")
     barrier = threading.Barrier(2)
     original_allowed = quotas.allowed
@@ -329,7 +329,7 @@ def test_check_then_commit_race_through_orchestrator_does_not_overspend() -> Non
 
 def test_denied_reservation_leaves_existing_workspace_unchanged() -> None:
     quotas = QuotaService(registry(guest_turns=1))
-    orch = TurnOrchestrator(quotas)
+    orch = TurnOrchestrator(quotas, dev_scaffold=True)
     guest = Principal("g", PrincipalKind.GUEST, "test-boundary")
     orch.run_turn(guest, "Plan a Toronto outing", "first")
     workspace = orch.workspaces[("g", "default")]
@@ -344,7 +344,7 @@ def test_denied_reservation_leaves_existing_workspace_unchanged() -> None:
 
 def test_failed_commit_releases_reservation_and_keeps_workspace() -> None:
     quotas = QuotaService(registry(guest_turns=1))
-    orch = TurnOrchestrator(quotas)
+    orch = TurnOrchestrator(quotas, dev_scaffold=True)
     guest = Principal("g", PrincipalKind.GUEST, "test-boundary")
 
     def failing_commit(reservation):
@@ -364,7 +364,7 @@ def test_failed_commit_releases_reservation_and_keeps_workspace() -> None:
 
 def test_concurrent_first_turns_share_one_workspace() -> None:
     quotas = QuotaService(registry(guest_turns=50))
-    orch = TurnOrchestrator(quotas)
+    orch = TurnOrchestrator(quotas, dev_scaffold=True)
     guest = Principal("g", PrincipalKind.GUEST, "test-boundary")
     ids: list[str] = []
     lock = threading.Lock()

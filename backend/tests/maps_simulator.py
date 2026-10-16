@@ -227,6 +227,10 @@ class SyntheticMapsClient:
         self._payload = dict(payload) if payload is not None else synthetic_payload()
         self.calls: list[tuple[str, dict[str, Any]]] = []
 
+    @property
+    def tripped(self) -> bool:
+        return False
+
     def call_tool(self, run: ToolRun, tool: str, arguments: Mapping[str, Any]) -> ToolResult:
         tool_id = ToolId(tool)
         call_id = run.begin(tool_id, authority=AUTHORITY).call_id

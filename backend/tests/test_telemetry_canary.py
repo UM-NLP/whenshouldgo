@@ -43,7 +43,7 @@ TOKENS = {"canary-tok-guest": VerifiedIdentity("guest-canary", "anonymous")}
 
 def build(sink):
     quotas = QuotaService(small_registry())
-    orchestrator = TurnOrchestrator(quotas, sink=sink, runtime_config_version="rc-1")
+    orchestrator = TurnOrchestrator(quotas, sink=sink, runtime_config_version="rc-1", dev_scaffold=True)
     application = create_app(
         verifier=StaticTokenVerifier(TOKENS),
         resolver=PrincipalResolver(policies=quotas.policies),
@@ -235,3 +235,65 @@ def test_mutation_print_would_be_caught(capsys):
     out, _ = capsys.readouterr()
     with pytest.raises(AssertionError, match="canary leaked"):
         assert_clean(out)
+
+
+# --- Maps-text canaries through the full wired pipeline ---------------------------------
+
+MAPS_CANARIES = (
+    "Grounded: Cafe Example is open until 9pm",
+    "Cafe Example",
+    "SYNTH-MAPS-CANARY-ADDRESS 99 Nowhere Road",
+)
+
+
+def test_maps_text_canaries_through_the_full_pipeline_reach_no_log_sink_or_stream(
+    caplog, capsys, monkeypatch
+):
+    from maps_simulator import FakeMcpTransport, mcp_ok, mcp_status, synthetic_payload
+    from test_gateway_support import make_config
+    from wiring_support import (
+        Env,
+        ScriptedGateway,
+        deep_text,
+        frame_turn,
+        real_client,
+    )
+
+    from app.orchestrator import discovery_cache_key
+
+    summary = f"{MAPS_CANARIES[0]} near {MAPS_CANARIES[2]} [0] [1]."
+    payload = synthetic_payload(text=summary, places=2)
+    payload["places"][0]["attribution"]["title"] = "Cafe Example - Google Maps"
+    for name in ("", "app", "uvicorn", "uvicorn.error", "fastapi", "starlette", "httpx"):
+        logging.getLogger(name).setLevel(logging.DEBUG)
+    caplog.set_level(logging.DEBUG)
+    config = make_config()
+    gateway = ScriptedGateway([frame_turn(config) for _ in range(4)], config)
+    transport = FakeMcpTransport([mcp_ok(payload), mcp_status(403), mcp_ok(payload)])
+    env = Env(gateway=gateway, config=config, discovery=lambda e: real_client(
+        config, transport, e.sink, e.clock))
+    ok = env.post(key="ok-" + IDEM)
+    assert ok.status_code == 200 and MAPS_CANARIES[0] in ok.text  # shown to the user, only there
+    assert env.post(key="ok-" + IDEM).status_code == 200  # replay
+    assert env.post(key="denied-" + IDEM).status_code == 503  # tool failure path
+    env.cache.delete_owner("guest-a")
+    assert env.post(key="ok-" + IDEM).status_code == 409  # expired replay
+    forged = env.post(key="again-" + IDEM)  # a third tool call, answered normally
+    assert forged.status_code == 200
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("explode " + summary)
+
+    monkeypatch.setattr(env.orchestrator, "run_turn", boom)
+    assert env.post(key="boom-" + IDEM).status_code == 500
+    logged = "\n".join([
+        caplog.text, capsys.readouterr().out, capsys.readouterr().err, repr(env.sink.events),
+        deep_text(env.sink.events), deep_text(env.orchestrator.workspaces),
+        deep_text(env.orchestrator._committed), deep_text(env.costs.entries()),
+        *(r.getMessage() for r in caplog.records),
+        *(repr(sorted(r.__dict__.items(), key=lambda kv: kv[0])) for r in caplog.records),
+    ])
+    for canary in MAPS_CANARIES:
+        assert canary not in logged, f"Maps canary leaked: {canary}"
+    assert discovery_cache_key("x")  # the cache key is a hash, never the idempotency key
+    assert IDEM not in discovery_cache_key(IDEM)

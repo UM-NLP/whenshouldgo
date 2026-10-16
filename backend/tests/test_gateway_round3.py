@@ -464,11 +464,96 @@ def test_f8_the_acceptance_criterion_is_written_down() -> None:
     assert "TOOL_RESULT_ACCEPTANCE_CRITERION" in (types.__doc__ or "")
 
 
-@pytest.mark.xfail(strict=True, reason="remove when the orchestrator is wired to the gateway")
-def test_orchestrator_path_never_sends_maps_text_to_frame_or_compose() -> None:
-    from app.orchestrator import TurnOrchestrator
+def test_orchestrator_path_never_sends_maps_text_to_frame_or_compose(caplog) -> None:
+    """Full path (FRAME -> server-run discovery -> verbatim block) with synthetic grounded output
+    carrying a canary. Phase 0 design decision: the model never sees Maps content, so the canary
+    is in the HTTP response exactly once and in no gateway request, event, log, replay record,
+    workspace or exception."""
+    import logging
+    import traceback
 
-    assert hasattr(TurnOrchestrator, "gateway")  # no gateway wiring exists yet
+    from maps_simulator import FakeMcpTransport, mcp_ok
+    from wiring_support import (
+        CANARY,
+        TITLE_CANARY,
+        Env,
+        RaisingClient,
+        RecordingClient,
+        ScriptedGateway,
+        canary_payload,
+        deep_text,
+        frame_turn,
+        real_client,
+        wire_text,
+    )
+
+    from app.discovery import (
+        DiscoveryUnavailable,
+        GroundedTextPart,
+        RenderedBlock,
+        SourcePart,
+        content_hash,
+        verify_verbatim,
+    )
+    from app.discovery.render import BRANDING
+    from app.failures import TurnFailure
+    from app.orchestrator import discovery_cache_key
+    from app.domain import Principal, PrincipalKind
+
+    caplog.set_level(logging.DEBUG)
+    config = make_config()
+    gateway = ScriptedGateway([frame_turn(config), frame_turn(config)], config)
+    transport = FakeMcpTransport([mcp_ok(canary_payload())])
+    env = Env(gateway=gateway, config=config, discovery=lambda e: RecordingClient(
+        real_client(config, transport, e.sink, e.clock)))
+    response = env.post({"message": "Plan a quiet Toronto restaurant dinner tonight"}, key="canary")
+    assert response.status_code == 200
+    replay = env.post({"message": "Plan a quiet Toronto restaurant dinner tonight"}, key="canary")
+    assert replay.json() == response.json()
+
+    # 1. the model saw only user text: no recorded request mentions the canary or Maps content
+    assert len(gateway.requests) == 1
+    for request in gateway.requests:
+        assert request.call_role is CallRole.FRAME
+        assert request.privacy_class.value == "USER_PRIVATE"
+        wire = wire_text(request)
+        assert CANARY not in wire and TITLE_CANARY not in wire and "google.com/maps" not in wire
+        assert {m.content_class for m in request.context} <= {ContentClass.USER, ContentClass.NONE}
+    # 2. nowhere else it must not be
+    state = [deep_text(env.sink.events), caplog.text, deep_text(env.costs.entries()),
+             deep_text(env.orchestrator._committed), deep_text(env.orchestrator.workspaces),
+             *(r.getMessage() for r in caplog.records)]
+    assert all(CANARY not in blob and TITLE_CANARY not in blob for blob in state)
+    failing = Env(gateway=ScriptedGateway([frame_turn(config)], config),
+                  discovery=RaisingClient(DiscoveryUnavailable(calls=1)), config=config)
+    with pytest.raises(TurnFailure) as caught:
+        failing.orchestrator.run_turn(
+            Principal("guest-a", PrincipalKind.GUEST, failing.quotas.policies.current().version),
+            "Plan a quiet Toronto restaurant dinner tonight", "k")
+    rendered_error = str(caught.value) + repr(caught.value) + "".join(
+        traceback.format_exception(caught.value))
+    assert CANARY not in rendered_error
+    # 3. the HTTP response carries it exactly once, verbatim, with the sources after it
+    raw = response.text
+    assert raw.count(CANARY) == 1 and raw.index('"text"') < raw.index('"places"')
+    block = response.json()["discovery"]
+    assert block["text"] == canary_payload()["summary"]
+    # 4. and the block passes verify_verbatim against the ledger the client wrote
+    validated = env.cache.get("guest-a", discovery_cache_key("canary"))
+    run = env.discovery.runs[0]
+    assert validated is not None and len(block["places"]) == len(validated.answer.places)
+    parts = [GroundedTextPart(text=block["text"], content_hash=content_hash(block["text"]))]
+    for shown, place in zip(block["places"], validated.answer.places, strict=True):
+        assert (shown["title"], shown["attribution_url"], shown["place_url"]) == (
+            place.attribution_title, place.attribution_url, place.place_url)
+        parts.append(SourcePart(place_id=place.place_id, attribution_title=shown["title"],
+                                attribution_url=shown["attribution_url"],
+                                place_url=shown["place_url"], cited=place.cited))
+    from app.discovery import FramingKind
+
+    rebuilt = RenderedBlock(framing=FramingKind(block["framing"]), parts=tuple(parts))
+    assert block["branding"] == BRANDING == rebuilt.branding and block["translate_no"] is True
+    verify_verbatim(rebuilt, validated, run)  # raises VerbatimViolation if anything differs
 
 
 # --- D5 -------------------------------------------------------------------------------------

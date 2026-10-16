@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Callable
+from datetime import datetime
+
 import anyio
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
@@ -10,9 +13,21 @@ from starlette.requests import ClientDisconnect
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from .auth import IdentityVerifier, PrincipalResolver, current_principal
-from .domain import ErrorBody, ErrorCode, Principal, PrincipalKind, TurnResponse
+from .costs import CostLedger
+from .discovery import DisplayCache, GroundingLiteClient
+from .domain import (
+    ErrorBody,
+    ErrorCode,
+    ErrorReason,
+    Principal,
+    PrincipalKind,
+    RuntimeConfig,
+    TurnResponse,
+)
+from .failures import TurnFailure
+from .gateway import ModelGateway
 from .orchestrator import IdempotencyKeyReused, TurnOrchestrator
-from .quota import ReservationConflict
+from .quota import QuotaService, ReservationConflict
 from .telemetry import (
     ErrorEvent,
     Phase,
@@ -45,21 +60,28 @@ _STATUS_CODES = {
 }
 _ERROR_RESPONSES = {
     status: {"model": ErrorBody, "description": str(code)}
-    for status, code in ((401, "POLICY"), (403, "POLICY"), (409, "CONFLICT"), (422, "VALIDATION"), (429, "QUOTA"))
+    for status, code in (
+        (401, "POLICY"), (403, "POLICY"), (409, "CONFLICT"), (422, "VALIDATION"), (429, "QUOTA"),
+        (502, "VALIDATION"), (503, "PROVIDER"), (504, "PROVIDER"),
+    )
 }
 
 
-def _error(status: int, code: ErrorCode, message: str) -> HTTPException:
-    return HTTPException(
-        status_code=status, detail=ErrorBody(code=code, message=message).model_dump(mode="json")
-    )
+def _error(
+    status: int, code: ErrorCode, message: str, reason: ErrorReason | None = None
+) -> HTTPException:
+    body = ErrorBody(code=code, message=message, reason=reason)
+    return HTTPException(status_code=status, detail=body.model_dump(mode="json", exclude_none=True))
 
 
 def _error_response(
-    status: int, code: ErrorCode, message: str, headers: dict[str, str] | None = None
+    status: int, code: ErrorCode, message: str, headers: dict[str, str] | None = None,
+    reason: ErrorReason | None = None,
 ) -> JSONResponse:
-    body = ErrorBody(code=code, message=message[:500]).model_dump(mode="json")
-    return JSONResponse(status_code=status, content=body, headers=headers)
+    body = ErrorBody(code=code, message=message[:500], reason=reason)
+    return JSONResponse(
+        status_code=status, content=body.model_dump(mode="json", exclude_none=True), headers=headers
+    )
 
 
 def _trace_error(
@@ -152,11 +174,36 @@ def create_app(
     resolver: PrincipalResolver | None = None,
     orchestrator: TurnOrchestrator | None = None,
     trace_sink: TraceSink | None = None,
+    *,
+    gateway: ModelGateway | None = None,
+    discovery_client: GroundingLiteClient | None = None,
+    display_cache: DisplayCache | None = None,
+    runtime_config: RuntimeConfig | None = None,
+    quotas: QuotaService | None = None,
+    clock: Callable[[], datetime] | None = None,
+    cost_ledger: CostLedger | None = None,
+    dev_scaffold: bool = False,
 ) -> FastAPI:
-    """Build the API. With no verifier, every authenticated route fails closed (401)."""
+    """Build the API. With no verifier, every authenticated route fails closed (401).
+
+    ``gateway``, ``discovery_client``, ``display_cache`` and ``runtime_config`` are injected, never
+    read from the environment (a later step adds the composition root). Without a gateway a turn
+    that needs the model is a typed 503 (SERVER_NOT_CONFIGURED) unless ``dev_scaffold=True``
+    explicitly asks for the development scaffold. A discovery client without a gateway is a
+    configuration error (FRAME formulates its arguments). A gateway without a discovery client
+    short-circuits discovery-class turns with a typed error before any model call. An explicit
+    ``orchestrator`` cannot be combined with injected parts."""
     ensure_log_guard()
+    parts = (gateway, discovery_client, display_cache, runtime_config, quotas, clock, cost_ledger,
+             dev_scaffold or None)
+    if orchestrator is not None and any(part is not None for part in parts):
+        raise ValueError("pass either an orchestrator or the parts to build one, not both")
     application = FastAPI(title="WhenShouldGo API", version="0.1.0")
-    application.state.orchestrator = orchestrator or TurnOrchestrator(sink=trace_sink)
+    application.state.orchestrator = orchestrator or TurnOrchestrator(
+        quotas, trace_sink, gateway=gateway, discovery_client=discovery_client,
+        display_cache=display_cache, runtime_config=runtime_config, cost_ledger=cost_ledger,
+        clock=clock, dev_scaffold=dev_scaffold,
+    )
     application.state.sink = (
         trace_sink or getattr(application.state.orchestrator, "sink", None) or get_default_sink()
     )
@@ -177,8 +224,9 @@ def create_app(
             code = _STATUS_CODES.get(exc.status_code, ErrorCode.PROVIDER)
             message = detail if isinstance(detail, str) else "request failed"
         headers = dict(exc.headers) if exc.headers else None
+        reason = ErrorReason(detail["reason"]) if isinstance(detail, dict) and detail.get("reason") else None
         _trace_error(request, code, _phase_for(exc.status_code), exc.status_code)
-        return _error_response(exc.status_code, code, message, headers)
+        return _error_response(exc.status_code, code, message, headers, reason)
 
     @application.exception_handler(RequestValidationError)
     async def _invalid_request(request: Request, __: RequestValidationError) -> JSONResponse:
@@ -212,6 +260,9 @@ def create_app(
             raise _error(
                 409, ErrorCode.CONFLICT, "idempotency key reused with a different request"
             ) from error
+        except TurnFailure as failure:
+            # Typed, static message; the reservation was already released by the orchestrator.
+            raise _error(failure.status, failure.code, failure.message, failure.reason) from None
         try:
             return TurnResponse(
                 reply=result.reply,
@@ -220,6 +271,8 @@ def create_app(
                 workspace_id=result.workspace.id if result.workspace else None,
                 allowance_exhausted=result.allowance_exhausted,
                 policy_version=principal.policy_version,
+                discovery=result.discovery,
+                warnings=result.warnings,
             )
         except ValidationError as error:
             raise _error(500, ErrorCode.VALIDATION, "turn result violated the response contract") from error

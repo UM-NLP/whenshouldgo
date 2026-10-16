@@ -567,6 +567,11 @@ class HttpxMcpTransport:
 # --- the client -------------------------------------------------------------------------------------------
 @runtime_checkable
 class GroundingLiteClient(Protocol):
+    @property
+    def tripped(self) -> bool:
+        """True while the kill switch is on. Read-only: nothing here can reset it."""
+        ...
+
     def call_tool(self, run: ToolRun, tool: str, arguments: Mapping[str, Any]) -> ToolResult: ...
 
 
@@ -622,6 +627,11 @@ class GroundingLiteMcpClient:
         self._denied_streak = 0
 
     # -- public ---------------------------------------------------------------------------------
+    @property
+    def tripped(self) -> bool:
+        """Read-only view of the kill switch (the orchestrator checks it before any model call)."""
+        return self._kill_switch.tripped
+
     def call_tool(self, run: ToolRun, tool: str, arguments: Mapping[str, Any]) -> ToolResult:
         started = self._clock()
         outcome = self._run(run, tool, arguments)

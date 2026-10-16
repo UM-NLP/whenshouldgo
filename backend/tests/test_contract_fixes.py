@@ -286,6 +286,8 @@ def make_client(**kw) -> TestClient:
     verifier = StaticTokenVerifier(
         {"t": VerifiedIdentity("u1", "anonymous"), "t2": VerifiedIdentity("u2", "anonymous")}
     )
+    if "orchestrator" not in kw:
+        kw.setdefault("dev_scaffold", True)  # these tests exercise the development scaffold
     return TestClient(create_app(verifier=verifier, **kw), raise_server_exceptions=False)
 
 
@@ -374,7 +376,7 @@ def test_f7_quota_exhausted_stays_200_with_flag() -> None:
     from app.orchestrator import TurnOrchestrator
     from app.quota import QuotaService
 
-    client = make_client(orchestrator=TurnOrchestrator(QuotaService(small_registry())))
+    client = make_client(orchestrator=TurnOrchestrator(QuotaService(small_registry()), dev_scaffold=True))
     flags = []
     for i in range(3):
         r = client.post(

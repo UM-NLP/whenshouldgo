@@ -20,6 +20,7 @@ from typing import Annotated
 
 from pydantic import Field, StringConstraints
 
+from ..domain import FramingKind
 from ._validated import ValidatedAnswer, is_validated
 from .client import ToolRun
 from .contracts import GroundedAnswer, GroundFrozen, content_hash, display_hash
@@ -42,13 +43,6 @@ class RenderOption(StrEnum):
 
 class VerbatimViolation(DiscoveryError):
     default_message = "rendered block is not the verbatim grounded answer"
-
-
-class FramingKind(StrEnum):
-    """Fixed server copy, selected by enum: free text can never be framing."""
-
-    RESULTS_INTRO = "RESULTS_INTRO"
-    NO_RESULTS = "NO_RESULTS"
 
 
 FRAMING_TEXT: dict[FramingKind, str] = {

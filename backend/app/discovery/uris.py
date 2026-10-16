@@ -26,7 +26,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from urllib.parse import parse_qsl, unquote_to_bytes, urlsplit
 
-MAX_URI_CHARS = 2_048
+from ..domain import MAX_URI_CHARS  # single source of truth shared with the API block
 LINK_HOSTS = frozenset({"www.google.com", "maps.gstatic.com"})
 
 # The identifier inside ``data=``: ``1s<id chars>:0x<hex>``. It is NOT the place id (live captures

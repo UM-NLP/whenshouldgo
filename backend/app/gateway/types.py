@@ -4,8 +4,9 @@ Prompt text and provider output live only in fields declared ``repr=False`` so a
 ``repr`` or log line cannot leak them. ``ModelTurn`` exposes typed metadata through
 ``telemetry`` for the telemetry module; this package does not import telemetry.
 
-Acceptance criterion for the orchestrator wiring (not yet wired; see
-``TOOL_RESULT_ACCEPTANCE_CRITERION`` and the strict xfail placeholder test):
+Acceptance criterion for the orchestrator wiring (see ``TOOL_RESULT_ACCEPTANCE_CRITERION``).
+In Phase 0 ``app.pipeline`` never puts a tool result in any gateway request, which the test
+``test_orchestrator_path_never_sends_maps_text_to_frame_or_compose`` proves:
 tool-result messages are created only by the tool layer, with the content class derived
 from the tool registry by tool name, never supplied by the caller or the model.
 """

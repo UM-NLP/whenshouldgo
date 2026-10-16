@@ -1,24 +1,37 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
+from dataclasses import dataclass, replace
+from datetime import UTC, datetime
 from hashlib import sha256
 from threading import Lock
 from time import perf_counter
 from uuid import uuid4
 
+from .costs import CostLedger
+from .discovery import DisplayCache, GroundingLiteClient, render_grounded_block
 from .domain import (
     Confirmation,
+    DiscoveryBlock,
     DomainClass,
     Fact,
     FactSource,
     Principal,
     PrincipalKind,
+    RuntimeConfig,
+    ErrorCode,
+    ErrorReason,
     TripWorkspace,
+    TurnWarning,
     WorkspaceStatus,
     evolve,
 )
+from .failures import MapsContentToModelNotImplemented, ResultExpired, TurnFailure
+from .gateway import ModelGateway
 from .guard import OUT_OF_SCOPE_REPLY, SAFETY_REPLY, classify, estimate_tokens, tools_for
+from .pipeline import DiscoveryRef, TurnPipeline, to_api_block
 from .quota import QuotaService
 from .telemetry import (
     AllowanceOutcome,
@@ -35,6 +48,11 @@ from .telemetry import (
     trace,
 )
 
+# PLACEHOLDER (owner-tunable): how long a second turn for the same tenant waits for the first to
+# finish before it fails with 409 TURN_IN_PROGRESS. A little above the 20 s run deadline, so a
+# normal queued turn still gets its turn but a stuck one cannot hold a worker forever.
+WORKSPACE_LOCK_TIMEOUT_SECONDS = 25.0
+
 EXHAUSTED_REPLY = (
     "Your free planning allowance is used. Create a free account to continue; "
     "existing trips remain available."
@@ -50,6 +68,20 @@ class TurnResult:
     tools: tuple[str, ...]
     workspace: TripWorkspace | None
     allowance_exhausted: bool = False
+    # Google's grounded block, verbatim. Never stored in a replay record (see ReplayRecord).
+    discovery: DiscoveryBlock | None = None
+    warnings: tuple[TurnWarning, ...] = ()
+
+
+@dataclass(frozen=True)
+class ReplayRecord:
+    """What an idempotent replay keeps. ``result`` never carries Maps content: a discovery block
+    is stored only as ``ref`` (cache key, framing, the two hashes recorded at validation and the
+    expiry) and is re-hydrated from the display cache on replay, or the replay is a typed
+    CONFLICT (``ResultExpired``) when the entry is gone."""
+
+    result: TurnResult
+    ref: DiscoveryRef | None = None
 
 
 class IdempotencyKeyReused(Exception):
@@ -65,6 +97,12 @@ def _fingerprint(message: str) -> str:
     return sha256(message.encode("utf-8")).hexdigest()
 
 
+def discovery_cache_key(idempotency_key: str) -> str:
+    """Display-cache key of a turn's block: derived from the idempotency key, bounded and safe
+    for the cache's identifier pattern. The owner (principal id) is a separate cache dimension."""
+    return "disc-" + sha256(idempotency_key.encode("utf-8")).hexdigest()[:40]
+
+
 class TurnOrchestrator:
     """In-memory development orchestrator; workspace and replay stores move to Firestore."""
 
@@ -73,28 +111,107 @@ class TurnOrchestrator:
         quotas: QuotaService | None = None,
         sink: TraceSink | None = None,
         runtime_config_version: str | None = None,
+        *,
+        gateway: ModelGateway | None = None,
+        discovery_client: GroundingLiteClient | None = None,
+        display_cache: DisplayCache | None = None,
+        runtime_config: RuntimeConfig | None = None,
+        cost_ledger: CostLedger | None = None,
+        clock: Callable[[], datetime] | None = None,
+        dev_scaffold: bool = False,
     ) -> None:
         self.quotas = quotas or QuotaService()
         self.sink: TraceSink = sink or get_default_sink()
-        self._runtime_config_version = runtime_config_version
+        self._runtime_config = runtime_config
+        self._runtime_config_version = runtime_config_version or (
+            runtime_config.version if runtime_config is not None else None
+        )
+        self._clock: Callable[[], datetime] = clock or (lambda: datetime.now(UTC))
+        self.costs = cost_ledger or CostLedger(self._clock)
+        self._dev_scaffold = dev_scaffold
+        if discovery_client is not None and gateway is None:
+            raise ValueError("a discovery client needs a gateway: FRAME formulates its arguments")
+        self._discovery = discovery_client
+        self.display_cache = display_cache
+        if discovery_client is not None and display_cache is None:
+            self.display_cache = DisplayCache(self._clock)
+        # Without a gateway nothing interprets the message. The scaffold turn (below) then runs
+        # ONLY when ``dev_scaffold`` is True; otherwise such a turn is a typed 503. It exists for
+        # local development and tests, never as a silent production fallback.
+        self._pipeline: TurnPipeline | None = None
+        if runtime_config is not None and runtime_config.maps_content_to_model is not False:
+            raise MapsContentToModelNotImplemented()
+        if gateway is not None:
+            if runtime_config is None:
+                raise ValueError("a gateway needs a runtime config")
+            self._pipeline = TurnPipeline(
+                gateway=gateway, discovery=discovery_client, cache=self.display_cache,
+                config=runtime_config, costs=self.costs, sink=self.sink, clock=self._clock)
         self.workspaces: dict[tuple[str, str], TripWorkspace] = {}
-        # (uid, idempotency key) -> (request fingerprint, committed result) for replays.
-        self._committed: dict[tuple[str, str], tuple[str, TurnResult]] = {}
-        self._workspace_locks: dict[tuple[str, str], Lock] = {}
+        # (uid, idempotency key) -> (request fingerprint, replay record) for replays.
+        self._committed: dict[tuple[str, str], tuple[str, ReplayRecord]] = {}
+        # key -> [lock, users]. An entry exists only while a turn holds or waits for it, so the
+        # dict cannot grow without bound as tenants come and go.
+        self._workspace_locks: dict[tuple[str, str], list] = {}
         self._locks_guard = Lock()
 
-    def _workspace_lock(self, key: tuple[str, str]) -> Lock:
+    @contextmanager
+    def _workspace_lock(self, key: tuple[str, str]) -> Iterator[None]:
+        """The per-tenant turn lock, bounded: waiting longer than WORKSPACE_LOCK_TIMEOUT_SECONDS
+        is a typed 409 TURN_IN_PROGRESS (the caller releases its reservation)."""
         with self._locks_guard:
-            return self._workspace_locks.setdefault(key, Lock())
+            entry = self._workspace_locks.setdefault(key, [Lock(), 0])
+            entry[1] += 1
+        acquired = False
+        try:
+            acquired = entry[0].acquire(timeout=WORKSPACE_LOCK_TIMEOUT_SECONDS)
+            if not acquired:
+                raise TurnFailure(409, ErrorCode.CONFLICT, ErrorReason.TURN_IN_PROGRESS)
+            yield
+        finally:
+            if acquired:
+                entry[0].release()
+            with self._locks_guard:
+                entry[1] -= 1
+                if entry[1] == 0:
+                    self._workspace_locks.pop(key, None)
 
     def _replay(self, principal: Principal, idempotency_key: str, message: str) -> TurnResult | None:
         stored = self._committed.get((principal.uid, idempotency_key))
         if stored is None:
             return None
-        fingerprint, result = stored
+        fingerprint, record = stored
         if fingerprint != _fingerprint(message):
             raise IdempotencyKeyReused("idempotency key reused with a different request")
-        return result
+        return self._rehydrate(principal, record)
+
+    def _rehydrate(self, principal: Principal, record: ReplayRecord) -> TurnResult:
+        """Put a stored discovery block back from the display cache, owner-scoped, and verify the
+        hashes recorded at validation. Expired, evicted or altered: typed CONFLICT, never a
+        silent re-run (that would spend provider calls under a used key)."""
+        ref = record.ref
+        if ref is None:
+            return record.result
+        validated = (
+            self.display_cache.get(principal.uid, ref.cache_key)
+            if self.display_cache is not None else None
+        )
+        if (
+            validated is None
+            or validated.principal_id != principal.uid
+            or validated.content_hash != ref.content_hash
+            or validated.display_hash != ref.display_hash
+        ):
+            raise ResultExpired()
+        block = None
+        try:
+            block = to_api_block(render_grounded_block(validated, ref.framing),
+                                 ref.cache_expires_at, validated.answer.retrieved_at)
+        except ValueError:  # an entry that no longer renders is as good as gone
+            block = None
+        if block is None:
+            raise ResultExpired()
+        return replace(record.result, discovery=block)
 
     def _trace(self, event_cls: type, **fields: object) -> None:
         """Telemetry never raises into the turn: failures are counted in telemetry.health()."""
@@ -176,6 +293,10 @@ class TurnOrchestrator:
             return TurnResult(
                 "I can help with the trip-planning part. " + OUT_OF_SCOPE_REPLY, domain, (), None
             )
+        if self._pipeline is None and not self._dev_scaffold:
+            # No model gateway and no explicit dev scaffold: fail closed, before any allowance
+            # is reserved or any workspace is touched.
+            raise TurnFailure(503, ErrorCode.PROVIDER, ErrorReason.SERVER_NOT_CONFIGURED)
         exhausted = TurnResult(EXHAUSTED_REPLY, domain, (), None, allowance_exhausted=True)
         if not self.quotas.allowed(principal):
             quota_event(QuotaOutcome.DENIED)
@@ -194,39 +315,56 @@ class TurnOrchestrator:
             quota_event(QuotaOutcome.DUPLICATE if reservation.duplicate else QuotaOutcome.RESERVED)
             if reservation.duplicate:
                 # A concurrent request with this key committed between our replay check and
-                # reserve; it stored its result while holding the workspace lock.
+                # reserve; it stored its result while holding the workspace lock. A committed
+                # key whose replay record is gone is NEVER re-run (that would pay for the
+                # pipeline again under a counted key): it is a typed RESULT_EXPIRED.
                 with self._workspace_lock(key):
                     replay = self._replay(principal, idempotency_key, message)
-                if replay is not None:
-                    replayed.append(True)
-                    return replay
+                if replay is None:
+                    raise ResultExpired()
+                replayed.append(True)
+                return replay
             with self._workspace_lock(key):
                 current = self.workspaces.get(key)
                 base = current or TripWorkspace(id=str(uuid4()), owner_id=principal.uid)
-                # Build the next state on a copy; swap it in only after the commit.
-                workspace = evolve(
-                    base,
-                    goal=message,
-                    status=WorkspaceStatus.EXPLORING,
-                    version=base.version + 1,
-                    facts=[
-                        Fact(
-                            id="planning_area",
-                            key="planning_area",
-                            value="Toronto/GTA",
-                            source=FactSource.INFERENCE,
-                            confirmation=Confirmation.UNCONFIRMED,
-                            hard=False,
-                            scope="trip",
-                        )
-                    ],
-                )
-                result = TurnResult(
-                    self._reply(domain), domain, tools_for(domain, principal.kind), workspace
-                )
-                self.quotas.commit(reservation)
+                tools = tools_for(domain, principal.kind)
+                if self._pipeline is not None and domain == DomainClass.TRAVEL:
+                    # Held across the model and tool calls: one in-flight turn per tenant, so
+                    # the patch always applies to the version FRAME saw.
+                    daily = self.quotas.policies.get(principal.policy_version).daily_tokens.get(
+                        principal.kind)
+                    outcome = self._pipeline.run(
+                        principal, message, base, tools, discovery_cache_key(idempotency_key),
+                        daily_ceiling=daily)
+                    workspace = outcome.workspace
+                    reply, block, ref, warnings = (
+                        outcome.reply, outcome.discovery, outcome.ref, outcome.warnings)
+                else:
+                    workspace = self._scaffold_workspace(base, message, with_gateway=bool(self._pipeline))
+                    reply, block, ref, warnings = self._reply(domain), None, None, ()
+                result = TurnResult(reply, domain, tools, workspace, False, block, warnings)
+                # Store the state and the replay record BEFORE the commit, then count the turn.
+                # If the commit fails without counting, the state is rolled back and the
+                # reservation is released; if it counted before faulting, the turn IS committed
+                # (never released): the state stays and the fault is not turned into a failure.
+                record_key = (principal.uid, idempotency_key)
+                stored = replace(result, discovery=None)  # never keep Maps content in a record
                 self.workspaces[key] = workspace
-                self._committed[(principal.uid, idempotency_key)] = (_fingerprint(message), result)
+                self._committed[record_key] = (_fingerprint(message), ReplayRecord(stored, ref))
+                try:
+                    self.quotas.commit(reservation)
+                except BaseException as fault:
+                    counted = idempotency_key in self.quotas.usage_for(principal.uid).committed_keys
+                    if not counted:
+                        if current is None:
+                            self.workspaces.pop(key, None)
+                        else:
+                            self.workspaces[key] = current
+                        self._committed.pop(record_key, None)
+                        raise
+                    committed = True
+                    if not isinstance(fault, Exception):
+                        raise
                 committed = True
         except BaseException:
             if not committed:
@@ -237,6 +375,33 @@ class TurnOrchestrator:
         # committed unit or lose the replay record.
         quota_event(QuotaOutcome.COMMITTED)
         return result
+
+    @staticmethod
+    def _scaffold_workspace(base: TripWorkspace, message: str, *, with_gateway: bool) -> TripWorkspace:
+        """The development scaffold turn (no model interprets the message; only with
+        ``dev_scaffold=True``). With a gateway an APP_HELP turn leaves the facts and goal alone:
+        the raw message is not workspace state."""
+        if with_gateway:
+            return evolve(base, status=WorkspaceStatus.EXPLORING, version=base.version + 1)
+        return evolve(
+            base,
+            # DEV-ONLY: the scaffold stores the raw user message as the goal. No non-scaffold
+            # path ever does (the patch path leaves the goal alone).
+            goal=message,
+            status=WorkspaceStatus.EXPLORING,
+            version=base.version + 1,
+            facts=[
+                Fact(
+                    id="planning_area",
+                    key="planning_area",
+                    value="Toronto/GTA",
+                    source=FactSource.INFERENCE,
+                    confirmation=Confirmation.UNCONFIRMED,
+                    hard=False,
+                    scope="trip",
+                )
+            ],
+        )
 
     @staticmethod
     def _reply(domain: DomainClass) -> str:

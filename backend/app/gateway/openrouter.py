@@ -509,6 +509,12 @@ class OpenRouterGateway:
             raise GatewayConfigError("API key is unavailable or malformed")
         return Credential(key)
 
+    @property
+    def latched(self) -> bool:
+        """Read-only: the provider-credit kill switch is on (the orchestrator checks it before
+        spending a turn on a call that would be refused)."""
+        return self.quota_latch.tripped
+
     def generate(self, request: GenerateRequest) -> ModelTurn:
         check_request(request, self._policy)
         if request.runtime_config != self._config:

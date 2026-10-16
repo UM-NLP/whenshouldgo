@@ -39,7 +39,7 @@ def make(registry: PolicyRegistry | None = None) -> tuple[TestClient, QuotaServi
     application = create_app(
         verifier=StaticTokenVerifier(TOKENS),
         resolver=PrincipalResolver(policies=quotas.policies, disabled_uids={"off-1"}),
-        orchestrator=TurnOrchestrator(quotas),
+        orchestrator=TurnOrchestrator(quotas, dev_scaffold=True),
     )
     return TestClient(application), quotas
 
