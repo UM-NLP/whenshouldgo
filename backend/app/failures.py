@@ -19,13 +19,10 @@ _MESSAGES: dict[ErrorReason, str] = {
     ErrorReason.PROVIDER_TIMEOUT: "the request took too long; try again",
     ErrorReason.PROVIDER_UNAVAILABLE: "the service is temporarily unavailable",
     ErrorReason.OUTPUT_TRUNCATED: "the assistant could not finish; try a shorter request",
-    ErrorReason.OUTPUT_MALFORMED: "the assistant produced an unusable answer; try again",
+    ErrorReason.OUTPUT_REJECTED: "the request could not be completed; nothing was changed",
     ErrorReason.OVER_BUDGET: "this request exceeded its processing budget; try a shorter request",
-    ErrorReason.PATCH_REJECTED: "the proposed update was refused; nothing was changed",
-    ErrorReason.TOOL_NOT_ALLOWED: "the requested lookup is not available",
-    ErrorReason.TOOL_RESULT_INVALID: "the lookup result could not be used; try again",
+    ErrorReason.RATE_LIMITED: "too many requests for now; please try again later",
     ErrorReason.DISCOVERY_UNAVAILABLE: "place search is temporarily unavailable",
-    ErrorReason.DISCOVERY_NOT_CONFIGURED: "place search is not available",
 }
 GENERIC_MESSAGE = "the server could not complete this request"
 
@@ -33,13 +30,18 @@ GENERIC_MESSAGE = "the server could not complete this request"
 class TurnFailure(Exception):
     """A turn that failed with a typed error: the reservation is released, no state changed."""
 
-    def __init__(self, status: int, code: ErrorCode, reason: ErrorReason | None) -> None:
+    def __init__(
+        self, status: int, code: ErrorCode, reason: ErrorReason | None,
+        retry_after: int | None = None,
+    ) -> None:
         """``reason=None`` is for faults a client must not learn the cause of (a server-side
-        policy or configuration fault): a generic message and no reason in the body."""
+        policy or configuration fault): a generic message and no reason in the body.
+        ``retry_after`` (seconds, sent as a Retry-After header) is for limiter denials."""
         super().__init__(_MESSAGES[reason] if reason else GENERIC_MESSAGE)
         self.status = status
         self.code = code
         self.reason = reason
+        self.retry_after = retry_after
 
     @property
     def message(self) -> str:

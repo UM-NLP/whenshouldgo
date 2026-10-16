@@ -572,7 +572,13 @@ class GroundingLiteClient(Protocol):
         """True while the kill switch is on. Read-only: nothing here can reset it."""
         ...
 
-    def call_tool(self, run: ToolRun, tool: str, arguments: Mapping[str, Any]) -> ToolResult: ...
+    def call_tool(
+        self, run: ToolRun, tool: str, arguments: Mapping[str, Any],
+        timeout_seconds: float | None = None,
+    ) -> ToolResult:
+        """``timeout_seconds`` can only SHORTEN the client's own timeout (never extend it): the
+        orchestrator passes the seconds left in the run."""
+        ...
 
 
 def _strings(value: Any) -> Iterator[str]:
@@ -632,9 +638,12 @@ class GroundingLiteMcpClient:
         """Read-only view of the kill switch (the orchestrator checks it before any model call)."""
         return self._kill_switch.tripped
 
-    def call_tool(self, run: ToolRun, tool: str, arguments: Mapping[str, Any]) -> ToolResult:
+    def call_tool(
+        self, run: ToolRun, tool: str, arguments: Mapping[str, Any],
+        timeout_seconds: float | None = None,
+    ) -> ToolResult:
         started = self._clock()
-        outcome = self._run(run, tool, arguments)
+        outcome = self._run(run, tool, arguments, timeout_seconds)
         # Drop the caller's mapping from this frame: it may hold private trip text, and this
         # frame is the one that ends up in a raised error's traceback.
         del arguments
@@ -663,7 +672,10 @@ class GroundingLiteMcpClient:
             evidence_ids=(f"ev-{call_id}",) if call_id else (),
         )
 
-    def _run(self, run: ToolRun, tool: str, arguments: Mapping[str, Any]) -> ToolResult | DiscoveryError:
+    def _run(
+        self, run: ToolRun, tool: str, arguments: Mapping[str, Any],
+        timeout_seconds: float | None = None,
+    ) -> ToolResult | DiscoveryError:
         if self._kill_switch.tripped:
             return DiscoveryDisabledError()
         tool_id = self._allowed_tool(tool)
@@ -678,7 +690,12 @@ class GroundingLiteMcpClient:
         ticket = self._begin(run, tool_id)
         if isinstance(ticket, DiscoveryError):
             return ticket
-        outcome = self._send_and_parse(run, tool_id, clean, credential, ticket)
+        timeout = self._timeout
+        if isinstance(timeout_seconds, (int, float)) and not isinstance(timeout_seconds, bool):
+            timeout = min(timeout, float(timeout_seconds))
+        if not timeout > 0:
+            return DiscoveryTimeout()  # no time left: refused before anything was sent
+        outcome = self._send_and_parse(run, tool_id, clean, credential, ticket, timeout)
         if isinstance(outcome, DiscoveryError):
             outcome.call_id = ticket.call_id
         return outcome
@@ -735,11 +752,12 @@ class GroundingLiteMcpClient:
         return ticket if ticket is not None else ToolBudgetExceeded()
 
     def _send_and_parse(
-        self, run: ToolRun, tool_id: ToolId, args: dict[str, Any], credential: Credential, ticket: CallTicket
+        self, run: ToolRun, tool_id: ToolId, args: dict[str, Any], credential: Credential,
+        ticket: CallTicket, timeout: float,
     ) -> ToolResult | DiscoveryError:
         request, built = guarded(
             lambda: McpRequest(
-                url=self._endpoint, headers=dict(ALLOWED_HEADERS), timeout_seconds=self._timeout,
+                url=self._endpoint, headers=dict(ALLOWED_HEADERS), timeout_seconds=timeout,
                 body={"jsonrpc": "2.0", "id": ticket.seq, "method": "tools/call",
                       "params": {"name": tool_id.value, "arguments": args}},
             )

@@ -115,7 +115,7 @@ def test_real_adapter_malformed_json_is_a_typed_502_with_cost_and_quota_released
     env, transport = real_env(completion_response("not json at all"),
                               completion_response("still not json"))
     response = env.post()
-    assert response.status_code == 502 and response.json()["reason"] == "OUTPUT_MALFORMED"
+    assert response.status_code == 502 and response.json()["reason"] == "OUTPUT_REJECTED"
     assert env.turns() == 0 and env.reserved() == set() and env.orchestrator.workspaces == {}
     (entry,) = env.costs.entries()
     assert entry.input_tokens > 0 and entry.model_calls >= 1
@@ -136,7 +136,7 @@ def test_real_adapter_wrong_schema_is_a_typed_502() -> None:
     wrong = json.dumps({"answer": "hello", "count": 1})
     env, transport = real_env(completion_response(wrong), completion_response(wrong))
     response = env.post()
-    assert response.status_code == 502 and response.json()["reason"] == "OUTPUT_MALFORMED"
+    assert response.status_code == 502 and response.json()["reason"] == "OUTPUT_REJECTED"
     assert env.turns() == 0 and len(transport.requests) == 2 and env.costs.entries()
 
 

@@ -68,10 +68,13 @@ _ERROR_RESPONSES = {
 
 
 def _error(
-    status: int, code: ErrorCode, message: str, reason: ErrorReason | None = None
+    status: int, code: ErrorCode, message: str, reason: ErrorReason | None = None,
+    retry_after: int | None = None,
 ) -> HTTPException:
     body = ErrorBody(code=code, message=message, reason=reason)
-    return HTTPException(status_code=status, detail=body.model_dump(mode="json", exclude_none=True))
+    headers = {"Retry-After": str(retry_after)} if retry_after is not None else None
+    return HTTPException(status_code=status, detail=body.model_dump(mode="json", exclude_none=True),
+                         headers=headers)
 
 
 def _error_response(
@@ -262,7 +265,8 @@ def create_app(
             ) from error
         except TurnFailure as failure:
             # Typed, static message; the reservation was already released by the orchestrator.
-            raise _error(failure.status, failure.code, failure.message, failure.reason) from None
+            raise _error(failure.status, failure.code, failure.message, failure.reason,
+                         failure.retry_after) from None
         try:
             return TurnResponse(
                 reply=result.reply,

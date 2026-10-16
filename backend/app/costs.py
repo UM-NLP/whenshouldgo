@@ -4,12 +4,20 @@ the user-facing turn is refunded). In-memory development implementation.
 PRODUCTION REQUIREMENT: this ledger is the abuse boundary for paid calls (the daily token
 ceiling and the paid-failed-turn limiter read it before every model call), so production needs a
 shared, atomic store (Firestore) with the same ``usage_for`` / ``failed_paid_turns`` queries;
-an in-process ledger protects one instance only. Entries hold ids, enums, counts and token totals
-only, never content.
+an in-process ledger protects one instance only. NOT covered here and tracked as separate work in
+that shared store: a global or whole-pilot spend counter, limits on creating new guest identities
+and per-IP buckets (a fresh anonymous identity starts with a fresh ledger), and App Check.
+
+Memory is bounded: entries are indexed by principal, a principal's cost entries older than
+``retention`` and its failed-turn marks older than ``failure_retention`` are pruned on write, and
+every ``sweep_every`` writes all principals are swept so an idle one is dropped too. (Pruning
+means the in-memory ledger is not an audit trail; the durable store keeps that.) Entries hold
+ids, enums, counts and token totals only, never content.
 """
 from __future__ import annotations
 
 import threading
+from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
@@ -37,18 +45,54 @@ class CostEntry:
 
 
 class CostLedger:
-    def __init__(self, clock: Callable[[], datetime] | None = None) -> None:
+    def __init__(
+        self,
+        clock: Callable[[], datetime] | None = None,
+        *,
+        retention: timedelta = timedelta(hours=24),
+        failure_retention: timedelta = timedelta(hours=1),
+        sweep_every: int = 100,
+    ) -> None:
         self._clock: Callable[[], datetime] = clock or (lambda: datetime.now(UTC))
-        self._entries: list[CostEntry] = []
-        # (principal id, when): a turn that failed AFTER a provider call was sent. Kept apart
-        # from the cost entries (those stay one per provider interaction).
-        self._failed_turns: list[tuple[str, datetime]] = []
+        self._retention = retention
+        self._failure_retention = failure_retention
+        self._sweep_every = max(1, sweep_every)
+        self._by_principal: dict[str, deque[CostEntry]] = {}
+        # principal id -> when a turn failed AFTER a provider call was sent (abuse-shaped).
+        self._failed: dict[str, deque[datetime]] = {}
+        self._writes = 0
         self._lock = threading.Lock()
 
+    # -- writes (prune as they go) --------------------------------------------------------------
+    def _prune_locked(self, uid: str, now: datetime) -> None:
+        entries = self._by_principal.get(uid)
+        if entries is not None:
+            cutoff = now - self._retention
+            while entries and (entries[0].at is None or entries[0].at <= cutoff):
+                entries.popleft()
+            if not entries:
+                del self._by_principal[uid]
+        marks = self._failed.get(uid)
+        if marks is not None:
+            cutoff = now - self._failure_retention
+            while marks and marks[0] <= cutoff:
+                marks.popleft()
+            if not marks:
+                del self._failed[uid]
+
+    def _after_write_locked(self, uid: str, now: datetime) -> None:
+        self._prune_locked(uid, now)
+        self._writes += 1
+        if self._writes % self._sweep_every == 0:
+            for other in {*self._by_principal, *self._failed}:
+                self._prune_locked(other, now)
+
     def record(self, entry: CostEntry) -> None:
-        stamped = replace(entry, at=self._clock())
+        now = self._clock()
+        stamped = replace(entry, at=now)
         with self._lock:
-            self._entries.append(stamped)
+            self._by_principal.setdefault(entry.principal_id, deque()).append(stamped)
+            self._after_write_locked(entry.principal_id, now)
 
     def record_gateway(
         self, principal_id: str, run_id: str, label: str, usage: Usage, model_calls: int,
@@ -67,24 +111,49 @@ class CostLedger:
     def record_failed_paid_turn(self, principal_id: str, run_id: str) -> None:
         """Mark a turn that failed after a provider call was sent (``run_id`` is for audit)."""
         _ = run_id
+        now = self._clock()
         with self._lock:
-            self._failed_turns.append((principal_id, self._clock()))
+            self._failed.setdefault(principal_id, deque()).append(now)
+            self._after_write_locked(principal_id, now)
 
+    # -- reads ----------------------------------------------------------------------------------
     def entries(self) -> tuple[CostEntry, ...]:
         with self._lock:
-            return tuple(self._entries)
+            rows = [e for dq in self._by_principal.values() for e in dq]
+        return tuple(sorted(rows, key=lambda e: e.at or datetime.min.replace(tzinfo=UTC)))
 
     def usage_for(self, principal_id: str, *, window: timedelta | None = None) -> Usage:
-        """Token usage of one principal, over a rolling ``window`` ending now (None: all time)."""
+        """Token usage of one principal over a rolling ``window`` ending now (None: all that is
+        retained). Reads only this principal's own entries."""
         cutoff = self._clock() - window if window is not None else None
-        entries = [
-            e for e in self.entries()
-            if e.principal_id == principal_id and (cutoff is None or (e.at and e.at > cutoff))
-        ]
-        return Usage(input_tokens=sum(e.input_tokens for e in entries),
-                     output_tokens=sum(e.output_tokens for e in entries))
+        with self._lock:
+            rows = [
+                e for e in self._by_principal.get(principal_id, ())
+                if cutoff is None or (e.at and e.at > cutoff)
+            ]
+        return Usage(input_tokens=sum(e.input_tokens for e in rows),
+                     output_tokens=sum(e.output_tokens for e in rows))
+
+    def oldest_usage_at(self, principal_id: str, *, window: timedelta) -> datetime | None:
+        """When the oldest counted token-bearing entry was written (for Retry-After)."""
+        cutoff = self._clock() - window
+        with self._lock:
+            times = [
+                e.at for e in self._by_principal.get(principal_id, ())
+                if e.at and e.at > cutoff and (e.input_tokens or e.output_tokens)
+            ]
+        return min(times) if times else None
 
     def failed_paid_turns(self, principal_id: str, *, window: timedelta) -> int:
         cutoff = self._clock() - window
         with self._lock:
-            return sum(1 for uid, at in self._failed_turns if uid == principal_id and at > cutoff)
+            return sum(1 for at in self._failed.get(principal_id, ()) if at > cutoff)
+
+    def oldest_failed_paid_turn_at(self, principal_id: str, *, window: timedelta) -> datetime | None:
+        cutoff = self._clock() - window
+        with self._lock:
+            times = [at for at in self._failed.get(principal_id, ()) if at > cutoff]
+        return min(times) if times else None
+
+    def now(self) -> datetime:
+        return self._clock()

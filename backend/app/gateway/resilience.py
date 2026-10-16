@@ -109,13 +109,39 @@ class ResilientGateway:
 
     @property
     def latched(self) -> bool:
-        return bool(getattr(self._inner, "latched", False))
+        """The inner gateway's latch; an inner gateway that does not say is treated as latched
+        (fail closed)."""
+        return bool(getattr(self._inner, "latched", True))
 
     def breaker_for(self, provider: str) -> CircuitBreaker:
         with self._guard:
             if provider not in self._breakers:
                 self._breakers[provider] = CircuitBreaker(self._policy, self._clock)
             return self._breakers[provider]
+
+    @staticmethod
+    def _finish(failure: GatewayError, charged: Usage, failed_calls: int) -> None:
+        """The error raised on exhaustion speaks for ALL attempts: the usage charged across
+        them and the total calls sent (``charged`` and ``failed_calls`` already include the
+        final attempt), so a caller's ledger never sees only the last one."""
+        failure.usage = charged
+        failure.calls = failed_calls
+
+    @staticmethod
+    def _with_history(
+        error: GatewayError, charged: Usage, failed_calls: int, request: GenerateRequest
+    ) -> None:
+        """A non-retryable error that ends a run of earlier failed attempts also carries them."""
+        if failed_calls == 0:
+            return
+        if error.usage is not None:
+            last = error.usage
+        elif error.rejected_before_processing or error.calls == 0:
+            last = ZERO_USAGE
+        else:
+            last = request.worst_case_usage
+        error.usage = charged.plus(last)
+        error.calls = failed_calls + error.calls
 
     def generate(self, request: GenerateRequest) -> ModelTurn:
         breaker = self.breaker_for(request.runtime_config.provider)
@@ -141,9 +167,12 @@ class ResilientGateway:
                         # it proves nothing about the pinned host, so it stays neutral.
                         breaker.record_success(probe)
                         settled = True
+                        self._with_history(error, charged, failed_calls, current)
                         raise
                     else:
-                        raise  # refused locally before sending: says nothing about the provider
+                        # refused locally before sending: says nothing about the provider
+                        self._with_history(error, charged, failed_calls, current)
+                        raise
                 else:
                     breaker.record_success(probe)
                     settled = True
@@ -172,6 +201,7 @@ class ResilientGateway:
                 spent = current.worst_case_usage
             charged = charged.plus(spent)
             if attempt == self._policy.max_attempts:
+                self._finish(failure, charged, failed_calls)
                 raise failure
             delay = min(
                 self._policy.backoff_cap_seconds,
@@ -181,6 +211,7 @@ class ResilientGateway:
                 calls=calls, usage=spent, seconds=self._clock() - started + delay
             )
             if budget.calls_remaining < 1 or budget.seconds_remaining <= 0:
+                self._finish(failure, charged, failed_calls)
                 raise failure  # a retry would break the run budget; never extend it
             self._sleep(delay)
             current = evolve(current, budget=budget)

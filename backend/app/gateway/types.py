@@ -348,4 +348,11 @@ class ModelTurn(GatewayFrozen):
 
 
 class ModelGateway(Protocol):
+    @property
+    def latched(self) -> bool:
+        """True while the provider kill switch (exhausted credit) is on. Read-only. The
+        orchestrator checks it BEFORE spending a turn, and treats a gateway that does not say as
+        latched (fail closed)."""
+        ...
+
     def generate(self, request: GenerateRequest) -> ModelTurn: ...

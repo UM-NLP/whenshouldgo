@@ -723,13 +723,13 @@ class ErrorReason(StrEnum):
     PROVIDER_TIMEOUT = "PROVIDER_TIMEOUT"
     PROVIDER_UNAVAILABLE = "PROVIDER_UNAVAILABLE"
     OUTPUT_TRUNCATED = "OUTPUT_TRUNCATED"
-    OUTPUT_MALFORMED = "OUTPUT_MALFORMED"
-    OVER_BUDGET = "OVER_BUDGET"
-    PATCH_REJECTED = "PATCH_REJECTED"
-    TOOL_NOT_ALLOWED = "TOOL_NOT_ALLOWED"
-    TOOL_RESULT_INVALID = "TOOL_RESULT_INVALID"
+    # ONE public reason for every validation-stage refusal (a rejected patch, bad or disallowed
+    # tool arguments, an invalid tool result, unusable model output, discovery not configured).
+    # The fine distinction stays in telemetry (ValidationRejection / ToolCall events).
+    OUTPUT_REJECTED = "OUTPUT_REJECTED"
+    OVER_BUDGET = "OVER_BUDGET"  # one run exceeded its own processing budget
+    RATE_LIMITED = "RATE_LIMITED"  # a daily ceiling or the paid-failure limiter (Retry-After)
     DISCOVERY_UNAVAILABLE = "DISCOVERY_UNAVAILABLE"  # includes a tripped kill switch
-    DISCOVERY_NOT_CONFIGURED = "DISCOVERY_NOT_CONFIGURED"
 
 
 class ErrorBody(Frozen):
@@ -796,6 +796,7 @@ class TurnWarning(StrEnum):
     """Typed, content-free warnings on a partial result."""
 
     TOOL_BUDGET_EXHAUSTED = "TOOL_BUDGET_EXHAUSTED"
+    FACT_DROPPED = "FACT_DROPPED"  # one proposed fact had unacceptable text and was left out
 
 
 class TurnResponse(Frozen):

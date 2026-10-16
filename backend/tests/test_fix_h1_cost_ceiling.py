@@ -58,7 +58,7 @@ def test_forced_patch_rejections_trip_the_paid_failure_limiter() -> None:
     assert statuses[first_429:] == [429] * (50 - first_429)
     assert len(gateway.requests) == first_429 == 10  # default: 10 paid failed turns per hour
     body = env.post(key="after").json()
-    assert (body["code"], body.get("reason")) == ("QUOTA", "OVER_BUDGET")
+    assert (body["code"], body.get("reason")) == ("QUOTA", "RATE_LIMITED")
     assert env.turns() == 0 and env.reserved() == set()  # the user allowance is still refunded
 
 
@@ -115,7 +115,7 @@ def test_daily_token_ceiling_blocks_before_the_model_is_called() -> None:
     assert env.post(key="one").status_code == 200  # 0 used + 1,200 worst case <= 2,000
     second = env.post(key="two")  # 900 used + 1,200 worst case > 2,000
     assert second.status_code == 429, "daily output ceiling was not enforced"
-    assert (second.json()["code"], second.json().get("reason")) == ("QUOTA", "OVER_BUDGET")
+    assert (second.json()["code"], second.json().get("reason")) == ("QUOTA", "RATE_LIMITED")
     assert len(gateway.requests) == 1 and env.reserved() == set() and env.turns() == 1
     assert env.post(key="b", token="tok-b").status_code == 200  # another principal
 
@@ -159,4 +159,5 @@ def test_ledger_usage_for_takes_a_rolling_window_and_an_injected_clock() -> None
     assert ledger.failed_paid_turns("u1", window=timedelta(hours=1)) == 1
     now[0] += timedelta(hours=2)
     assert ledger.failed_paid_turns("u1", window=timedelta(hours=1)) == 0
-    assert len(ledger.entries()) == 3  # failed-turn marks are not cost entries
+    # failed-turn marks are not cost entries, and entries older than the retention are pruned
+    assert len(ledger.entries()) == 2

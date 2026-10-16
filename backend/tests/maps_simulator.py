@@ -231,7 +231,8 @@ class SyntheticMapsClient:
     def tripped(self) -> bool:
         return False
 
-    def call_tool(self, run: ToolRun, tool: str, arguments: Mapping[str, Any]) -> ToolResult:
+    def call_tool(self, run: ToolRun, tool: str, arguments: Mapping[str, Any],
+                  timeout_seconds: float | None = None) -> ToolResult:
         tool_id = ToolId(tool)
         call_id = run.begin(tool_id, authority=AUTHORITY).call_id
         self.calls.append((tool, dict(arguments)))

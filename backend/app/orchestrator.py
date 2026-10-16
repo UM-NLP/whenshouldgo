@@ -12,6 +12,8 @@ from uuid import uuid4
 
 from .costs import CostLedger
 from .discovery import DisplayCache, GroundingLiteClient, render_grounded_block
+from pydantic import ValidationError
+
 from .domain import (
     Confirmation,
     DiscoveryBlock,
@@ -24,6 +26,7 @@ from .domain import (
     ErrorCode,
     ErrorReason,
     TripWorkspace,
+    TurnResponse,
     TurnWarning,
     WorkspaceStatus,
     evolve,
@@ -52,6 +55,11 @@ from .telemetry import (
 # finish before it fails with 409 TURN_IN_PROGRESS. A little above the 20 s run deadline, so a
 # normal queued turn still gets its turn but a stuck one cannot hold a worker forever.
 WORKSPACE_LOCK_TIMEOUT_SECONDS = 25.0
+# PLACEHOLDER (owner-tunable): turns running at once in this process. Over the cap a turn is
+# refused at once (503 with Retry-After) without holding a thread. A tenant never uses more than
+# two of these (one running, one waiting), see ``_workspace_lock``.
+MAX_INFLIGHT_TURNS = 32
+BUSY_RETRY_AFTER_SECONDS = 5
 
 EXHAUSTED_REPLY = (
     "Your free planning allowance is used. Create a free account to continue; "
@@ -119,6 +127,7 @@ class TurnOrchestrator:
         cost_ledger: CostLedger | None = None,
         clock: Callable[[], datetime] | None = None,
         dev_scaffold: bool = False,
+        max_inflight_turns: int = MAX_INFLIGHT_TURNS,
     ) -> None:
         self.quotas = quotas or QuotaService()
         self.sink: TraceSink = sink or get_default_sink()
@@ -154,12 +163,35 @@ class TurnOrchestrator:
         # dict cannot grow without bound as tenants come and go.
         self._workspace_locks: dict[tuple[str, str], list] = {}
         self._locks_guard = Lock()
+        # Record keys of turns that are stored but not yet committed: invisible to replay.
+        self._pending: set[tuple[str, str]] = set()
+        self._max_inflight = max_inflight_turns
+        self._inflight = 0
+
+    @contextmanager
+    def _inflight_slot(self) -> Iterator[None]:
+        """A global in-flight cap: over it, refuse at once (503 + Retry-After), holding no thread."""
+        with self._locks_guard:
+            if self._inflight >= self._max_inflight:
+                raise TurnFailure(503, ErrorCode.PROVIDER, ErrorReason.PROVIDER_UNAVAILABLE,
+                                  retry_after=BUSY_RETRY_AFTER_SECONDS)
+            self._inflight += 1
+        try:
+            yield
+        finally:
+            with self._locks_guard:
+                self._inflight -= 1
 
     @contextmanager
     def _workspace_lock(self, key: tuple[str, str]) -> Iterator[None]:
-        """The per-tenant turn lock, bounded: waiting longer than WORKSPACE_LOCK_TIMEOUT_SECONDS
-        is a typed 409 TURN_IN_PROGRESS (the caller releases its reservation)."""
+        """The per-tenant turn lock. At most ONE turn runs and ONE waits per tenant: a further
+        concurrent turn is refused at once with a typed 409 TURN_IN_PROGRESS (its caller releases
+        the reservation), so one tenant cannot park many threads on its own lock. The one waiter
+        gives up after WORKSPACE_LOCK_TIMEOUT_SECONDS (kept above the run deadline)."""
         with self._locks_guard:
+            existing = self._workspace_locks.get(key)
+            if existing is not None and existing[1] >= 2:
+                raise TurnFailure(409, ErrorCode.CONFLICT, ErrorReason.TURN_IN_PROGRESS)
             entry = self._workspace_locks.setdefault(key, [Lock(), 0])
             entry[1] += 1
         acquired = False
@@ -177,6 +209,8 @@ class TurnOrchestrator:
                     self._workspace_locks.pop(key, None)
 
     def _replay(self, principal: Principal, idempotency_key: str, message: str) -> TurnResult | None:
+        if (principal.uid, idempotency_key) in self._pending:
+            return None  # stored but not committed yet: the reservation still answers 409
         stored = self._committed.get((principal.uid, idempotency_key))
         if stored is None:
             return None
@@ -324,9 +358,9 @@ class TurnOrchestrator:
                     raise ResultExpired()
                 replayed.append(True)
                 return replay
-            with self._workspace_lock(key):
+            with self._inflight_slot(), self._workspace_lock(key):
                 current = self.workspaces.get(key)
-                base = current or TripWorkspace(id=str(uuid4()), owner_id=principal.uid)
+                base = current or self._new_workspace(principal)
                 tools = tools_for(domain, principal.kind)
                 if self._pipeline is not None and domain == DomainClass.TRAVEL:
                     # Held across the model and tool calls: one in-flight turn per tenant, so
@@ -339,16 +373,24 @@ class TurnOrchestrator:
                     workspace = outcome.workspace
                     reply, block, ref, warnings = (
                         outcome.reply, outcome.discovery, outcome.ref, outcome.warnings)
+                elif self._pipeline is not None:
+                    # The fixed APP_HELP responder: a canned reply, no model and no tool call.
+                    workspace = self._app_help_workspace(base)
+                    reply, block, ref, warnings = self._reply(domain), None, None, ()
                 else:
-                    workspace = self._scaffold_workspace(base, message, with_gateway=bool(self._pipeline))
+                    workspace = self._scaffold_workspace(base, message)
                     reply, block, ref, warnings = self._reply(domain), None, None, ()
                 result = TurnResult(reply, domain, tools, workspace, False, block, warnings)
+                self._check_contract(principal, result)  # a failure here is BEFORE any commit
                 # Store the state and the replay record BEFORE the commit, then count the turn.
-                # If the commit fails without counting, the state is rolled back and the
-                # reservation is released; if it counted before faulting, the turn IS committed
-                # (never released): the state stays and the fault is not turned into a failure.
+                # While uncommitted the record is "pending" and invisible to replay, so a
+                # concurrent duplicate never gets the replay of a turn that may roll back. If the
+                # commit fails without counting, the state is rolled back and the reservation is
+                # released; if it counted before faulting, the turn IS committed (never
+                # released): the state stays and the fault is not turned into a failure.
                 record_key = (principal.uid, idempotency_key)
                 stored = replace(result, discovery=None)  # never keep Maps content in a record
+                self._pending.add(record_key)
                 self.workspaces[key] = workspace
                 self._committed[record_key] = (_fingerprint(message), ReplayRecord(stored, ref))
                 try:
@@ -361,11 +403,14 @@ class TurnOrchestrator:
                         else:
                             self.workspaces[key] = current
                         self._committed.pop(record_key, None)
+                        self._pending.discard(record_key)
                         raise
                     committed = True
                     if not isinstance(fault, Exception):
+                        self._pending.discard(record_key)
                         raise
                 committed = True
+                self._pending.discard(record_key)
         except BaseException:
             if not committed:
                 self.quotas.release(reservation)
@@ -377,12 +422,39 @@ class TurnOrchestrator:
         return result
 
     @staticmethod
-    def _scaffold_workspace(base: TripWorkspace, message: str, *, with_gateway: bool) -> TripWorkspace:
+    def _new_workspace(principal: Principal) -> TripWorkspace:
+        """A fresh workspace for this principal; an id the contract refuses is a typed server
+        fault before any paid work (not a bare validation error)."""
+        try:
+            return TripWorkspace(id=str(uuid4()), owner_id=principal.uid)
+        except ValidationError:
+            raise TurnFailure(500, ErrorCode.PROVIDER, None) from None
+
+    @staticmethod
+    def _check_contract(principal: Principal, result: TurnResult) -> None:
+        """Build the API response BEFORE committing: a result that cannot be shown is a failure
+        now (released, nothing stored), never a committed record replayed as a 500 forever."""
+        try:
+            TurnResponse(
+                reply=result.reply, domain=result.domain, allowed_tools=result.tools,
+                workspace_id=result.workspace.id if result.workspace else None,
+                allowance_exhausted=result.allowance_exhausted,
+                policy_version=principal.policy_version, discovery=result.discovery,
+                warnings=result.warnings,
+            )
+        except ValidationError:
+            raise TurnFailure(500, ErrorCode.PROVIDER, None) from None
+
+    @staticmethod
+    def _app_help_workspace(base: TripWorkspace) -> TripWorkspace:
+        """The workspace after the fixed APP_HELP responder: it makes no paid call (no model, no
+        tool), stores no goal and no facts, and only advances the version."""
+        return evolve(base, status=WorkspaceStatus.EXPLORING, version=base.version + 1)
+
+    @staticmethod
+    def _scaffold_workspace(base: TripWorkspace, message: str) -> TripWorkspace:
         """The development scaffold turn (no model interprets the message; only with
-        ``dev_scaffold=True``). With a gateway an APP_HELP turn leaves the facts and goal alone:
-        the raw message is not workspace state."""
-        if with_gateway:
-            return evolve(base, status=WorkspaceStatus.EXPLORING, version=base.version + 1)
+        ``dev_scaffold=True``)."""
         return evolve(
             base,
             # DEV-ONLY: the scaffold stores the raw user message as the goal. No non-scaffold

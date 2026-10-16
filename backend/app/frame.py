@@ -48,9 +48,25 @@ from .textsafety import plain_text_problem
 
 FRAME_OUTPUT_NAME = "frame_result"
 STATE_PREFIX = "WORKSPACE_STATE_JSON:"
-MAX_QUERY_CHARS = 200
+MAX_QUERY_CHARS = 80
 MAX_AREA_CHARS = 80
-MIN_SHARED_TOKEN_CHARS = 3  # a shared word must have at least this many characters
+MIN_WORD_CHARS = 3  # shorter words are never counted as content words
+MIN_SUPPORTED_PERCENT = 60  # of the query's content words must be the user's own (or a category)
+# Function words that carry no meaning of their own (English and French basics). They are
+# ignored on the query side, so sharing "the" or "near" with the message proves nothing.
+STOPWORDS = frozenset((
+    "the and for you with near are can any but not from that this into out one has was all our "
+    "your its some what where when how who get got here there about around over under than then "
+    "les des une pour avec sans dans sur aux que qui par pas est sont nous vous ils elles mais "
+    "ses ces mon ton son pres près chez vers entre").split())
+# A small, closed vocabulary of generic outing categories. The model may use these without the
+# user having typed them, so natural expansions ("I'm hungry" -> "restaurant") still work. It
+# is deliberately short and holds no instruction-like or brand words.
+CATEGORY_WORDS = frozenset((
+    "restaurant restaurants cafe cafes café cafés coffee bar bars pub pubs bakery "
+    "brunch lunch dinner breakfast food park parks museum museums gallery theatre theater cinema "
+    "market shopping vegetarian vegan kids family outdoor indoor patio walk hike beach garden "
+    "zoo library").split())
 _TOKEN = re.compile(r"\w+")
 
 FRAME_SYSTEM_PROMPT = (
@@ -150,10 +166,20 @@ def _contains_words(haystack: list[str], needle: list[str]) -> bool:
 
 def search_arguments(search: SearchArgs, message: str) -> dict[str, Any]:
     """The exact tool arguments, built only from the closed model. Re-validates the model (a
-    forged or ``model_construct``-ed instance cannot slip through). Rules, all on NFKC-folded
-    words: an ``area`` must appear in the user's message as whole consecutive words, and the
-    search text must share at least one word of ``MIN_SHARED_TOKEN_CHARS``+ characters with the
-    message or the area, so the model can only search for what the user asked about.
+    forged or ``model_construct``-ed instance cannot slip through). Rules, all on NFKC-folded,
+    case-folded whole words:
+
+    * an ``area`` must appear in the user's message as whole consecutive words;
+    * the query is at most ``MAX_QUERY_CHARS`` characters;
+    * its CONTENT words (3+ characters, not a stopword) must exist, and at least
+      ``MIN_SUPPORTED_PERCENT`` percent of them must be whole words of the user's message or the
+      area, or one of ``CATEGORY_WORDS``.
+
+    What this guarantees: the search text is mostly the user's own words plus generic category
+    words, and a lone shared word, a stopword or a pile of injected words cannot get through.
+    What it does NOT guarantee: that the query MEANS what the user asked. Up to 40 percent of
+    the content words may be anything (two free words in a five-word query), and a category word
+    can be added without being typed. It bounds the model; it is not a proof.
     Coordinates are never sent: there is no location bias in Phase 0."""
     try:
         clean: SearchArgs | None = SearchArgs.model_validate(search.model_dump())
@@ -166,8 +192,10 @@ def search_arguments(search: SearchArgs, message: str) -> dict[str, Any]:
     area_words = _tokens(clean.area) if clean.area is not None else []
     if clean.area is not None and not _contains_words(message_words, area_words):
         raise ArgumentRejected()
-    known = {w for w in message_words + area_words if len(w) >= MIN_SHARED_TOKEN_CHARS}
-    if not known.intersection(w for w in _tokens(query) if len(w) >= MIN_SHARED_TOKEN_CHARS):
+    content = [w for w in _tokens(query) if len(w) >= MIN_WORD_CHARS and w not in STOPWORDS]
+    supported = set(message_words) | set(area_words) | CATEGORY_WORDS
+    own = sum(1 for w in content if w in supported)
+    if not content or own * 100 < MIN_SUPPORTED_PERCENT * len(content):
         raise ArgumentRejected()
     if clean.area is not None:
         query = f"{query} near {clean.area}"

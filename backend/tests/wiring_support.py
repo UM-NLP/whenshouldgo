@@ -19,14 +19,14 @@ from dataclasses import fields, is_dataclass
 
 from fastapi.testclient import TestClient
 from pydantic import BaseModel
-from gateway_fakes import FakeGateway
+from gateway_fakes import FakeGateway, FakeTransport, completion_response
 from maps_simulator import (
     NOW,
     FakeMcpTransport,
     SyntheticMapsClient,
     synthetic_payload,
 )
-from test_gateway_support import make_config, make_policy
+from test_gateway_support import make_config, make_gateway, make_policy
 
 from app import telemetry as t
 from app.auth import PrincipalResolver, StaticTokenVerifier, VerifiedIdentity
@@ -45,7 +45,13 @@ from app.domain import (
 )
 from app.entitlements import Allowance, EntitlementPolicy, Period, PolicyRegistry
 from app.frame import FrameIntent, FrameResult, SearchArgs
-from app.gateway import CallRole, GenerateRequest
+from app.gateway import (
+    CallRole,
+    GenerateRequest,
+    ResiliencePolicy,
+    ResilientGateway,
+    placeholder_price_table,
+)
 from app.gateway.errors import GatewayError
 from app.gateway.types import FinishReason, ModelTurn, Usage
 from app.main import create_app
@@ -263,14 +269,17 @@ class RecordingClient:
         self.inner = inner
         self.runs: list[ToolRun] = []
         self.calls: list[tuple[str, dict[str, Any]]] = []
+        self.timeouts: list[float | None] = []
 
     @property
     def tripped(self) -> bool:
         return bool(getattr(self.inner, "tripped", False))
 
-    def call_tool(self, run: ToolRun, tool: str, arguments: Mapping[str, Any]) -> Any:
+    def call_tool(self, run: ToolRun, tool: str, arguments: Mapping[str, Any],
+                  timeout_seconds: float | None = None) -> Any:
         self.runs.append(run)
         self.calls.append((tool, dict(arguments)))
+        self.timeouts.append(timeout_seconds)
         return self.inner.call_tool(run, tool, arguments)
 
 
@@ -281,7 +290,8 @@ class RaisingClient:
         self.error = error
         self.calls: list[str] = []
 
-    def call_tool(self, run: ToolRun, tool: str, arguments: Mapping[str, Any]) -> Any:
+    def call_tool(self, run: ToolRun, tool: str, arguments: Mapping[str, Any],
+                  timeout_seconds: float | None = None) -> Any:
         self.calls.append(tool)
         raise self.error
 
@@ -377,3 +387,59 @@ def threads(count: int, target: Callable[[int], None]) -> None:
 
 
 __all__ = [name for name in dir() if not name.startswith("_")]
+
+
+class FrameEchoTransport(FakeTransport):
+    """A provider transport that answers FRAME like a model: it reads the workspace id and base
+    version out of the prompt and echoes them. ``before`` responses (errors, odd bodies) are
+    served first; after that every call gets a valid answer."""
+
+    def __init__(
+        self, before: Sequence[Any] = (), *, intent: str = "OTHER", query: str = "quiet restaurant",
+        prompt_tokens: int | None = 100, completion_tokens: int | None = 20,
+    ) -> None:
+        super().__init__([])
+        self.before = list(before)
+        self.intent = intent
+        self.query = query
+        self.usage = (prompt_tokens, completion_tokens)
+
+    def send(self, request: Any, credential: Any) -> Any:
+        if self.before:
+            self._script = [self.before.pop(0)]
+        else:
+            state = next(m["content"] for m in request.body["messages"]
+                         if m["content"].startswith(STATE_PREFIX))
+            ids = json.loads(state[len(STATE_PREFIX):])
+            answer: dict[str, Any] = {
+                "patch": {"workspace_id": ids["workspace_id"], "base_version": ids["base_version"],
+                          "next_action": "SEARCH"},
+                "intent": self.intent,
+            }
+            if self.intent == "DISCOVERY":
+                answer.update(tool="search_places", search={"text_query": self.query})
+            self._script = [completion_response(
+                json.dumps(answer), prompt_tokens=self.usage[0], completion_tokens=self.usage[1])]
+        return super().send(request, credential)
+
+
+def real_stack(
+    before: Sequence[Any] = (), *, attempts: int = 3, discovery: Any = None,
+    config: RuntimeConfig | None = None, intent: str = "OTHER", query: str = "quiet restaurant",
+    prompt_tokens: int | None = 100, completion_tokens: int | None = 20, **env_kw: Any,
+) -> tuple[Env, FrameEchoTransport, Any]:
+    """An Env over the REAL ResilientGateway wrapping the REAL OpenRouterGateway (a fake
+    transport underneath): the stack ScriptedGateway cannot exercise."""
+    config = config or make_config()
+    transport = FrameEchoTransport(before, intent=intent, query=query,
+                                   prompt_tokens=prompt_tokens, completion_tokens=completion_tokens)
+    inner = make_gateway(transport, config=config)
+    gateway = ResilientGateway(
+        inner, ResiliencePolicy(max_attempts=attempts),
+        price_table=placeholder_price_table(config.model_id, config.provider),
+        sleep=lambda seconds: None)
+    maps = discovery or RecordingClient(SyntheticMapsClient(payload=canary_payload()))
+    env = Env(gateway=gateway, discovery=maps, config=config, **env_kw)
+    if hasattr(maps, "inner") and hasattr(maps.inner, "_now"):
+        maps.inner._now = env.clock  # noqa: SLF001
+    return env, transport, inner

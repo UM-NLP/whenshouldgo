@@ -61,7 +61,7 @@ def test_a_conversion_error_while_building_the_block_is_a_typed_502(monkeypatch)
     env, _, _ = happy_env()
     response = env.post()
     assert response.status_code == 502, response.text
-    assert response.json()["reason"] == "TOOL_RESULT_INVALID"
+    assert response.json()["reason"] == "OUTPUT_REJECTED"
     assert env.turns() == 0 and env.reserved() == set() and len(env.cache) in (0, 1)
 
 

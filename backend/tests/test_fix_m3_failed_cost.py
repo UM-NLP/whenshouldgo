@@ -37,11 +37,12 @@ def test_unknown_usage_is_charged_at_the_worst_case(error) -> None:
     worst = gateway.requests[0].worst_case_usage
     entries = env.costs.entries()
     assert len(entries) == 1, "the failed call was not recorded"
-    assert (entries[0].input_tokens, entries[0].output_tokens) == (
-        worst.input_tokens, worst.output_tokens)
-    assert entries[0].model_calls >= 1
+    sent = max(error.calls, 1)  # every call that went out is charged its own worst case
+    expected = (worst.input_tokens * sent, worst.output_tokens * sent)
+    assert (entries[0].input_tokens, entries[0].output_tokens) == expected
+    assert entries[0].model_calls == sent
     call = env.events(t.GatewayCall)[0]
-    assert (call.input_tokens, call.output_tokens) == (worst.input_tokens, worst.output_tokens)
+    assert (call.input_tokens, call.output_tokens) == expected
     assert call.model_calls >= 1
 
 

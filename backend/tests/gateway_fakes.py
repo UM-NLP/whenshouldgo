@@ -53,6 +53,8 @@ class FakeGateway:
     """Scripted ``ModelGateway``. It runs the same request checks as the real adapter, so a
     fake can never accept a request the real gateway would refuse."""
 
+    latched = False  # part of the ModelGateway protocol: the provider kill switch is off
+
     def __init__(self, script: Sequence[ModelTurn | GatewayError], policy: GatewayPolicy) -> None:
         self._script = list(script)
         self._policy = policy

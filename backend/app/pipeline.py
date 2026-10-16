@@ -7,21 +7,29 @@ server runs the tool through the Grounding Lite client, validates the answer aga
 ledger, and returns Google's grounded text verbatim with fixed, server-authored framing. No tool
 result is ever put into a gateway request.
 
-Order: availability checks and cost ceilings (no provider call yet) -> FRAME call -> output
-validation -> patch validation (nothing is stored yet) -> tool allowlist -> arguments -> tool
-call under a per-run ``ToolRun`` -> parse -> ledger-bound validation -> verbatim render and check
--> display cache. A failure at any step raises a typed ``TurnFailure`` and nothing is stored;
-work already done is recorded in the cost ledger, and a failure after a provider call was sent is
-also counted as a PAID FAILED turn (the user allowance is refunded; the ledger is the abuse
-boundary). The one partial result is tool-budget exhaustion (tool calls or the run's wall-clock
-deadline): the validated patch is kept and the response carries a typed warning, never a
-half-validated block.
+Order: identifier checks, availability checks and cost ceilings (no provider call yet) -> FRAME
+call -> output validation -> patch validation (nothing is stored yet) -> tool allowlist ->
+arguments -> tool call under a per-run ``ToolRun`` with the remaining seconds as its timeout ->
+parse -> ledger-bound validation -> verbatim render and check -> display cache. A failure at any
+step is a typed ``TurnFailure`` and nothing is stored; work already done is recorded in the cost
+ledger. A failure of an ABUSE-SHAPED kind after a provider call was sent (rejected or malformed
+model output, a rejected patch or tool arguments, an invalid tool result) is also counted for the
+paid-failed-turn limiter; provider outages, rate limits, quota or latch refusals, a tripped kill
+switch and deadline partials are never counted. The user allowance is refunded either way; the
+ledger is the abuse boundary. The one partial result is tool-budget exhaustion (tool calls or the
+run's wall-clock deadline): the validated patch is kept and the response carries a typed warning.
 
 Maps text exists in this module only inside the ``ValidatedAnswer`` and the ``DiscoveryBlock``
-it returns; it reaches no log, event, exception, cost entry or gateway request.
+it returns; it reaches no log, event, exception, cost entry or gateway request. The discovery
+path RETURNS failures instead of raising them, so no frame on a raised exception's traceback
+holds a Maps-carrying local.
+
+Not covered here (separate work in a shared store, tracked elsewhere): guest identity churn, a
+whole-pilot spend counter, IP-bucket limits, App Check and the Firestore-backed ledger.
 """
 from __future__ import annotations
 
+import math
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -85,7 +93,6 @@ from .gateway import (
     MalformedOutputError,
     ModelGateway,
     PrivacyViolationError,
-    ProviderQuotaError,
     ProviderRateLimitError,
     ProviderRejectedError,
     ProviderTimeoutError,
@@ -97,7 +104,7 @@ from .gateway import (
     UsageMismatchError,
 )
 from .gateway.types import ModelTurn, Usage
-from .patching import PatchRejected, apply_patch
+from .patching import PatchRejected, apply_patch_checked
 
 # Server-owned grants: which Grounding Lite tools each guard-level tool name allows. The model
 # can request a tool by name; only a tool granted here is ever executed. resolve_names and
@@ -120,13 +127,26 @@ REPLY_PARTIAL = (
 # policy; the paid-failed-turn limit is ``RuntimeConfig.max_paid_failed_turns_per_hour``.
 DAILY_WINDOW = timedelta(hours=24)
 PAID_FAILURE_WINDOW = timedelta(hours=1)
+MAX_RETRY_AFTER_SECONDS = 3600
+# PLACEHOLDER (owner-tunable): below this many seconds left in the run the tool is skipped and
+# the validated partial result is returned (a search needs at least about a second).
+MIN_TOOL_SECONDS = 1.0
+# Only these public reasons count toward the paid-failed-turn limiter (abuse-shaped failures).
+_ABUSE_REASONS = frozenset({ErrorReason.OUTPUT_REJECTED, ErrorReason.OUTPUT_TRUNCATED})
 
-# Failures that mean a provider attempt was made even when the adapter counted no call.
+# Failures that mean a provider attempt was made even when the adapter counted no call. A
+# ProviderQuotaError is NOT here: with no call counted it is the pre-send latch refusal.
 _ATTEMPTED = (
     ProviderRateLimitError, ProviderTimeoutError, ProviderUnavailableError,
-    ProviderRejectedError, ProviderQuotaError, TruncationError, ContentFilterError,
-    MalformedOutputError, UsageMismatchError,
+    ProviderRejectedError, TruncationError, ContentFilterError, MalformedOutputError,
+    UsageMismatchError,
 )
+
+_SERVER_FAULT = (500, ErrorCode.PROVIDER, None)  # a fault a client must not learn the cause of
+
+
+def _fault() -> TurnFailure:
+    return TurnFailure(*_SERVER_FAULT)
 
 
 def tools_for_grants(tools: tuple[str, ...]) -> frozenset[ToolId]:
@@ -159,9 +179,15 @@ class PipelineOutcome:
 
 @dataclass
 class _Spend:
-    """Whether this run sent a provider call (a later failure is then a paid failed turn)."""
+    """Whether this run sent a provider call (a later failure may then be a paid failure)."""
 
     paid: bool = False
+
+
+def _rejected(status: int = 502) -> TurnFailure:
+    """The one public validation-stage refusal (a 503 keeps the PROVIDER code: unavailable)."""
+    code = ErrorCode.PROVIDER if status == 503 else ErrorCode.VALIDATION
+    return TurnFailure(status, code, ErrorReason.OUTPUT_REJECTED)
 
 
 def failure_from_gateway(error: GatewayError) -> TurnFailure:
@@ -172,11 +198,11 @@ def failure_from_gateway(error: GatewayError) -> TurnFailure:
     if isinstance(error, TruncationError):
         return TurnFailure(502, ErrorCode.VALIDATION, ErrorReason.OUTPUT_TRUNCATED)
     if isinstance(error, (MalformedOutputError, ContentFilterError)):
-        return TurnFailure(502, ErrorCode.VALIDATION, ErrorReason.OUTPUT_MALFORMED)
+        return _rejected()
     if isinstance(error, BudgetExceededError):
         return TurnFailure(429, ErrorCode.QUOTA, ErrorReason.OVER_BUDGET)
     if isinstance(error, (PrivacyViolationError, ToolNotAllowedError, TaintedContextError)):
-        return TurnFailure(500, ErrorCode.PROVIDER, None)  # a server-side fault: no cause shown
+        return _fault()
     return TurnFailure(503, ErrorCode.PROVIDER, ErrorReason.PROVIDER_UNAVAILABLE)
 
 
@@ -185,12 +211,10 @@ def failure_from_discovery(error: DiscoveryError) -> TurnFailure:
         return TurnFailure(503, ErrorCode.PROVIDER, ErrorReason.PROVIDER_RATE_LIMITED)
     if isinstance(error, DiscoveryTimeout):
         return TurnFailure(504, ErrorCode.PROVIDER, ErrorReason.PROVIDER_TIMEOUT)
-    if isinstance(error, ToolNotAllowed):
-        return TurnFailure(502, ErrorCode.VALIDATION, ErrorReason.TOOL_NOT_ALLOWED)
-    if isinstance(error, InvalidToolArguments):
-        return TurnFailure(502, ErrorCode.VALIDATION, ErrorReason.OUTPUT_MALFORMED)
+    if isinstance(error, (ToolNotAllowed, InvalidToolArguments)):
+        return _rejected()
     if error.code == ErrorCode.VALIDATION:  # malformed or oversize tool result, tool error
-        return TurnFailure(502, ErrorCode.VALIDATION, ErrorReason.TOOL_RESULT_INVALID)
+        return _rejected()
     # Access denied, a tripped kill switch, a missing session, 5xx and the rest look the same to
     # a client (and never reveal our credentials); telemetry keeps the distinction.
     return TurnFailure(503, ErrorCode.PROVIDER, ErrorReason.DISCOVERY_UNAVAILABLE)
@@ -256,7 +280,22 @@ class TurnPipeline:
     def _reject(self, reason: telemetry.ValidationReason, phase: telemetry.Phase) -> None:
         self._trace(telemetry.ValidationRejection, reason=reason, phase=phase)
 
+    def _deny(self, tool: telemetry.ToolName) -> None:
+        self._trace(telemetry.ToolCall, tool=tool, outcome=telemetry.ToolOutcome.DENIED,
+                    latency_ms=0, billable_units=0)
+
     # -- checks that need no provider call --------------------------------------------------------
+    def _make_run(self, principal: Principal, run_id: str, cache_key: str) -> ToolRun:
+        """Validate the identifiers BEFORE any paid work: a principal id or cache key the tool run
+        or the display cache would refuse later must fail now, with no provider call spent."""
+        try:
+            run = ToolRun.from_config(self._config, principal_id=principal.uid, run_id=run_id)
+            if self._cache is not None:
+                self._cache.get(principal.uid, cache_key)  # validates owner and key; a read only
+        except (ValueError, CacheError):
+            raise _fault() from None
+        return run
+
     def _check_available(self, allowed: frozenset[ToolId]) -> None:
         """Before FRAME, in this order: discovery client configured, discovery not tripped,
         gateway quota latch not tripped.
@@ -266,35 +305,48 @@ class TurnPipeline:
         allowlist grants search_places. A discovery-class turn is short-circuited (zero gateway
         calls) when discovery is not configured or is switched off; a turn whose allowlist
         grants no discovery tool could proceed without it and is not. A latched gateway stops
-        every turn: no FRAME call can succeed."""
+        every turn: no FRAME call can succeed, and a gateway that does not report its latch is
+        treated as latched (fail closed)."""
         if ToolId.SEARCH_PLACES in allowed:
             if self._discovery is None or self._cache is None:
-                raise TurnFailure(503, ErrorCode.PROVIDER, ErrorReason.DISCOVERY_NOT_CONFIGURED)
+                self._deny(telemetry.ToolName.SEARCH_PLACES)
+                raise _rejected(503)
             if self._discovery.tripped:
-                self._trace(telemetry.ToolCall, tool=telemetry.ToolName.SEARCH_PLACES,
-                            outcome=telemetry.ToolOutcome.DENIED, latency_ms=0, billable_units=0)
+                self._deny(telemetry.ToolName.SEARCH_PLACES)
                 raise TurnFailure(503, ErrorCode.PROVIDER, ErrorReason.DISCOVERY_UNAVAILABLE)
-        if getattr(self._gateway, "latched", False):
+        if getattr(self._gateway, "latched", True):
             raise TurnFailure(503, ErrorCode.PROVIDER, ErrorReason.PROVIDER_UNAVAILABLE)
+
+    def _retry_after(self, oldest: datetime | None, window: timedelta, default: int) -> int:
+        if oldest is None:
+            return default
+        seconds = (oldest + window - self._costs.now()).total_seconds()
+        return int(min(MAX_RETRY_AFTER_SECONDS, max(1, math.ceil(seconds))))
 
     def _check_ceilings(
         self, principal: Principal, request: GenerateRequest, daily: DailyTokenCeiling | None
     ) -> None:
         """The cost ledger is the abuse boundary: the daily token ceiling (including the worst
-        case of the coming FRAME call) and the paid-failed-turn limiter, both before FRAME."""
-        over = TurnFailure(429, ErrorCode.QUOTA, ErrorReason.OVER_BUDGET)
+        case of the coming FRAME call) and the paid-failed-turn limiter, both before FRAME. A
+        denial is 429 RATE_LIMITED with a bounded Retry-After."""
         if daily is None:  # no entitlement for this tier: no paid calls
-            raise over
+            raise TurnFailure(429, ErrorCode.QUOTA, ErrorReason.RATE_LIMITED,
+                              retry_after=MAX_RETRY_AFTER_SECONDS)
         used = self._costs.usage_for(principal.uid, window=DAILY_WINDOW)
         worst = request.worst_case_usage
         if (
             used.input_tokens + worst.input_tokens > daily.input_tokens
             or used.output_tokens + worst.output_tokens > daily.output_tokens
         ):
-            raise over
+            oldest = self._costs.oldest_usage_at(principal.uid, window=DAILY_WINDOW)
+            raise TurnFailure(429, ErrorCode.QUOTA, ErrorReason.RATE_LIMITED,
+                              retry_after=self._retry_after(oldest, DAILY_WINDOW,
+                                                            MAX_RETRY_AFTER_SECONDS))
         failed = self._costs.failed_paid_turns(principal.uid, window=PAID_FAILURE_WINDOW)
         if failed >= self._config.max_paid_failed_turns_per_hour:
-            raise over
+            oldest = self._costs.oldest_failed_paid_turn_at(principal.uid, window=PAID_FAILURE_WINDOW)
+            raise TurnFailure(429, ErrorCode.QUOTA, ErrorReason.RATE_LIMITED,
+                              retry_after=self._retry_after(oldest, PAID_FAILURE_WINDOW, 60))
 
     # -- the run ----------------------------------------------------------------------------------
     def run(
@@ -303,6 +355,7 @@ class TurnPipeline:
     ) -> PipelineOutcome:
         self.assert_maps_policy()
         run_id = f"run-{uuid.uuid4().hex[:16]}"
+        tool_run = self._make_run(principal, run_id, cache_key)
         allowed = tools_for_grants(tools)
         self._check_available(allowed)
         budget = RunBudget.from_ceilings(self._config.token_ceilings)
@@ -310,38 +363,57 @@ class TurnPipeline:
         self._check_ceilings(principal, request, daily_ceiling)
         spend = _Spend()
         try:
-            return self._run(principal, message, base, allowed, run_id, cache_key, request,
-                             budget, spend)
-        except Exception:
-            if spend.paid:  # a provider call was sent: the ledger counts the failed turn
-                self._costs.record_failed_paid_turn(principal.uid, run_id)
+            outcome = self._run(principal, message, base, allowed, tool_run, cache_key, request,
+                                budget, spend)
+        except TurnFailure as failure:
+            self._note_failure(principal, run_id, failure, spend)
             raise
+        if isinstance(outcome, TurnFailure):
+            self._note_failure(principal, run_id, outcome, spend)
+            raise outcome
+        return outcome
+
+    def _note_failure(
+        self, principal: Principal, run_id: str, failure: TurnFailure, spend: _Spend
+    ) -> None:
+        """Count an abuse-shaped failure after a provider call was sent. Outages, rate limits,
+        quota or latch refusals, a kill switch and the like are never counted."""
+        if spend.paid and failure.reason in _ABUSE_REASONS:
+            self._costs.record_failed_paid_turn(principal.uid, run_id)
 
     def _run(
         self, principal: Principal, message: str, base: TripWorkspace, allowed: frozenset[ToolId],
-        run_id: str, cache_key: str, request: GenerateRequest, budget: RunBudget, spend: _Spend,
-    ) -> PipelineOutcome:
+        tool_run: ToolRun, cache_key: str, request: GenerateRequest, budget: RunBudget,
+        spend: _Spend,
+    ) -> PipelineOutcome | TurnFailure:
         started = self._monotonic()
-        frame = self._frame(principal, request, run_id, spend)
+        frame = self._frame(principal, request, tool_run.run_id, spend)
         workspace: TripWorkspace | None = None
+        dropped = 0
         rejection: PatchRejected | None = None
         try:
-            workspace = apply_patch(base, frame.patch)  # a copy: nothing is stored yet
+            workspace, dropped = apply_patch_checked(base, frame.patch)  # a copy: not stored yet
         except PatchRejected as rejected:
             rejection = rejected
         if workspace is None or rejection is not None:
             reason = rejection.reason if rejection else telemetry.ValidationReason.OTHER
             self._reject(reason, telemetry.Phase.PATCH)
-            raise TurnFailure(502, ErrorCode.VALIDATION, ErrorReason.PATCH_REJECTED)
+            return _rejected()
+        warnings: tuple[TurnWarning, ...] = (TurnWarning.FACT_DROPPED,) if dropped else ()
         if frame.intent == FrameIntent.OTHER:
-            return PipelineOutcome(workspace, REPLY_OTHER, None, None)
-        # One wall-clock deadline for FRAME plus the tool call (the run budget's seconds). The
-        # tool call itself is bounded by the client's own timeout (at most 10 s).
-        if self._monotonic() - started >= budget.seconds_remaining:
+            return PipelineOutcome(workspace, REPLY_OTHER, None, None, warnings)
+        # One wall-clock deadline for FRAME plus the tool call (the run budget's seconds): the
+        # tool gets what is left as its timeout, and under a floor it is skipped.
+        remaining = budget.seconds_remaining - (self._monotonic() - started)
+        if remaining < MIN_TOOL_SECONDS:
             return PipelineOutcome(workspace, REPLY_PARTIAL, None, None,
-                                   (TurnWarning.TOOL_BUDGET_EXHAUSTED,))
-        return self._discover(principal, message, frame, workspace, allowed, run_id, cache_key,
-                              spend)
+                                   (*warnings, TurnWarning.TOOL_BUDGET_EXHAUSTED))
+        outcome = self._discover(principal, message, frame, workspace, allowed, tool_run,
+                                 cache_key, spend, remaining)
+        if isinstance(outcome, PipelineOutcome) and warnings:
+            return PipelineOutcome(outcome.workspace, outcome.reply, outcome.discovery,
+                                   outcome.ref, (*warnings, *outcome.warnings))
+        return outcome
 
     def _frame(
         self, principal: Principal, request: GenerateRequest, run_id: str, spend: _Spend
@@ -356,13 +428,14 @@ class TurnPipeline:
         if failure is not None:
             self._record_gateway_error(principal, run_id, request, failure, started, spend)
             raise failure_from_gateway(failure)
-        assert turn is not None
+        if turn is None:
+            raise _fault()
         spend.paid = True
-        self._record_gateway_turn(principal, run_id, turn)
+        self._record_gateway_turn(principal, run_id, request, turn)
         frame = self._checked_frame(turn)
         if frame is None:
             self._reject(telemetry.ValidationReason.SCHEMA, telemetry.Phase.MODEL)
-            raise TurnFailure(502, ErrorCode.VALIDATION, ErrorReason.OUTPUT_MALFORMED)
+            raise _rejected()
         return frame
 
     @staticmethod
@@ -377,37 +450,58 @@ class TurnPipeline:
         except ValidationError:
             return None
 
-    def _record_gateway_turn(self, principal: Principal, run_id: str, turn: ModelTurn) -> None:
+    @staticmethod
+    def _trusted_usage(reported: Usage, request: GenerateRequest, calls: int = 1) -> Usage:
+        """Provider usage is not taken at face value: input is at least half of the request's own
+        estimate (a deflated body cannot make a call free) and every figure is capped at the
+        request's worst case PER CALL SENT (an inflated body cannot blow the ledger)."""
+        worst = request.worst_case_usage
+        sent = max(1, calls)
+        floor = request.estimated_input_tokens // 2
+        return Usage(
+            input_tokens=min(max(reported.input_tokens, floor), worst.input_tokens * sent),
+            output_tokens=min(reported.output_tokens, worst.output_tokens * sent),
+        )
+
+    def _record_gateway_turn(
+        self, principal: Principal, run_id: str, request: GenerateRequest, turn: ModelTurn
+    ) -> None:
         meta = turn.telemetry
+        usage = self._trusted_usage(turn.usage, request, turn.model_calls)
         self._trace(
             telemetry.GatewayCall,
             model_id=meta.model_id, provider=meta.provider,
             finish_reason=telemetry.FinishReason(meta.finish_reason.value),
-            input_tokens=meta.input_tokens, output_tokens=meta.output_tokens,
+            input_tokens=usage.input_tokens, output_tokens=usage.output_tokens,
             latency_ms=int(meta.latency_ms),
             cost_microusd=int(meta.estimated_cost_usd * 1_000_000),
             call_role=telemetry.CallRole(meta.call_role.value),
-            model_calls=meta.model_calls, repairs=meta.repairs,
+            model_calls=min(meta.model_calls, 100), repairs=meta.repairs,
             price_table_version=meta.price_table_version,
         )
-        self._costs.record_gateway(principal.uid, run_id, meta.call_role.value, turn.usage,
+        self._costs.record_gateway(principal.uid, run_id, meta.call_role.value, usage,
                                    turn.model_calls, turn.estimated_cost_usd)
 
-    @staticmethod
-    def _charge_for(error: GatewayError, request: GenerateRequest) -> tuple[Usage, int] | None:
-        """What a failed gateway call costs. Trustworthy usage from the gateway is kept; a
-        rejection before processing costs no tokens but is a call; any other failed attempt whose
-        usage is unknown (or reported as zero) is charged at the request's worst case (estimated
-        input bound plus max output tokens) with at least one call, even when the adapter
-        counted none. Usage(0, 0) is never recorded for a call that was sent. A refusal before
-        anything was sent is not charged."""
+    def _charge_for(self, error: GatewayError, request: GenerateRequest) -> tuple[Usage, int] | None:
+        """What a failed gateway call costs. Trustworthy usage from the gateway is kept (capped at
+        the worst case); a rejection before processing costs no tokens but is a call; any other
+        failed attempt whose usage is unknown (or reported as zero) is charged at the request's
+        worst case with at least one call, even when the adapter counted none. Usage(0, 0) is
+        never recorded for a call that was sent. A refusal before anything was sent (calls == 0
+        and no usage, as the quota latch does) is not charged."""
         usage = error.usage
         if usage is not None and (usage.input_tokens or usage.output_tokens):
-            return usage, error.calls
+            worst = request.worst_case_usage
+            sent = max(1, error.calls)
+            return Usage(input_tokens=min(usage.input_tokens, worst.input_tokens * sent),
+                         output_tokens=min(usage.output_tokens, worst.output_tokens * sent)), error.calls
         if usage is not None and error.rejected_before_processing:
             return usage, max(error.calls, 1)
         if error.calls > 0 or isinstance(error, _ATTEMPTED):
-            return request.worst_case_usage, max(error.calls, 1)
+            worst = request.worst_case_usage
+            sent = max(error.calls, 1)
+            return Usage(input_tokens=worst.input_tokens * sent,
+                         output_tokens=worst.output_tokens * sent), sent
         return None
 
     def _record_gateway_error(
@@ -431,48 +525,41 @@ class TurnPipeline:
 
     def _discover(
         self, principal: Principal, message: str, frame: FrameResult, workspace: TripWorkspace,
-        allowed: frozenset[ToolId], run_id: str, cache_key: str, spend: _Spend,
-    ) -> PipelineOutcome:
+        allowed: frozenset[ToolId], tool_run: ToolRun, cache_key: str, spend: _Spend,
+        remaining: float,
+    ) -> PipelineOutcome | TurnFailure:
         tool = frame.tool
         if tool is None or tool not in allowed or tool != ToolId.SEARCH_PLACES:
             self._reject(telemetry.ValidationReason.TOOL_NOT_ALLOWED, telemetry.Phase.TOOL)
             if tool is not None:
-                self._trace(telemetry.ToolCall, tool=telemetry.ToolName(tool.value),
-                            outcome=telemetry.ToolOutcome.DENIED, latency_ms=0, billable_units=0)
-            raise TurnFailure(502, ErrorCode.VALIDATION, ErrorReason.TOOL_NOT_ALLOWED)
-        if self._discovery is None or self._cache is None:
-            raise TurnFailure(503, ErrorCode.PROVIDER, ErrorReason.DISCOVERY_NOT_CONFIGURED)
-        assert frame.search is not None
+                self._deny(telemetry.ToolName(tool.value))
+            return _rejected()
+        if self._discovery is None or self._cache is None or frame.search is None:
+            return _rejected(503)
         try:
             arguments = search_arguments(frame.search, message)
-            arguments_error = False
         except ArgumentRejected:
-            arguments, arguments_error = {}, True
-        if arguments_error:
             self._reject(telemetry.ValidationReason.SCHEMA, telemetry.Phase.TOOL)
-            raise TurnFailure(502, ErrorCode.VALIDATION, ErrorReason.OUTPUT_MALFORMED)
-        try:
-            run = ToolRun.from_config(self._config, principal_id=principal.uid, run_id=run_id)
-            run_error = False
-        except ValueError:  # a principal id outside the bounded identifier form
-            run, run_error = None, True
-        if run is None or run_error:
-            raise TurnFailure(500, ErrorCode.PROVIDER, None)
-        return self._search(principal, workspace, run, arguments, cache_key, spend)
+            return _rejected()
+        return self._search(principal, workspace, tool_run, arguments, cache_key, spend, remaining)
 
     def _search(
         self, principal: Principal, workspace: TripWorkspace, run: ToolRun,
-        arguments: dict[str, object], cache_key: str, spend: _Spend,
-    ) -> PipelineOutcome:
-        assert self._discovery is not None
-        result = None
+        arguments: dict[str, object], cache_key: str, spend: _Spend, remaining: float,
+    ) -> PipelineOutcome | TurnFailure:
+        if self._discovery is None:
+            return _fault()
         failure: DiscoveryError | None = None
+        result = None
         try:
-            result = self._discovery.call_tool(run, ToolId.SEARCH_PLACES.value, arguments)
+            result = self._discovery.call_tool(
+                run, ToolId.SEARCH_PLACES.value, arguments, timeout_seconds=remaining)
         except DiscoveryError as error:
             failure = error
         if failure is not None:
             return self._tool_failed(principal, workspace, run, failure, spend)
+        if result is None:
+            return _fault()
         spend.paid = True
         self._costs.record_tool(principal.uid, run.run_id, ToolId.SEARCH_PLACES.value,
                                 run.calls_used, result.billable_units)
@@ -481,7 +568,7 @@ class TurnPipeline:
     def _tool_failed(
         self, principal: Principal, workspace: TripWorkspace, run: ToolRun, failure: DiscoveryError,
         spend: _Spend,
-    ) -> PipelineOutcome:
+    ) -> PipelineOutcome | TurnFailure:
         if failure.calls:
             spend.paid = True
             self._costs.record_tool(principal.uid, run.run_id, ToolId.SEARCH_PLACES.value,
@@ -491,17 +578,21 @@ class TurnPipeline:
             return PipelineOutcome(workspace, REPLY_PARTIAL, None, None,
                                    (TurnWarning.TOOL_BUDGET_EXHAUSTED,))
         mapped = failure_from_discovery(failure)
-        if mapped.reason == ErrorReason.TOOL_NOT_ALLOWED:
+        if isinstance(failure, ToolNotAllowed):
             self._reject(telemetry.ValidationReason.TOOL_NOT_ALLOWED, telemetry.Phase.TOOL)
-        elif mapped.reason == ErrorReason.OUTPUT_MALFORMED:
+        elif isinstance(failure, InvalidToolArguments):
             self._reject(telemetry.ValidationReason.SCHEMA, telemetry.Phase.TOOL)
-        raise mapped
+        return mapped
 
     def _validated(
         self, principal: Principal, workspace: TripWorkspace, run: ToolRun, result: object,
         cache_key: str,
-    ) -> PipelineOutcome:
-        assert self._cache is not None
+    ) -> PipelineOutcome | TurnFailure:
+        """Parse, validate, render and cache the tool result. Returns a failure instead of
+        raising it, so the Maps-carrying locals of this frame are gone before anyone raises."""
+        cache = self._cache
+        if cache is None:
+            return _fault()
         framing = FramingKind.RESULTS_INTRO
         failure: TurnFailure | None = None
         block: DiscoveryBlock | None = None
@@ -512,22 +603,23 @@ class TurnPipeline:
             validated = self._validator.validate(answer, run, self._clock(), principal_id=principal.uid)
             rendered = render_grounded_block(validated, framing)
             verify_verbatim(rendered, validated, run)
-            self._cache.put(principal.uid, cache_key, validated)
+            cache.put(principal.uid, cache_key, validated)
             block = to_api_block(rendered, validated.answer.cache_expires_at,
                                  validated.answer.retrieved_at)
             ref = DiscoveryRef(cache_key, framing, validated.content_hash, validated.display_hash,
                                validated.answer.cache_expires_at)
         except GroundedParseError:
             self._reject(telemetry.ValidationReason.SCHEMA, telemetry.Phase.TOOL)
-            failure = TurnFailure(502, ErrorCode.VALIDATION, ErrorReason.TOOL_RESULT_INVALID)
+            failure = _rejected()
         except (GroundedAnswerRejected, VerbatimViolation):
-            failure = TurnFailure(502, ErrorCode.VALIDATION, ErrorReason.TOOL_RESULT_INVALID)
+            failure = _rejected()
         except CacheError:
-            failure = TurnFailure(500, ErrorCode.PROVIDER, None)
+            failure = _fault()
         except ValueError:  # includes pydantic ValidationError from the block or a renderer check
             self._reject(telemetry.ValidationReason.SCHEMA, telemetry.Phase.TOOL)
-            failure = TurnFailure(502, ErrorCode.VALIDATION, ErrorReason.TOOL_RESULT_INVALID)
+            failure = _rejected()
         if failure is not None:
-            raise failure  # raised outside the except blocks: no exception context
-        assert block is not None and ref is not None
+            return failure
+        if block is None or ref is None:
+            return _fault()
         return PipelineOutcome(workspace, FRAMING_TEXT[framing], block, ref)

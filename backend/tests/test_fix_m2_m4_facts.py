@@ -17,7 +17,7 @@ from app.domain import (
     WorkspacePatch,
 )
 from app.frame import SearchArgs
-from app.patching import PatchRejected, apply_patch
+from app.patching import PatchRejected, apply_patch, apply_patch_checked
 from app.telemetry import ValidationReason
 
 USER_FACT = Fact(id="user-1", key="budget", value="under 50", source=FactSource.USER_EXPLICIT,
@@ -67,7 +67,12 @@ def test_a_well_formed_fact_still_applies() -> None:
     assert reason_of(workspace(USER_FACT), patch(fact("party", "two adults"))) is None
 
 
-# --- M4 -------------------------------------------------------------------------------------
+def dropped(base: TripWorkspace, proposal: WorkspacePatch) -> int:
+    """Facts dropped on their own for unacceptable text (the patch itself is kept)."""
+    return apply_patch_checked(base, proposal)[1]
+
+
+# --- M4 (text problems drop the one fact; see test_fix2_m3 for the rest of that contract) -------------------------------------------------------------------------------------
 BAD_TEXT = [
     "zero​width",
     "bidi ‮override",
@@ -84,17 +89,21 @@ BAD_TEXT = [
 
 @pytest.mark.parametrize("text", BAD_TEXT)
 def test_string_fact_values_must_be_plain_text(text) -> None:
-    assert reason_of(workspace(), patch(fact("note", text))) is not None, text[:30]
+    if len(text) > 200:  # a size violation is structural: the whole patch is rejected
+        with pytest.raises(PatchRejected):
+            apply_patch(workspace(), patch(fact("note", text)))
+        return
+    assert dropped(workspace(), patch(fact("note", text))) == 1, text[:30]
 
 
 @pytest.mark.parametrize("scope", ["zero​width", "<tag>", "https://x.example", "a\nb"])
 def test_fact_scope_must_be_plain_text(scope) -> None:
-    assert reason_of(workspace(), patch(fact("note", "ok", scope=scope))) is not None
+    assert dropped(workspace(), patch(fact("note", "ok", scope=scope))) == 1
 
 
 @pytest.mark.parametrize("value", [math.nan, math.inf, -math.inf])
 def test_non_finite_numbers_are_rejected(value) -> None:
-    assert reason_of(workspace(), patch(fact("note", value))) is not None  # type: ignore[arg-type]
+    assert dropped(workspace(), patch(fact("note", value))) == 1  # type: ignore[arg-type]
 
 
 @pytest.mark.parametrize("text", [

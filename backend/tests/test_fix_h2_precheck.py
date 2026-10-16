@@ -57,7 +57,7 @@ def test_discovery_not_configured_means_zero_gateway_requests() -> None:
     env = Env(gateway=gateway, discovery=None, config=config)
     response = env.post()
     assert gateway.requests == [], "FRAME was called although discovery is not configured"
-    assert reason_of(response, 503) == "DISCOVERY_NOT_CONFIGURED"
+    assert reason_of(response, 503) == "OUTPUT_REJECTED"
     assert env.turns() == 0 and env.reserved() == set()
 
 
@@ -81,7 +81,7 @@ def test_the_checks_run_in_the_documented_order() -> None:
                                                switch))
     assert reason_of(both.post(), 503) == "DISCOVERY_UNAVAILABLE"  # tripped beats latched
     missing = Env(gateway=LatchedGateway([], config), discovery=None, config=config)
-    assert reason_of(missing.post(), 503) == "DISCOVERY_NOT_CONFIGURED"  # not configured first
+    assert reason_of(missing.post(), 503) == "OUTPUT_REJECTED"  # not configured first
 
 
 def test_a_healthy_discovery_turn_still_runs_frame_once() -> None:

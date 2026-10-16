@@ -48,7 +48,7 @@ def test_a_shared_short_word_is_not_enough() -> None:
 
 
 def test_the_area_words_count_toward_the_overlap() -> None:
-    assert accepted("pizza Leslieville", "somewhere in Leslieville please", area="Leslieville")
+    assert accepted("cafe Leslieville", "somewhere in Leslieville please", area="Leslieville")
     assert not accepted("pizza", "somewhere in Leslieville please", area="Leslieville")
 
 
