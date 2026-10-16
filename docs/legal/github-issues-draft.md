@@ -62,6 +62,15 @@ Done when: the Phase 2 exit gate passes. Depends on HISTORY-01, LEGAL-03 (questi
 `NotificationPreference`, `PushSubscription`, `NotificationOutbox`, daily planner, Cloud Task per occurrence, handler checks (version, consent, quiet hours, caps, dedupe, opt-out), generic payload, stop action, in-app inbox, installed-PWA flow for iOS.
 Done when: the Phase 3 exit gate passes. Depends on ROUTINE-01 and LEGAL-06.
 
+### ACCESS-02: Shared spend controls and abuse limits (gate before any pilot traffic)
+Found by the second security review of the orchestrator wiring (2026-10-16). The per-user cost ceiling, the paid-failed-turn limiter, the 402 latch and the Grounding Lite kill switch are per user and per process. A script that creates new anonymous accounts gets a fresh daily ceiling, limiter and allowance each time, and Cloud Run scale-to-zero or a second instance starts with an empty ledger. `docs/access-tiers.md` and `docs/trip-assistant-security.md` already require global and whole-pilot budgets, coarse IP buckets, App Check and a global cost kill switch.
+- Firestore-backed cost ledger and kill switches shared across instances (atomic reserve against the ledger, sharded counters).
+- Global rolling spend counter and a daily project cap checked before the first model call, with a kill switch.
+- Identity-creation rate limit and coarse short-retention IP bucket at session bootstrap.
+- App Check signal required before any paid call.
+- A decision on how provider-side failures count toward a user's daily ceiling (see the open question about worst-case charging: an outage with three retries charges 3,600 output tokens against a guest ceiling of 6,000).
+Done when: guest churn and multi-instance tests show a bounded total spend, and the failed-turn and ceiling behavior is decided and documented.
+
 ### Updates to existing issues
 - **#14:** add `schema_version`, `Evidence` and `PlanVersion` changes from `docs/data-and-history-design.md`, typed `TurnResponse` and error model, OpenRouter gateway that fails closed without pinned provider and zero retention, and the Maps content taint type.
 - **#20:** discovery through Grounding Lite shown verbatim; server-rendered Places Details and Routes; in-app reminder; local outing log.
