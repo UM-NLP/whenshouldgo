@@ -60,6 +60,8 @@ Ask in writing, keep the case number and have counsel review the answers.
 | iOS web-push requirements and FCM data terms | Re-fetch Apple and Firebase pages from a machine that can load them |
 | Whether the Google Cloud billing account is in the EEA (different terms apply) | Check the billing address |
 | Grounding Lite pricing and quotas (research found conflicting sources, one paid SKU listed) | Confirm in the Google Cloud console |
+| OpenRouter returns HTTP 429 after an upstream host already processed a request (for example during provider fallback); our gateway treats a real 429 as a free rejection | Ask OpenRouter in writing how 429 is billed and whether it can follow upstream processing; counsel to note the trust assumption |
+| Attribution titles that contain ZWNJ (Persian, several Indic scripts) are rejected by the short-field Unicode rule, while ZWNJ is allowed in the grounded summary | Owner decision: a script-aware rule allowing ZWNJ between letters, or keep rejecting titles |
 | Place-ID refresh guidance | Check Google's current guidance before building the refresh job |
 | Grounding Lite live behavior: JSON vs server-sent events, whether an initialize or session step is needed, input and output casing, the real link hosts and error format | One live `tools/list` and `tools/call` capture with a Maps demo key, saved outside Git (all are marked `TODO(verify-live)` in `backend/app/discovery/`) |
 | Privacy policy and terms of use must include the Google Maps terms and Google privacy notice links (summary section 8) | Counsel to draft wording |
