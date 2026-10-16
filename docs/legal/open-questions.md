@@ -36,6 +36,14 @@ Ask in writing, keep the case number and have counsel review the answers.
 > 10. Do the summary text and the place data from `search_places` follow the same display, caching and evaluation rules? May a `save_to_maps_url` be cached? What wording and display rules apply to the walking-route warning?
 > 11. Do the attribution page's voice-first rules (companion UI, disclosure at first use and at least every six months) apply to a mobile web client? May an unmodified summary be shown after the user's session ends, and what counts as "within one user interaction" for sources?
 
+> 12. The `search_places` summary uses Markdown emphasis (for example `**Name** [0] (4.7★ (544))` and `- ` bullets). May a client render that Markdown (bold, bullets) as formatting without breaking the "do not modify" rule, or must the text be shown literally? The client defaults to literal text until Google answers.
+
+> 13. Route and weather attribution URLs and titles echo the user's own address or location text (for example `/maps/dir/<origin>/<destination>` and `/search?q=Weather for <location>`). They must be shown as returned. May they be held in the display cache for redisplay, and do the 30-day and no-evaluation rules treat them like the rest of the grounded output? Until answered they are shown to the user and never logged, and typed weather, route and resolve results are not cached.
+
+## Live capture 2026-10-15
+
+A live capture against `https://mapstools.googleapis.com/mcp` with the owner's key (after the key's API restriction was extended to `mapstools.googleapis.com`) confirmed: stateless operation with no initialize step, plain JSON responses, `X-Goog-Api-Key` auth, snake_case input accepted (the declared schema is camelCase), camelCase output with both `structuredContent` and a text copy, 0-based `[n]` citations, a default of 5 places, Markdown emphasis in the summary, and the real link shapes (`/maps/place//data=...`, `/maps/dir//''/data=...`, percent-encoded route and weather attribution URLs, `/maps/@?api=1&map_action=shortlist&place_ids=...`). The raw responses are kept outside Git because they are Google Maps content and may not be used as test fixtures. A key restriction problem returned HTTP 403 with a JSON-RPC-shaped body; an empty query returned HTTP 200 with `isError: true`.
+
 ## Status of the answers received 2026-10-15
 
 The owner supplied answers to the eleven questions ([google-maps-grounding-lite-qa-2026-10-15.md](google-maps-grounding-lite-qa-2026-10-15.md)). They are a documentation-based analysis, not Google's written determination, so every row still needs Google's confirmation before it counts as settled.
