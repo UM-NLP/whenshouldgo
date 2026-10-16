@@ -68,8 +68,8 @@ Found by the second security review of the orchestrator wiring (2026-10-16). The
 - Global rolling spend counter and a daily project cap checked before the first model call, with a kill switch.
 - Identity-creation rate limit and coarse short-retention IP bucket at session bootstrap.
 - App Check signal required before any paid call.
-- A decision on how provider-side failures count toward a user's daily ceiling (see the open question about worst-case charging: an outage with three retries charges 3,600 output tokens against a guest ceiling of 6,000).
-Done when: guest churn and multi-instance tests show a bounded total spend, and the failed-turn and ceiling behavior is decided and documented.
+- Decided 2026-10-16 (option A): provider-side failures are recorded in the cost ledger at worst-case charge but do not count toward a user's daily ceiling. The ledger exposes a provider-attributed total (`provider_total`, `provider_usage_for`), which this item must consume in a whole-pilot budget and in the shared Firestore ledger, because nothing else caps outage spend.
+Done when: guest churn and multi-instance tests show a bounded total spend, including provider-attributed spend, against a whole-pilot budget.
 
 ### Updates to existing issues
 - **#14:** add `schema_version`, `Evidence` and `PlanVersion` changes from `docs/data-and-history-design.md`, typed `TurnResponse` and error model, OpenRouter gateway that fails closed without pinned provider and zero retention, and the Maps content taint type.
