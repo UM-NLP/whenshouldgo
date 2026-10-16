@@ -9,6 +9,9 @@ from maps_simulator import (
     INJECTION,
     NOW,
     SYNTH_TEXT,
+    place_link,
+    synth_id,
+    synth_title,
     SyntheticMapsClient,
     new_run,
     synthetic_payload,
@@ -67,14 +70,13 @@ def test_a_parsed_answer_keeps_the_summary_verbatim_and_hashes_what_the_user_see
 def test_places_keep_only_id_attribution_and_the_place_link_everything_else_is_discarded() -> None:
     answer = make_answer()
     place = answer.places[0]
-    assert (place.place_id, place.attribution_title) == ("SYNTH_PLACE_0001", "Invented spot 1")
-    assert place.attribution_url == "https://maps.app.goo.gl/SYNTH0001"
-    assert place.place_url == "https://www.google.com/maps/place/SYNTH_PLACE_0001"
+    assert (place.place_id, place.attribution_title) == (synth_id(1), synth_title(1))
+    assert place.attribution_url == place.place_url == place_link(1)
     assert set(GroundedPlace.model_fields) == {
         "place_id", "attribution_title", "attribution_url", "place_url", "tool_call_id", "cited"}
     dumped = answer.model_dump_json() + repr(answer)
     for discarded in ("43.65", "-79.38", "directionsUrl", "reviewsUrl", "photosUrl", "writeAReview",
-                      "/review", "/photos", "/dir/", "location", "latitude"):
+                      "!10e5", "!9m1", "!12e1", "!4e2", "location", "latitude"):
         assert discarded not in dumped, discarded
 
 
@@ -131,11 +133,11 @@ def test_timestamps_must_be_timezone_aware() -> None:
 
 # --- citations -------------------------------------------------------------------------------------
 def test_citation_indexes_must_be_in_range_and_are_flagged_per_place() -> None:
-    answer = make_answer(synthetic_payload(text="Only the second one [1] is quiet."))
+    answer = make_answer(synthetic_payload(places=2, text="Only the second one [1] is quiet."))
     assert [p.cited for p in answer.places] == [False, True]
-    both = make_answer(synthetic_payload(text="Both [0, 1] are fine."))
+    both = make_answer(synthetic_payload(places=2, text="Both [0, 1] are fine."))
     assert [p.cited for p in both.places] == [True, True]
-    none = make_answer(synthetic_payload(text="No citations here at all."))
+    none = make_answer(synthetic_payload(places=2, text="No citations here at all."))
     assert [p.cited for p in none.places] == [False, False]  # zero citations is allowed
 
 
@@ -189,8 +191,8 @@ def test_both_documented_casings_of_a_field_are_accepted_but_not_mixed() -> None
     snake = synthetic_place(1)
     snake["google_maps_links"] = {"place_url": snake["googleMapsLinks"]["placeUrl"]}
     del snake["googleMapsLinks"]
-    assert make_answer({"summary": "t", "places": [snake]}).places[0].place_url.endswith("SYNTH_PLACE_0001")
-    mixed = synthetic_place(1) | {"google_maps_links": {"place_url": "https://www.google.com/maps/place/X"}}
+    assert make_answer({"summary": "t", "places": [snake]}).places[0].place_url == place_link(1)
+    mixed = synthetic_place(1) | {"google_maps_links": {"place_url": place_link(1)}}
     with pytest.raises(GroundedParseError):
         make_answer({"summary": "t", "places": [mixed]})
 
@@ -204,7 +206,7 @@ def test_only_search_places_may_become_a_grounded_answer() -> None:
             parse_grounded_answer(result_for(synthetic_payload(), tool=tool, args=args), TTLS)
     with pytest.raises(GroundedParseError):
         parse_grounded_answer(result_for(synthetic_weather(), tool="lookup_weather", args={
-            "location": {"place_id": "SYNTH_PLACE_0001"}}), TTLS)
+            "location": {"place_id": "SYNTH_PLACE_000000000000001"}}), TTLS)
 
 
 def test_a_result_the_client_did_not_issue_is_refused() -> None:

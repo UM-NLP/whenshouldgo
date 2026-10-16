@@ -46,7 +46,7 @@ from ._mint import IssuedToken
 from .errors import DiscoveryError
 from .ids import ToolId
 from .text import has_lone_surrogate, short_field_problem, summary_problem
-from .uris import check_attribution_url, check_maps_link
+from .uris import LinkField, check_link, data_token
 
 GROUNDED_TEXT_MAX_CHARS = 8_000
 MAX_PLACES = 20
@@ -84,6 +84,8 @@ def content_hash(text: str) -> str:
 
 
 PlaceFields = tuple[str, str, str, str]  # (place_id, attribution_title, attribution_url, place_url)
+# The other link fields of one place, kept only long enough to validate and cross-check them.
+OtherLinks = tuple[tuple[LinkField, str], ...]
 
 
 def display_hash(text: str, places: Iterable[PlaceFields]) -> str:
@@ -119,8 +121,10 @@ class GroundedPlace(GroundFrozen):
     def _safe(self) -> GroundedPlace:
         if short_field_problem(self.attribution_title):
             raise ValueError("hidden or control characters in the attribution title")
-        check_attribution_url(self.attribution_url)
-        check_maps_link(self.place_url)
+        check_link(LinkField.PLACE_ATTRIBUTION_URL, self.attribution_url)
+        check_link(LinkField.PLACE_URL, self.place_url)
+        if data_token(self.attribution_url) != data_token(self.place_url):
+            raise ValueError("the attribution link and the place link are for different places")
         return self
 
 
@@ -178,8 +182,9 @@ class GroundedParseError(DiscoveryError):
 
 
 # --- the documented search_places payload (and nothing else) --------------------------------------
-# TODO(verify-live): casing. The REST schema is camelCase and the tool prose snake_case; both
-# spellings of each documented key are accepted, but a payload may not mix them.
+# Verified live 2026-10-15: output keys are camelCase (googleMapsLinks, placeUrl, ...), the payload
+# has exactly {places, summary}, and each place has {place, id, location, googleMapsLinks,
+# attribution}. The snake_case spellings of the same keys are still accepted (never mixed).
 _PAYLOAD_KEYS = frozenset({"summary", "places"})
 _PLACE_ALIASES = {
     "place": "place", "id": "id", "attribution": "attribution", "location": "location",
@@ -191,6 +196,11 @@ _LINK_ALIASES = {
     "writeAReviewUrl": "review", "write_a_review_url": "review",
     "reviewsUrl": "reviews", "reviews_url": "reviews",
     "photosUrl": "photos", "photos_url": "photos",
+}
+_LINK_FIELDS = {
+    "place_url": LinkField.PLACE_URL, "directions": LinkField.DIRECTIONS_URL,
+    "review": LinkField.WRITE_REVIEW_URL, "reviews": LinkField.REVIEWS_URL,
+    "photos": LinkField.PHOTOS_URL,
 }
 
 
@@ -212,16 +222,18 @@ def _is_number(value: object) -> bool:
     return isinstance(value, (int, float)) and not isinstance(value, bool) and value == value and abs(value) != float("inf")
 
 
-def extract_search_places(payload: object) -> tuple[str, tuple[PlaceFields, ...]] | None:
-    """Pull (summary, places) out of a payload if it has exactly the documented shape,
-    else None. Coordinates and every link except ``placeUrl`` are checked and dropped.
-    No content rules are applied here (hidden characters, urls): the ledger uses this too."""
+def extract_search_places(payload: object) -> tuple[str, tuple[PlaceFields, ...], tuple[OtherLinks, ...]] | None:
+    """Pull (summary, places, other links) out of a payload if it has exactly the documented
+    shape, else None. Coordinates are parsed and dropped; links other than ``placeUrl`` are
+    returned only so the parser can validate them. No content rules are applied here (hidden
+    characters, url shapes): the ledger uses this too."""
     if not isinstance(payload, dict) or set(payload) != _PAYLOAD_KEYS:
         return None
     summary, raw_places = payload["summary"], payload["places"]
     if not isinstance(summary, str) or not isinstance(raw_places, list):
         return None
     places: list[PlaceFields] = []
+    others: list[OtherLinks] = []
     for raw in raw_places:
         place = _canonical(raw, _PLACE_ALIASES)
         if place is None or not {"id", "attribution", "links"} <= set(place):
@@ -246,7 +258,8 @@ def extract_search_places(payload: object) -> tuple[str, tuple[PlaceFields, ...]
         if "place" in place and place["place"] != f"places/{pid}":
             return None
         places.append((pid, title, url, links["place_url"]))
-    return summary, tuple(places)
+        others.append(tuple((_LINK_FIELDS[name], value) for name, value in links.items() if name != "place_url"))
+    return summary, tuple(places), tuple(others)
 
 
 def _build_answer(result: Any, ttls: RuntimeTTLs) -> GroundedAnswer:
@@ -258,9 +271,14 @@ def _build_answer(result: Any, ttls: RuntimeTTLs) -> GroundedAnswer:
     extracted = extract_search_places(result.payload)
     if extracted is None:
         raise ValueError("payload shape")
-    summary, fields = extracted
+    summary, fields, others = extracted
     if has_lone_surrogate(summary) or any(has_lone_surrogate(f) for place in fields for f in place):
         raise ValueError("lone surrogate")
+    for (_, _, _, place_url), extras in zip(fields, others, strict=True):
+        for link_field, value in extras:  # every other link must match ITS field and the same place
+            check_link(link_field, value)
+            if data_token(value) != data_token(place_url):
+                raise ValueError("a link belongs to a different place")
     flags = cited_flags(summary, len(fields))
     places = tuple(
         GroundedPlace(

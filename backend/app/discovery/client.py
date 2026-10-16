@@ -11,11 +11,18 @@ instructions, never logged, and never reach telemetry (events hold enums and cou
 Raised errors hold no payload, arguments or key: every internal step RETURNS a result or an
 error object, and only ``call_tool`` raises, after dropping its reference to the arguments.
 
-Sources: the MCP reference, tool references and resolution-API page under
-developers.google.com/maps/ai/grounding-lite (retrieved 2026-10-15) document the endpoint,
-the tool names, the ``X-Goog-Api-Key`` header and ``Accept: application/json,
-text/event-stream``. Still unverified, marked TODO(verify-live): snake_case versus camelCase
-argument names, the response encoding in practice, and any initialize/session handshake.
+Verified live 2026-10-15 (structure only; no captured value is stored anywhere in the repo):
+the endpoint, the five tool names, the ``X-Goog-Api-Key`` header, stateless operation (no
+``initialize`` and no session id), plain ``application/json; charset=UTF-8`` replies with HTTP
+200 for successes AND tool errors, snake_case arguments accepted (``tools/list`` declares
+camelCase), camelCase output, ``result.structuredContent`` next to ``content[0].text`` (the same
+data as a JSON string), ``result.isError`` for tool errors, a JSON-RPC ``error`` object for an
+unknown tool, and HTTP 403 with a JSON-RPC-shaped body for an API-key restriction. The server
+replied with ``Content-Encoding: gzip`` to a client that did not ask for identity.
+
+Still unverified, marked TODO(verify-live): SSE in practice (supported, never seen), how a server
+that requires a session would answer (404/400 fail closed), other key-misconfiguration cases
+(403 versus ``isError``), ``page_size`` / ``include_extended_details`` semantics and billing.
 """
 from __future__ import annotations
 
@@ -23,6 +30,7 @@ import json
 import re
 import threading
 import time
+import zlib
 from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -103,9 +111,11 @@ _WAYPOINT = _object(
     x_exactly_one_of=["address", "lat_lng", "place_id"],
 )
 
-# TODO(verify-live): argument names are snake_case as in the tool prose and example calls; the
-# REST schemas spell them camelCase (textQuery, locationBias, latLng ...). The structure,
-# required fields and limits below follow the documented reference.
+# Verified live 2026-10-15: snake_case arguments are ACCEPTED (text_query, location_bias.circle.
+# center/radius_meters, language_code, region_code, lat_lng, place_id, units_system, travel_mode,
+# queries[{text}], urls). The declared tools/list schema is camelCase (textQuery, locationBias,
+# radiusMeters, latLng, placeId, unitsSystem, travelMode, pageSize, includeExtendedDetails); we
+# keep sending snake_case because it works. Structure, required fields and limits follow the docs.
 TOOL_SPECS: dict[ToolId, ToolSpec] = {
     ToolId.SEARCH_PLACES: ToolSpec(
         name="search_places", description="Search places for a text query.",
@@ -114,7 +124,12 @@ TOOL_SPECS: dict[ToolId, ToolSpec] = {
              "location_bias": _object({"circle": _object(
                  {"center": _LATLNG, "radius_meters": {"type": "number", "minimum": 1, "maximum": 50_000}},
                  ["center"])}, ["circle"]),
-             "language_code": _CODE, "region_code": _CODE},
+             "language_code": _CODE, "region_code": _CODE,
+             # TODO(verify-live): declared by tools/list as pageSize (int32) and
+             # includeExtendedDetails (bool) but never sent in the capture; their semantics and
+             # billing are unknown. Optional and unset by default (the server then returned 5 places).
+             "page_size": {"type": "integer", "minimum": 1, "maximum": 20},
+             "include_extended_details": {"type": "boolean"}},
             ["text_query"]),
     ),
     ToolId.LOOKUP_WEATHER: ToolSpec(
@@ -267,7 +282,7 @@ def payload_ledger_info(tool: ToolId, payload: object) -> LedgerInfo:
     extracted = extract_search_places(payload)
     if extracted is None:
         return LedgerInfo(payload_hash=whole)
-    text, places = extracted
+    text, places, _ = extracted
     return LedgerInfo(
         place_ids=frozenset(p[0] for p in places),
         text_hash=content_hash(text),
@@ -497,20 +512,40 @@ class HttpxMcpTransport:
                 status = response.status_code
                 media = response.headers.get("content-type", "application/json").split(";")[0].strip().lower()
                 encoding = response.headers.get("content-encoding", "identity").strip().lower()
-                if encoding not in ("", "identity"):
-                    outcome = "failure"  # never decode: a small body must not expand past the cap
+                if encoding not in ("", "identity", "gzip"):
+                    outcome = "failure"  # only identity and a single gzip layer are understood
                 else:
-                    # A pre-read response only happens with in-memory test transports.
-                    source = [response.content] if response.is_stream_consumed else response.iter_raw()
+                    # gzip is decoded incrementally with a hard cap on DECODED bytes, so a small
+                    # body cannot expand past it. A pre-read response only occurs with in-memory
+                    # test transports.
+                    pre_read = response.is_stream_consumed  # httpx already decoded such a body itself
+                    decoder = zlib.decompressobj(16 + zlib.MAX_WBITS) if encoding == "gzip" and not pre_read else None
+                    source = [response.content] if pre_read else response.iter_raw()
+                    raw_total = 0
                     for chunk in source:
-                        total += len(chunk)
+                        raw_total += len(chunk)
                         if self._clock() > deadline:
                             outcome = "timeout"
                             break
-                        if total > MAX_RESPONSE_BYTES:
+                        if raw_total > MAX_RESPONSE_BYTES:
                             outcome = "oversize"
                             break
-                        chunks.append(chunk)
+                        if decoder is None:
+                            total += len(chunk)
+                            chunks.append(chunk)
+                            continue
+                        try:
+                            out = decoder.decompress(chunk, MAX_RESPONSE_BYTES - total + 1)
+                        except zlib.error:
+                            outcome = "failure"
+                            break
+                        total += len(out)
+                        if total > MAX_RESPONSE_BYTES or decoder.unconsumed_tail or decoder.unused_data:
+                            outcome = "oversize"
+                            break
+                        chunks.append(out)
+                    if outcome == "ok" and decoder is not None and not decoder.eof:
+                        outcome = "failure"  # a truncated gzip stream
         except httpx.TimeoutException:
             outcome = "timeout"
         except Exception:  # noqa: BLE001 - httpx.InvalidURL, TLS, encoding ...; nothing is kept
@@ -808,10 +843,18 @@ class GroundingLiteMcpClient:
         if result.get("isError") is True:
             return DiscoveryToolError()  # the text is untrusted and dropped
         structured = result.get("structuredContent")
-        if structured is not None:
-            return structured if isinstance(structured, dict) else MalformedToolResult()
         content = result.get("content")
         first = content[0] if isinstance(content, list) and content else None
+        if structured is not None:
+            if not isinstance(structured, dict):
+                return MalformedToolResult()
+            # Prefer structuredContent. The server also sends the same data as content[0].text;
+            # if that text is JSON and DIFFERS, the reply contradicts itself: reject it.
+            if isinstance(first, dict) and first.get("type") == "text" and isinstance(first.get("text"), str):
+                parsed, ok = guarded(strict_loads, first["text"])
+                if ok and isinstance(parsed, dict) and parsed != structured:
+                    return MalformedToolResult()
+            return structured
         if not isinstance(first, dict) or first.get("type") != "text" or not isinstance(first.get("text"), str):
             return MalformedToolResult()
         parsed, ok = guarded(strict_loads, first["text"])

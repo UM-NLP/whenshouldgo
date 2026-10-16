@@ -12,6 +12,7 @@ from maps_simulator import (
     SYNTH_TEXT,
     SyntheticMapsClient,
     new_run,
+    place_link,
     synthetic_payload,
 )
 from test_discovery_contracts import TTLS
@@ -81,14 +82,19 @@ def test_the_validator_has_no_way_to_edit_an_answer() -> None:
 # --- forgeries a ledger that only held place ids would have accepted (H2) ---------------------------
 def test_a_forged_source_link_with_a_real_place_id_and_real_text_is_rejected() -> None:
     run, answer = run_and_answer()
-    bad = consistent(answer, [forged_place(answer.places[0], place_url="https://www.google.com/maps/place/EVIL"),
+    # A well-formed link to ANOTHER place (consistent token), swapped in for the real one.
+    other = place_link(9)
+    bad = consistent(answer, [forged_place(answer.places[0], place_url=other, attribution_url=other),
                               answer.places[1]])
     assert reason_of(bad, run) == RejectionReason.PROVENANCE
+    # A link that disagrees with the place's own attribution link fails the integrity check.
+    lopsided = consistent(answer, [forged_place(answer.places[0], place_url=other), answer.places[1]])
+    assert reason_of(lopsided, run) == RejectionReason.URI
 
 
 def test_a_forged_attribution_url_or_title_is_rejected() -> None:
     run, answer = run_and_answer()
-    for change in ({"attribution_url": "https://maps.app.goo.gl/EVIL1"},
+    for change in ({"attribution_url": place_link(9), "place_url": place_link(9)},
                    {"attribution_title": "Google Maps Official"}):
         bad = consistent(answer, [forged_place(answer.places[0], **change), answer.places[1]])
         assert reason_of(bad, run) == RejectionReason.PROVENANCE
@@ -96,7 +102,7 @@ def test_a_forged_attribution_url_or_title_is_rejected() -> None:
 
 def test_forged_text_with_real_places_and_consistent_hashes_is_rejected() -> None:
     run, answer = run_and_answer()
-    text = "Model-written text [0] [1]."
+    text = "Model-written text [0] [1] [2] [3] [4]."
     bad = forged(answer, text=text, content_hash=hashlib.sha256(b"x").hexdigest())
     assert reason_of(bad, run) == RejectionReason.HASH
     from app.discovery import content_hash
@@ -126,7 +132,7 @@ def test_provenance_every_place_must_come_from_this_call_of_this_run() -> None:
     other_run_call = SyntheticMapsClient().call_tool(run, "search_places", {"text_query": "other"})
     other = forged_place(answer.places[0], tool_call_id=other_run_call.tool_call_id)
     assert reason_of(consistent(answer, [other, answer.places[1]]), run) == RejectionReason.PROVENANCE
-    smuggled = forged_place(answer.places[0], place_id="SYNTH_PLACE_0007", cited=False)
+    smuggled = forged_place(answer.places[0], place_id="SYNTH_PLACE_000000000000007", cited=False)
     assert reason_of(consistent(answer, [*answer.places, smuggled]), run) == RejectionReason.PROVENANCE
 
 

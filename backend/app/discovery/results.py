@@ -1,20 +1,26 @@
-"""Small typed results for the non-search tools, on the documented output shapes.
+"""Small typed results for the non-search tools, on the output shapes seen in a live capture
+(verified live 2026-10-15: camelCase keys, ``result.structuredContent``).
 
-Each parser takes only its own tool's client-issued ``ToolResult``, tolerates only documented
-keys (anything else rejects the payload), keeps the attribution ``{title, url}`` exactly, and
-drops everything it does not need. Per-item ``failed_requests`` messages are untrusted text and
-are dropped; only an index and a code survive. Walking routes carry a required warning flag
-(Google: WALK is beta and the UI must warn). ``save_to_maps_url`` is an opaque string checked
-against the Maps link allowlist, to be displayed as-is and never constructed.
+Each parser takes only its own tool's client-issued ``ToolResult`` plus the run and principal it
+belongs to, verifies the payload against the run ledger, tolerates only documented keys (anything
+else rejects the payload), keeps the attribution ``{title, url}`` exactly, and drops everything it
+does not need (coordinates, ``returnedLocation``, the icon url, pressure, cloud cover, gusts,
+heat index, rainfall quantities). Per-item ``failedRequests`` messages are untrusted text and are
+dropped; only an index and a code survive. Walking routes carry a required warning flag and the
+warning text. ``saveToMapsUrl`` is checked against its pinned shape and displayed as-is.
 
-TODO(verify-live): output casing (camelCase in the REST schema, snake_case in prose; both
-spellings of the documented keys are accepted but not mixed).
+The weather icon (``iconBaseUri``) is validated against ``maps.gstatic.com/weather/v1/<name>`` and
+then DROPPED: no screen needs it yet, and whether it needs its own attribution or caching rule is
+open (TODO(verify-live)). Weather text, values and its attribution url are MAPS_GROUNDED content.
+
+TODO(verify-live): both casings of a key are accepted for the resolve tools (``failedRequests`` is
+what the server sends); a payload may not mix them.
 """
 from __future__ import annotations
 
 import re
 from enum import IntEnum
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, ClassVar, Literal
 
 from pydantic import Field, StringConstraints, model_validator
 
@@ -24,7 +30,12 @@ from .contracts import GroundFrozen, payload_digest
 from .errors import MalformedToolResult
 from .ids import ToolId
 from .text import has_lone_surrogate, short_field_problem
-from .uris import check_attribution_url, check_maps_link
+from .uris import LinkField, check_link
+
+# Google's text for every walking route (beta). A WALK result must be shown with it.
+WALKING_WARNING_TEXT = (
+    "Walking routes are in beta and might sometimes be missing clear sidewalks or pedestrian paths."
+)
 
 _PLACE_RESOURCE = re.compile(r"^places/([A-Za-z0-9_-]{1,300})$")
 _DURATION = re.compile(r"^(\d{1,9}(?:\.\d{1,9})?)s$")
@@ -35,6 +46,8 @@ _WEATHER_KEYS = frozenset({
     "maxHeatIndex", "airPressure", "sunEvents", "moonEvents", "relativeHumidity", "uvIndex",
     "thunderstormProbability", "cloudCover", "returnedLocation", "attribution",
 })
+_TEMP_UNITS = {"CELSIUS": (-100.0, 100.0), "FAHRENHEIT": (-150.0, 212.0)}
+_WIND_UNITS = ("KILOMETERS_PER_HOUR", "MILES_PER_HOUR")
 
 
 class ItemFailureCode(IntEnum):
@@ -47,26 +60,58 @@ class ItemFailureCode(IntEnum):
 
 
 class Attributed(GroundFrozen):
+    """Shared attribution. Subclasses pin the url shape of THEIR tool (a route's attribution is
+    not a weather attribution)."""
+
     attribution_title: Annotated[str, StringConstraints(min_length=1, max_length=200)] = Field(repr=False)
     attribution_url: str = Field(repr=False)
     tool_call_id: str
+
+    url_field: ClassVar[LinkField]
 
     @model_validator(mode="after")
     def _safe(self) -> Attributed:
         if short_field_problem(self.attribution_title):
             raise ValueError("hidden or control characters in the attribution title")
-        check_attribution_url(self.attribution_url)
+        check_link(self.url_field, self.attribution_url)
         return self
 
 
 class WeatherResult(Attributed):
+    url_field: ClassVar[LinkField] = LinkField.WEATHER_ATTRIBUTION_URL
+    temperature_unit: Literal["CELSIUS", "FAHRENHEIT"]
+    temperature_degrees: float = Field(repr=False)
+    feels_like_unit: Literal["CELSIUS", "FAHRENHEIT"] | None = None
+    feels_like_degrees: float | None = Field(default=None, repr=False)
     condition_type: str | None = Field(default=None, repr=False)
-    temperature_unit: Literal["CELSIUS", "FAHRENHEIT"] | None = None
-    temperature_degrees: float | None = Field(default=None, repr=False)
+    condition_text: Annotated[str, StringConstraints(max_length=100)] | None = Field(default=None, repr=False)
     precipitation_percent: int | None = Field(default=None, ge=0, le=100, repr=False)
+    precipitation_type: str | None = Field(default=None, repr=False)
+    wind_speed_unit: Literal["KILOMETERS_PER_HOUR", "MILES_PER_HOUR"] | None = None
+    wind_speed_value: float | None = Field(default=None, ge=0, le=500, repr=False)
+    wind_cardinal: str | None = Field(default=None, repr=False)
+    wind_degrees: int | None = Field(default=None, ge=0, le=360, repr=False)
+    relative_humidity: int | None = Field(default=None, ge=0, le=100, repr=False)
+    uv_index: int | None = Field(default=None, ge=0, le=30, repr=False)
+
+    @model_validator(mode="after")
+    def _ranges(self) -> WeatherResult:
+        low, high = _TEMP_UNITS[self.temperature_unit]
+        if not low <= self.temperature_degrees <= high:
+            raise ValueError("temperature out of range")
+        if self.feels_like_degrees is not None:
+            if self.feels_like_unit is None:
+                raise ValueError("feels-like needs a unit")
+            low, high = _TEMP_UNITS[self.feels_like_unit]
+            if not low <= self.feels_like_degrees <= high:
+                raise ValueError("feels-like out of range")
+        if self.condition_text is not None and short_field_problem(self.condition_text):
+            raise ValueError("hidden or control characters in the condition text")
+        return self
 
 
 class RouteResult(Attributed):
+    url_field: ClassVar[LinkField] = LinkField.ROUTE_ATTRIBUTION_URL
     distance_meters: int = Field(ge=0, repr=False)
     duration_seconds: float = Field(ge=0, repr=False)
     travel_mode: Literal["DRIVE", "WALK"]
@@ -77,6 +122,11 @@ class RouteResult(Attributed):
         if self.walking_warning != (self.travel_mode == "WALK"):
             raise ValueError("walking routes require the walking warning, others must not set it")
         return self
+
+    @property
+    def walking_warning_text(self) -> str | None:
+        """The exact text to render with this route (None for driving)."""
+        return WALKING_WARNING_TEXT if self.walking_warning else None
 
 
 class ResolvedPlace(GroundFrozen):
@@ -99,7 +149,13 @@ class ResolveResult(GroundFrozen):
     tool_call_id: str
     items: tuple[ResolvedPlace, ...] = Field(max_length=20)
     failures: tuple[ItemFailure, ...] = Field(max_length=20)
-    save_to_maps_url: str | None = Field(default=None, repr=False)  # display as-is
+    save_to_maps_url: str | None = Field(default=None, repr=False)  # display as-is, never constructed
+
+    @model_validator(mode="after")
+    def _pinned(self) -> ResolveResult:
+        if self.save_to_maps_url is not None:
+            check_link(LinkField.SAVE_TO_MAPS_URL, self.save_to_maps_url)
+        return self
 
     @property
     def all_failed(self) -> bool:
@@ -154,40 +210,79 @@ def _number(value: Any) -> float:
     return float(value)
 
 
+def _int(value: Any) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError("not an integer")
+    return value
+
+
+def _reading(raw: Any) -> tuple[str, float]:
+    """A ``{unit, degrees}`` temperature."""
+    if not isinstance(raw, dict) or set(raw) != {"unit", "degrees"} or raw["unit"] not in _TEMP_UNITS:
+        raise ValueError("temperature shape")
+    return raw["unit"], _number(raw["degrees"])
+
+
+def _enum_text(raw: Any, limit: int = 40) -> str:
+    if not isinstance(raw, str) or not _ENUM.fullmatch(raw) or len(raw) > limit:
+        raise ValueError("enum text")
+    return raw
+
+
 def _weather(result: Any, run: Any, principal_id: str) -> WeatherResult:
     payload = _guard(result, run, principal_id, ToolId.LOOKUP_WEATHER)
-    if not set(payload) <= _WEATHER_KEYS or "attribution" not in payload:
+    if not set(payload) <= _WEATHER_KEYS or not {"attribution", "temperature"} <= set(payload):
         raise ValueError("weather keys")
     title, url = _attribution(payload["attribution"])
+    unit, degrees = _reading(payload["temperature"])
+    fields: dict[str, Any] = {}
+    if "feelsLikeTemperature" in payload:
+        fields["feels_like_unit"], fields["feels_like_degrees"] = _reading(payload["feelsLikeTemperature"])
     condition = payload.get("weatherCondition")
-    kind = None
     if condition is not None:
         if not isinstance(condition, dict) or not set(condition) <= {"iconBaseUri", "description", "type"}:
             raise ValueError("condition shape")
-        kind = condition.get("type")
-        if kind is not None and not (isinstance(kind, str) and _ENUM.fullmatch(kind)):
-            raise ValueError("condition type")
-    unit = degrees = None
-    temperature = payload.get("temperature")
-    if temperature is not None:
-        if not isinstance(temperature, dict) or set(temperature) != {"unit", "degrees"}:
-            raise ValueError("temperature shape")
-        unit, degrees = temperature["unit"], _number(temperature["degrees"])
-    percent = None
+        if "type" in condition:
+            fields["condition_type"] = _enum_text(condition["type"])
+        description = condition.get("description")
+        if description is not None:
+            if not isinstance(description, dict) or not set(description) <= {"languageCode", "text"} or not isinstance(
+                    description.get("text"), str):
+                raise ValueError("description shape")
+            fields["condition_text"] = description["text"]
+        if "iconBaseUri" in condition:  # shape-checked, then dropped (see module docstring)
+            if not isinstance(condition["iconBaseUri"], str):
+                raise ValueError("icon type")
+            check_link(LinkField.WEATHER_ICON_URI, condition["iconBaseUri"])
     precipitation = payload.get("precipitation")
     if precipitation is not None:
         probability = precipitation.get("probability") if isinstance(precipitation, dict) else None
         if not isinstance(probability, dict) or not set(probability) <= {"type", "percent"}:
             raise ValueError("precipitation shape")
-        raw = probability.get("percent")
-        if raw is not None:
-            if isinstance(raw, bool) or not isinstance(raw, int):
-                raise ValueError("percent")
-            percent = raw
+        if "percent" in probability:
+            fields["precipitation_percent"] = _int(probability["percent"])
+        if "type" in probability:
+            fields["precipitation_type"] = _enum_text(probability["type"])
+    wind = payload.get("wind")
+    if wind is not None:
+        if not isinstance(wind, dict) or not set(wind) <= {"direction", "gust", "speed"}:
+            raise ValueError("wind shape")
+        speed = wind.get("speed")
+        if speed is not None:
+            if not isinstance(speed, dict) or set(speed) != {"unit", "value"} or speed["unit"] not in _WIND_UNITS:
+                raise ValueError("wind speed shape")
+            fields["wind_speed_unit"], fields["wind_speed_value"] = speed["unit"], _number(speed["value"])
+        direction = wind.get("direction")
+        if direction is not None:
+            if not isinstance(direction, dict) or set(direction) != {"cardinal", "degrees"}:
+                raise ValueError("wind direction shape")
+            fields["wind_cardinal"], fields["wind_degrees"] = _enum_text(direction["cardinal"], 16), _int(direction["degrees"])
+    for key, name in (("relativeHumidity", "relative_humidity"), ("uvIndex", "uv_index")):
+        if key in payload:
+            fields[name] = _int(payload[key])
     return WeatherResult(
         attribution_title=title, attribution_url=url, tool_call_id=result.tool_call_id,
-        condition_type=kind, temperature_unit=unit, temperature_degrees=degrees,
-        precipitation_percent=percent,
+        temperature_unit=unit, temperature_degrees=degrees, **fields,
     )
 
 
@@ -195,7 +290,7 @@ def _route(result: Any, run: Any, principal_id: str) -> RouteResult:
     payload = _guard(result, run, principal_id, ToolId.COMPUTE_ROUTES)
     routes = payload.get("routes")
     if set(payload) != {"routes"} or not isinstance(routes, list) or len(routes) != 1:
-        raise ValueError("routes shape")  # documented: currently exactly one route
+        raise ValueError("routes shape")  # documented and seen live: exactly one route
     route = routes[0]
     if not isinstance(route, dict) or set(route) != {"distanceMeters", "duration", "attribution"}:
         raise ValueError("route shape")
@@ -207,8 +302,8 @@ def _route(result: Any, run: Any, principal_id: str) -> RouteResult:
     mode = result.travel_mode if result.travel_mode in ("DRIVE", "WALK") else "DRIVE"
     return RouteResult(
         attribution_title=title, attribution_url=url, tool_call_id=result.tool_call_id,
-        distance_meters=distance, duration_seconds=float(match.group(1)), travel_mode=mode,
-        walking_warning=mode == "WALK",
+        distance_meters=distance,
+        duration_seconds=float(match.group(1)), travel_mode=mode, walking_warning=mode == "WALK",
     )
 
 
@@ -261,10 +356,8 @@ def _resolve(result: Any, run: Any, principal_id: str, tool: ToolId, items_key: 
             raise ValueError("status code")
         failures.append(ItemFailure(index=int(key), code=ItemFailureCode(code) if code in (3, 5, 13) else ItemFailureCode.OTHER))
     save = _spelled(payload, "save_to_maps_url", "saveToMapsUrl")
-    if save is not None:
-        if not isinstance(save, str):
-            raise ValueError("save url")
-        check_maps_link(save)
+    if save is not None and not isinstance(save, str):
+        raise ValueError("save url")
     return ResolveResult(
         tool=tool, tool_call_id=result.tool_call_id, items=tuple(items),
         failures=tuple(sorted(failures, key=lambda f: f.index)), save_to_maps_url=save,

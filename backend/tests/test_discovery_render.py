@@ -11,6 +11,7 @@ from maps_simulator import (
     SYNTH_TEXT,
     SyntheticMapsClient,
     new_run,
+    synth_title,
     synthetic_payload,
     wrap_unvalidated as V,
 )
@@ -33,6 +34,7 @@ from app.domain import evolve
 
 
 def fixture(payload=None):
+    payload = synthetic_payload(places=2) if payload is None else payload
     run = new_run()
     result = SyntheticMapsClient(payload=payload).call_tool(run, "search_places", {"text_query": "q"})
     answer = parse_grounded_answer(result, TTLS)
@@ -42,8 +44,8 @@ def fixture(payload=None):
 def test_the_block_is_the_raw_text_then_every_source_in_order_bound_to_the_ledger() -> None:
     run, answer, block = fixture()
     assert [type(p) for p in block.parts] == [GroundedTextPart, SourcePart, SourcePart]
-    assert block.parts[0].text == answer.text == SYNTH_TEXT  # raw, never escaped in the block
-    assert block.parts[0].content_hash == content_hash(SYNTH_TEXT)  # the exact string shown
+    assert block.parts[0].text == answer.text  # raw, never escaped in the block
+    assert block.parts[0].content_hash == content_hash(answer.text)  # the exact string shown
     assert [p.place_id for p in block.parts[1:]] == [p.place_id for p in answer.places]
     assert block.render_mode == "text" and block.branding == "Google Maps"
     assert block.translate_no is True  # "Google Maps" must never be translated or localized
@@ -53,7 +55,7 @@ def test_the_block_is_the_raw_text_then_every_source_in_order_bound_to_the_ledge
 def test_sources_show_the_attribution_title_exactly_and_link_with_the_returned_urls() -> None:
     run, answer, block = fixture()
     part, place = block.parts[1], answer.places[0]
-    assert part.attribution_title == place.attribution_title == "Invented spot 1"
+    assert part.attribution_title == place.attribution_title == synth_title(1)
     assert part.attribution_url == place.attribution_url
     assert part.place_url == place.place_url and part.cited == place.cited
 
@@ -113,7 +115,7 @@ def test_any_modification_truncation_reorder_or_interspersing_is_rejected(case: 
         "source_modified_url": lambda: _swap(block, [text, evolve(s1, attribution_url="https://maps.app.goo.gl/EVIL1"), s2]),
         "source_modified_title": lambda: _swap(block, [text, evolve(s1, attribution_title="Better title"), s2]),
         "source_modified_place_url": lambda: _swap(block, [text, evolve(s1, place_url="https://www.google.com/maps/place/EVIL"), s2]),
-        "source_modified_place": lambda: _swap(block, [text, evolve(s1, place_id="SYNTH_PLACE_9999"), s2]),
+        "source_modified_place": lambda: _swap(block, [text, evolve(s1, place_id="SYNTH_PLACE_000000000009999"), s2]),
         "cited_flag_flipped": lambda: _swap(block, [text, evolve(s1, cited=not s1.cited), s2]),
         "interspersed_between_text_and_sources": lambda: _swap(block, [text, note, s1, s2]),
         "interspersed_between_sources": lambda: _swap(block, [text, s1, note, s2]),

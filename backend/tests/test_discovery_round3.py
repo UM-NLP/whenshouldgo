@@ -15,6 +15,7 @@ from maps_simulator import (
     NOW,
     PRINCIPAL,
     FakeMcpTransport,
+    place_link,
     SyntheticMapsClient,
     mcp_ok,
     new_run,
@@ -40,7 +41,6 @@ from app.discovery import (
     ToolId,
     ToolResult,
     ValidatedAnswer,
-    check_attribution_url,
     parse_grounded_answer,
     parse_single_sse_event,
     render_grounded_block,
@@ -167,28 +167,28 @@ def test_concurrent_calls_in_one_run_get_distinct_ids_and_each_gets_its_own_repl
 @pytest.mark.parametrize("text", ["Opened in [2019].", "Years [10, 2000] here", "[2019] [2020] [99999] [0, 2019]",
                                   "Brackets [] [a] [1.5] [ 1 ] [-1] stay plain"])
 def test_year_like_or_out_of_range_brackets_never_reject_the_answer(text: str) -> None:
-    answer = make_answer(synthetic_payload(text=text))
+    answer = make_answer(synthetic_payload(places=2, text=text))
     assert answer.text == text
     assert [p.cited for p in answer.places] == [False, False] or text.startswith("[2019]")
-    run, built = run_and_answer(synthetic_payload(text=text))
+    run, built = run_and_answer(synthetic_payload(places=2, text=text))
     validator.validate(built, run, NOW, principal_id=PRINCIPAL)  # and it still validates
 
 
 def test_cited_is_derived_only_from_in_range_indexes() -> None:
-    assert [p.cited for p in make_answer(synthetic_payload(text="[2019] [0, 2019]")).places] == [True, False]
-    assert [p.cited for p in make_answer(synthetic_payload(text="[10, 2000] and [1]")).places] == [False, True]
+    assert [p.cited for p in make_answer(synthetic_payload(places=2, text="[2019] [0, 2019]")).places] == [True, False]
+    assert [p.cited for p in make_answer(synthetic_payload(places=2, text="[10, 2000] and [1]")).places] == [False, True]
 
 
 def test_one_based_citations_are_not_assumed_away_or_rejected() -> None:
     # TODO(verify-live): the docs say citations are zero-based. A 1-based answer would flag the
     # wrong place (best effort) but must never fail validation.
-    answer = make_answer(synthetic_payload(text="First [1] and second [2]."))
+    answer = make_answer(synthetic_payload(places=2, text="First [1] and second [2]."))
     assert [p.cited for p in answer.places] == [False, True]
 
 
 def test_many_brackets_are_fine() -> None:
     text = " ".join(f"[{i}]" for i in range(2_000))
-    assert [p.cited for p in make_answer(synthetic_payload(text=text[:7_900])).places] == [True, True]
+    assert [p.cited for p in make_answer(synthetic_payload(places=2, text=text[:7_900])).places] == [True, True]
 
 
 # --- item 6: the private-authority scan -------------------------------------------------------------------
@@ -373,20 +373,7 @@ def test_sse_discards_a_final_unterminated_event() -> None:
     assert parse_single_sse_event(f"data: {PAYLOAD}\n\ndata: {PAYLOAD}".encode()) == {"a": 1}  # tail dropped
 
 
-@pytest.mark.parametrize("uri", [
-    "https://www.google.com/search?q=x&btnI=1", "https://www.google.com/search?btnI=1&q=x",
-    "https://www.google.com/search?q=a&q=b", "https://www.google.com/search?btnI=1",
-    "https://www.google.com/search?q=", "https://www.google.com/search", "https://www.google.com/search?Q=x",
-    "https://www.google.com/search?q=x&", "https://www.google.com/search?q=x&source=1",
-])
-def test_search_attribution_urls_must_have_exactly_one_q_parameter(uri: str) -> None:
-    with pytest.raises(ValueError):
-        check_attribution_url(uri)
-
-
-def test_a_single_q_parameter_is_accepted() -> None:
-    check_attribution_url("https://www.google.com/search?q=place_id:SYNTH_PLACE_0001")
-    check_attribution_url("https://www.google.com/search?q=Invented+Spot")
+# (search attribution urls are now covered by the weather field rule in test_discovery_uris.py)
 
 
 # --- item 13: internal-only schema keywords never leave the process -------------------------------------------
@@ -406,7 +393,7 @@ def test_internal_keywords_are_stripped_from_outbound_tool_schemas() -> None:
 @pytest.mark.parametrize("char", ["ㅤ", "ᅟ", "⠀", "͏", " ", " "])
 def test_invisible_fillers_are_rejected_in_titles_and_the_summary(char: str) -> None:
     title_payload = {"summary": "t", "places": [synthetic_place(1) | {"attribution": {
-        "title": f"Ca{char}fe", "url": "https://maps.app.goo.gl/SYNTH0001"}}]}
+        "title": f"Ca{char}fe", "url": place_link(1)}}]}
     with pytest.raises(GroundedParseError):
         make_answer(title_payload)
     with pytest.raises(GroundedParseError):
@@ -419,7 +406,7 @@ def test_persian_titles_with_zwnj_are_rejected_but_the_same_text_in_the_summary_
     with_zwnj = "می‌خواهم"
     without = with_zwnj.replace("‌", "")
     payload = lambda title: {"summary": "t", "places": [synthetic_place(1) | {"attribution": {  # noqa: E731
-        "title": title, "url": "https://maps.app.goo.gl/SYNTH0001"}}]}
+        "title": title, "url": place_link(1)}}]}
     with pytest.raises(GroundedParseError):
         make_answer(payload(with_zwnj))
     assert make_answer(payload(without)).places[0].attribution_title == without

@@ -20,6 +20,7 @@ from maps_simulator import (
     mcp_ok,
     mcp_status,
     new_run,
+    synth_id,
     synthetic_payload,
     synthetic_weather,
 )
@@ -140,17 +141,17 @@ VALID_CALLS = [
     ("search_places", {**ARGS, "location_bias": CIRCLE, "language_code": "en", "region_code": "CA"}),
     ("search_places", {**ARGS, "location_bias": {"circle": {"center": {"latitude": 1.0, "longitude": 2.0}}}}),
     ("lookup_weather", {"location": LOC}),
-    ("lookup_weather", {"location": {"place_id": "SYNTH_PLACE_0001"}, "units_system": "IMPERIAL",
+    ("lookup_weather", {"location": {"place_id": "SYNTH_PLACE_000000000000001"}, "units_system": "IMPERIAL",
                         "date": {"year": 2026, "month": 10, "day": 16}, "hour": 17}),
     ("lookup_weather", {"location": {"address": "Invented Street, Toronto, Canada"}}),
-    ("compute_routes", {"origin": {"address": "A"}, "destination": {"place_id": "SYNTH_PLACE_0002"}}),
+    ("compute_routes", {"origin": {"address": "A"}, "destination": {"place_id": "SYNTH_PLACE_000000000000002"}}),
     ("compute_routes", {"origin": {"lat_lng": {"latitude": 1.0, "longitude": 2.0}},
                         "destination": {"address": "B"}, "travel_mode": "WALK"}),
     ("resolve_names", {"queries": [{"text": "Invented Tower, Paris"}], "region_code": "FR",
                        "location_bias": {"viewport": {"low": {"latitude": 48.8, "longitude": 2.2},
                                                       "high": {"latitude": 48.9, "longitude": 2.4}}}}),
     ("resolve_maps_urls", {"urls": ["https://maps.app.goo.gl/SYNTH0001",
-                                    "https://www.google.com/maps/place/SYNTH_PLACE_0001"]}),
+                                    "https://www.google.com/maps/place/SYNTH_PLACE_000000000000001"]}),
 ]
 
 
@@ -278,7 +279,7 @@ def test_structured_and_text_json_results_are_both_accepted_and_ledgered() -> No
         assert result.billable_units == 1 and result.tool_call_id.startswith("tc-") and result.run_id == "run-1"
         record = run.record_for(result.tool_call_id)
         assert record is not None and record.tool == ToolId.SEARCH_PLACES
-        assert record.place_ids == frozenset({"SYNTH_PLACE_0001", "SYNTH_PLACE_0002"})
+        assert record.place_ids == frozenset(synth_id(i) for i in range(1, 6))
         assert record.text_hash and record.display_hash and len(record.display_hash) == 64
         answer = parse_grounded_answer(result, CFG.ttls)
         assert answer.display_hash == record.display_hash
@@ -679,10 +680,11 @@ def test_the_real_client_is_locked_down(monkeypatch) -> None:
 
 def test_the_http_transport_refuses_compressed_oversize_and_slow_replies() -> None:
     sent = good_request()
-    gz = HttpxMcpTransport.for_tests(httpx.MockTransport(lambda r: httpx.Response(
-        200, content=gzip.compress(b"{}"), headers={"content-encoding": "gzip"})))
+    # (gzip is now decoded under a hard cap on decoded bytes; see test_discovery_live_shapes.py)
+    unknown = HttpxMcpTransport.for_tests(httpx.MockTransport(lambda r: httpx.Response(
+        200, content=gzip.compress(b"{}"), headers={"content-encoding": "compress"})))
     with pytest.raises(TransportFailure):
-        gz.send(sent, Credential(SECRET))
+        unknown.send(sent, Credential(SECRET))
     big = HttpxMcpTransport.for_tests(httpx.MockTransport(lambda r: httpx.Response(200, content=b"x" * 600_000)))
     with pytest.raises(TransportFailure):
         big.send(sent, Credential(SECRET))

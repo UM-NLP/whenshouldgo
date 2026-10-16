@@ -27,7 +27,7 @@ from .contracts import (
 )
 from .errors import GroundedAnswerRejected, RejectionReason
 from .text import short_field_problem, summary_problem
-from .uris import check_attribution_url, check_maps_link
+from .uris import LinkField, check_link, data_token
 
 _PLACE_ID = re.compile(r"^[A-Za-z0-9_-]{1,300}$")
 _TELEMETRY_REASON = {
@@ -96,9 +96,11 @@ class GroundedAnswerValidator:
             return RejectionReason.FORMAT
         for _, _, attribution_url, place_url in fields:
             try:
-                check_attribution_url(attribution_url)
-                check_maps_link(place_url)
+                check_link(LinkField.PLACE_ATTRIBUTION_URL, attribution_url)
+                check_link(LinkField.PLACE_URL, place_url)
             except ValueError:
+                return RejectionReason.URI
+            if data_token(attribution_url) != data_token(place_url):
                 return RejectionReason.URI
         if content_hash(text) != values["content_hash"] or display_hash(text, fields) != values["display_hash"]:
             return RejectionReason.HASH

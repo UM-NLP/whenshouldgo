@@ -29,6 +29,17 @@ RENDER_MODE = "text"
 BRANDING = "Google Maps"
 
 
+class RenderOption(StrEnum):
+    """Named render options. NONE is enabled by default: the summary is plain text and its Markdown
+    (``**bold**``, ``- `` bullets) is shown literally.
+
+    TODO(legal): whether a client may render Markdown emphasis in grounded text is a QUESTION FOR
+    GOOGLE (open question 12, docs/legal/open-questions.md). ``MARKDOWN_EMPHASIS`` is a placeholder
+    for that decision only; it is NOT implemented and requesting it raises NotImplementedError."""
+
+    MARKDOWN_EMPHASIS = "markdown_emphasis"
+
+
 class VerbatimViolation(DiscoveryError):
     default_message = "rendered block is not the verbatim grounded answer"
 
@@ -89,11 +100,18 @@ def _source_parts(answer: GroundedAnswer) -> tuple[SourcePart, ...]:
     )
 
 
-def render_grounded_block(validated: ValidatedAnswer, framing: FramingKind | None = None) -> RenderedBlock:
+def render_grounded_block(
+    validated: ValidatedAnswer,
+    framing: FramingKind | None = None,
+    *,
+    options: frozenset[RenderOption] = frozenset(),
+) -> RenderedBlock:
     """Render a VALIDATED answer. A bare GroundedAnswer (or a forged wrapper) is refused: only
     ``GroundedAnswerValidator.validate`` can mint a ValidatedAnswer."""
     if not is_validated(validated):
         raise ValueError("only a validated answer can be rendered")
+    if options:
+        raise NotImplementedError("render options are placeholders; Markdown emphasis awaits Google's answer")
     if framing is not None and not isinstance(framing, FramingKind):
         raise ValueError("framing must be a FramingKind")
     answer = validated.answer

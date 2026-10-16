@@ -15,6 +15,9 @@ from maps_simulator import (
     synthetic_resolve_urls,
     synthetic_route,
     synthetic_weather,
+    save_link,
+    synth_id,
+    weather_link,
 )
 
 from app.discovery import (
@@ -62,15 +65,15 @@ def urls(payload=None):
 def test_weather_keeps_attribution_exactly_and_a_few_typed_readings() -> None:
     run, result = weather()
     parsed = parse_weather(result, run, PRINCIPAL)
-    assert parsed.attribution_title == "Google Maps Weather"
-    assert parsed.attribution_url == "https://www.google.com/maps"
-    assert (parsed.condition_type, parsed.temperature_unit, parsed.temperature_degrees) == ("CLEAR", "CELSIUS", 17.5)
-    assert parsed.precipitation_percent == 10 and "Clear" not in repr(parsed)
+    assert parsed.attribution_title == "Weather for Invented Place, Toronto"
+    assert parsed.attribution_url == weather_link()
+    assert (parsed.condition_type, parsed.temperature_unit, parsed.temperature_degrees) == ("CLOUDY", "CELSIUS", 17.5)
+    assert parsed.precipitation_percent == 10 and "Cloudy" not in repr(parsed)
 
 
 @pytest.mark.parametrize("change", [
     {"attribution": None}, {"attribution": {"title": "x"}}, {"attribution": {"title": "x", "url": "https://evil.example/"}},
-    {"attribution": {"title": "Caf‮", "url": "https://www.google.com/maps"}},
+    {"attribution": {"title": "Caf‮", "url": weather_link()}},
     {"unknownKey": 1}, {"temperature": {"unit": "KELVIN", "degrees": 1}},
     {"precipitation": {"probability": {"type": "RAIN", "percent": 200}}},
 ])
@@ -85,8 +88,8 @@ def test_weather_payloads_off_the_documented_shape_are_rejected(change) -> None:
 def test_a_driving_route_has_no_walking_warning_and_a_walking_one_requires_it() -> None:
     run, result = route()
     drive = parse_route(result, run, PRINCIPAL)
-    assert (drive.distance_meters, drive.duration_seconds, drive.walking_warning) == (1200, 900.5, False)
-    assert drive.travel_mode == "DRIVE" and drive.attribution_title == "Google Maps"
+    assert (drive.distance_meters, drive.duration_seconds, drive.walking_warning) == (1200, 900.0, False)
+    assert drive.travel_mode == "DRIVE" and drive.attribution_title.endswith(" - Google Maps")
     run, result = route(mode="WALK")
     walk = parse_route(result, run, PRINCIPAL)
     assert walk.travel_mode == "WALK" and walk.walking_warning is True  # beta: the UI must warn
@@ -113,18 +116,18 @@ def test_route_payloads_off_the_documented_shape_are_rejected(payload) -> None:
 def test_resolve_names_returns_items_failures_and_the_save_link_verbatim() -> None:
     run, result = names()
     parsed = parse_resolve_names(result, run, PRINCIPAL)
-    assert [i.place_id for i in parsed.items] == ["SYNTH_PLACE_0001", None]
+    assert [i.place_id for i in parsed.items] == ["SYNTH_PLACE_000000000000001", None]
     assert parsed.items[0].confidence == "HIGH"
     assert [(f.index, f.code, f.retryable) for f in parsed.failures] == [(1, ItemFailureCode.NOT_FOUND, False)]
-    assert parsed.save_to_maps_url == "https://maps.app.goo.gl/SYNTHSAVE1"
+    assert parsed.save_to_maps_url == save_link(synth_id(1))
     assert parsed.all_failed is False and "Place not found" not in repr(parsed)
 
 
 def test_resolve_maps_urls_accepts_camel_case_and_internal_failures_are_retryable() -> None:
     run, result = urls()
     parsed = parse_resolve_urls(result, run, PRINCIPAL)
-    assert [i.place_id for i in parsed.items] == ["SYNTH_PLACE_0002"]
-    assert parsed.save_to_maps_url == "https://maps.app.goo.gl/SYNTHSAVE2"
+    assert [i.place_id for i in parsed.items] == ["SYNTH_PLACE_000000000000002"]
+    assert parsed.save_to_maps_url == save_link(synth_id(2))
     failing = {"entities": [{}, {}], "failedRequests": {"0": {"code": 13, "message": "x"}, "1": {"code": 3, "message": "y"}}}
     run, result = get("resolve_maps_urls", failing, {"urls": ["https://maps.app.goo.gl/SYNTH0002"] * 2})
     both = parse_resolve_urls(result, run, PRINCIPAL)
@@ -212,7 +215,7 @@ def test_mutating_the_returned_payload_does_not_change_the_stored_result() -> No
     result.payload["temperature"]["degrees"] = -5.0  # a copy: the stored result is frozen
     result.payload["attribution"]["title"] = "Mutated"
     assert result.payload["temperature"]["degrees"] == 17.5
-    assert parse_weather(result, run, PRINCIPAL).attribution_title == "Google Maps Weather"
+    assert parse_weather(result, run, PRINCIPAL).attribution_title == "Weather for Invented Place, Toronto"
 
 
 @pytest.mark.parametrize(("maker", "parser"), PARSERS)
