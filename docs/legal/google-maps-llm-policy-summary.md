@@ -6,6 +6,12 @@
 > independently verified against the live Google Maps Platform terms. The agreement,
 > service-specific terms and documentation in force at the time of use govern.
 > Re-check it before launch and whenever Google's terms change.
+>
+> **Owner instruction, 2026-10-17.** The owner supplied this same text again as "the result" of the
+> Google approval question and instructed that it be treated as the FINAL Google answer and that
+> Google not be asked the open questions again. It is recorded as such in
+> [open-questions.md](open-questions.md). It is still a summary of published terms, not a
+> determination from Google about this application.
 
 ---
 

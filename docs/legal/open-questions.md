@@ -16,7 +16,16 @@ Confirmed against live sources by the research: the 30-day cache for grounded ou
 
 Not confirmed: that the “test, validate” machine-learning restriction applies to Grounding Lite (it is documented for the Analytics terms), Canadian billing eligibility, the launch stage, the “persistent knowledge base” wording, and whether place IDs from Grounding Lite fall under the indefinite-storage rule.
 
-## Questions for Google Maps Platform support or the account team
+## Owner decision, 2026-10-17: the summary is the final Google answer
+
+The owner supplied the lawyer's summary ([google-maps-llm-policy-summary.md](google-maps-llm-policy-summary.md)) again as the result of the Google approval question and instructed that it be treated as final and that Google not be asked again. Consequences:
+
+- The Google questions below (1 to 13) are **closed and are not to be sent**. LEGAL-01 (#24), LEGAL-03 (#26) and LEGAL-07 (#30) are closed on that basis; they can be reopened if the owner changes the decision or Google's terms change.
+- What the summary does settle: Grounding Lite is the permitted way to ground an LLM (not Gemini-only, billing accounts outside the EEA including Canada); the ordinary Places API must not feed an LLM to generate summaries or recommendations (decision 17 stands); grounded output is cached only for evaluating or optimizing performance or display, at most 30 consecutive days, and never as a permanent history or knowledge base; place IDs may be stored indefinitely; latitude and longitude only for 30 days (Places API); grounded output must be shown unmodified with sources immediately after it; Maps content must not be used to train, test, validate or improve any model.
+- What it leaves to the developer: verifying the chosen model provider's real retention, logging and caching (so DeepInfra's written terms, LEGAL-02 / #25, stay open), controlling automated usage and cost, and the privacy policy and terms (LEGAL-04 / #27).
+- Points the summary does not address. The design keeps its conservative choice for each and records it as an owner-accepted risk, not as something Google approved: patterns are not grouped by Google place ID (revisit by owner decision at the Phase 2 gate); no "recent answers" history built from grounded text; Grounding Lite coordinates are discarded; weather from Grounding Lite is treated as Maps content; a `save_to_maps_url` is shown as returned and not stored; the summary text is shown as literal text with no Markdown rendering; place IDs returned by Grounding Lite are treated as storable under the place-ID rule.
+
+## Questions for Google Maps Platform support or the account team (closed 2026-10-17: do not send)
 
 Ask in writing, keep the case number and have counsel review the answers.
 
