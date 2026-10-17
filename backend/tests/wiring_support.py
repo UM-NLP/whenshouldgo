@@ -31,20 +31,17 @@ from test_gateway_support import make_config, make_gateway, make_policy
 from app import telemetry as t
 from app.auth import PrincipalResolver, StaticTokenVerifier, VerifiedIdentity
 from app.costs import CostLedger
-from app.discovery import DisplayCache, GroundingLiteMcpClient, KillSwitch, ToolId, ToolRun
+from app.discovery import DisplayCache, GroundingLiteMcpClient, KillSwitch, ToolRun
 from app.domain import (
     ContentClass,
     Fact,
     FactSource,
-    NextAction,
     PrincipalKind,
     RuntimeConfig,
-    WorkspacePatch,
-    WorkspaceStatus,
     Confirmation,
 )
 from app.entitlements import Allowance, EntitlementPolicy, Period, PolicyRegistry
-from app.frame import FrameIntent, FrameResult, SearchArgs
+from app.frame import FrameIntent, FrameProposal, ProposedFact, SearchArgs
 from app.gateway import (
     CallRole,
     GenerateRequest,
@@ -99,6 +96,7 @@ def canary_payload(places: int = 3, canary: str = CANARY) -> dict[str, Any]:
 
 
 def workspace_state(request: GenerateRequest) -> dict[str, Any]:
+    """The workspace view the model is shown: its facts only (no ids, no versions)."""
     for message in request.context:
         if message.content.startswith(STATE_PREFIX):
             return json.loads(message.content[len(STATE_PREFIX):])
@@ -185,41 +183,28 @@ def frame_turn(
     config: RuntimeConfig,
     *,
     intent: FrameIntent = FrameIntent.DISCOVERY,
-    tool: ToolId | None = ToolId.SEARCH_PLACES,
     search_args: SearchArgs | None = ...,  # type: ignore[assignment]
-    facts: Sequence[Fact] = (),
-    remove: Sequence[str] = (),
-    next_action: NextAction = NextAction.SEARCH,
-    status: WorkspaceStatus | None = None,
+    facts: Sequence[Fact | ProposedFact] = (),
     usage: Usage = Usage(input_tokens=400, output_tokens=60),
-    workspace_id: str | None = None,
-    base_version: int | None = None,
     output: Any = None,
 ) -> Callable[[GenerateRequest], ModelTurn]:
-    """A scripted FRAME answer. Ids are echoed from the request unless overridden."""
+    """A scripted FRAME answer: a FrameProposal (intent, search, soft facts). The model owns no
+    state field, so there is nothing else to script. A Fact is turned into the ProposedFact the
+    model could actually have written (its hard/confirmed flags cannot be expressed)."""
 
     def build(request: GenerateRequest) -> ModelTurn:
-        state = workspace_state(request)
         if output is not None:
             produced = output
         else:
             chosen = search() if search_args is ... else search_args
-            if intent == FrameIntent.OTHER:
-                tool_value, chosen = None, None
-            else:
-                tool_value = tool
-            produced = FrameResult(
-                patch=WorkspacePatch(
-                    workspace_id=workspace_id or state["workspace_id"],
-                    base_version=state["base_version"] if base_version is None else base_version,
-                    next_action=next_action,
-                    upsert_facts=list(facts),
-                    remove_fact_ids=list(remove),
-                    status=status,
-                ),
+            produced = FrameProposal(
                 intent=intent,
-                tool=tool_value,
-                search=chosen if tool_value == ToolId.SEARCH_PLACES else None,
+                search=chosen if intent == FrameIntent.DISCOVERY else None,
+                facts=[
+                    f if isinstance(f, ProposedFact)
+                    else ProposedFact(key=f.key, value=f.value, scope=f.scope)
+                    for f in facts
+                ],
             )
         return ModelTurn(
             call_role=CallRole.FRAME,
@@ -390,18 +375,17 @@ __all__ = [name for name in dir() if not name.startswith("_")]
 
 
 class FrameEchoTransport(FakeTransport):
-    """A provider transport that answers FRAME like a model: it reads the workspace id and base
-    version out of the prompt and echoes them. ``before`` responses (errors, odd bodies) are
-    served first; after that every call gets a valid answer."""
+    """A provider transport that answers FRAME like a model: a FrameProposal. ``before`` responses
+    (errors, odd bodies) are served first; after that every call gets a valid answer."""
 
     def __init__(
         self, before: Sequence[Any] = (), *, intent: str = "OTHER", query: str = "quiet restaurant",
         prompt_tokens: int | None = 100, completion_tokens: int | None = 20,
-        search: dict[str, Any] | None = None, omit_tool: bool = False,
+        search: dict[str, Any] | None = None, facts: list[dict[str, Any]] | None = None,
     ) -> None:
         super().__init__([])
-        self.omit_tool = omit_tool  # a model that leaves out the (server-owned) "tool" field
         self.search = search  # the exact search object the "model" returns (overrides query)
+        self.facts = facts
         self.before = list(before)
         self.intent = intent
         self.query = query
@@ -411,18 +395,11 @@ class FrameEchoTransport(FakeTransport):
         if self.before:
             self._script = [self.before.pop(0)]
         else:
-            state = next(m["content"] for m in request.body["messages"]
-                         if m["content"].startswith(STATE_PREFIX))
-            ids = json.loads(state[len(STATE_PREFIX):])
-            answer: dict[str, Any] = {
-                "patch": {"workspace_id": ids["workspace_id"], "base_version": ids["base_version"],
-                          "next_action": "SEARCH"},
-                "intent": self.intent,
-            }
+            answer: dict[str, Any] = {"intent": self.intent}
             if self.intent == "DISCOVERY":
-                answer.update(search=self.search or {"text_query": self.query})
-                if not self.omit_tool:
-                    answer["tool"] = "search_places"
+                answer["search"] = self.search or {"text_query": self.query}
+            if self.facts:
+                answer["facts"] = self.facts
             self._script = [completion_response(
                 json.dumps(answer), prompt_tokens=self.usage[0], completion_tokens=self.usage[1])]
         return super().send(request, credential)
@@ -432,7 +409,7 @@ def real_stack(
     before: Sequence[Any] = (), *, attempts: int = 3, discovery: Any = None,
     config: RuntimeConfig | None = None, intent: str = "OTHER", query: str = "quiet restaurant",
     prompt_tokens: int | None = 100, completion_tokens: int | None = 20,
-    breaker_threshold: int = 5, search: dict[str, Any] | None = None, omit_tool: bool = False,
+    breaker_threshold: int = 5, search: dict[str, Any] | None = None, facts: list[dict[str, Any]] | None = None,
     **env_kw: Any,
 ) -> tuple[Env, FrameEchoTransport, Any]:
     """An Env over the REAL ResilientGateway wrapping the REAL OpenRouterGateway (a fake
@@ -440,7 +417,7 @@ def real_stack(
     config = config or make_config()
     transport = FrameEchoTransport(before, intent=intent, query=query,
                                    prompt_tokens=prompt_tokens, completion_tokens=completion_tokens,
-                                   search=search, omit_tool=omit_tool)
+                                   search=search, facts=facts)
     inner = make_gateway(transport, config=config)
     gateway = ResilientGateway(
         inner, ResiliencePolicy(max_attempts=attempts, breaker_failure_threshold=breaker_threshold),

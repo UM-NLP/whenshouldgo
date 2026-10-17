@@ -43,8 +43,9 @@ from app.domain import (  # noqa: E402
 )
 from app.frame import (  # noqa: E402
     ArgumentRejected,
-    FrameResult,
+    FrameProposal,
     build_frame_request,
+    build_patch,
     plan_search,
     prompt_version_hashes,
 )
@@ -56,6 +57,7 @@ from app.gateway import (  # noqa: E402
     RunBudget,
 )
 from app.gateway.errors import (  # noqa: E402
+    ContentFilterError,
     GatewayError,
     MalformedOutputError,
     TruncationError,
@@ -63,7 +65,9 @@ from app.gateway.errors import (  # noqa: E402
 from app.gateway.policy import ResiliencePolicy  # noqa: E402
 from app.gateway.pricing import ModelPrice, PriceTable  # noqa: E402
 from app.gateway.types import FinishReason, Usage  # noqa: E402
+from app.patching import PatchRejected, apply_patch_checked  # noqa: E402
 from evals.frame_bakeoff import fixtures as fixture_lib  # noqa: E402
+from evals.frame_bakeoff import score as score_lib  # noqa: E402
 from evals.frame_bakeoff.dryrun import DryRunModel  # noqa: E402
 
 KEY_VAR = "OPENROUTER_API_KEY"
@@ -191,29 +195,64 @@ def cost_line(totals: Totals, cad_rate: float, done: int, planned: int) -> str:
 
 
 # --- one call ---------------------------------------------------------------------------
-def _patch_summary(out: FrameResult) -> dict[str, Any]:
-    facts = [{"key": f.key, "source": f.source.value, "confirmation": f.confirmation.value,
-              "hard": f.hard} for f in out.patch.upsert_facts]
-    return {
-        "n_upsert": len(facts), "n_remove": len(out.patch.remove_fact_ids),
-        "next_action": out.patch.next_action.value,
-        "status": out.patch.status.value if out.patch.status else None,
-        "facts": facts,
-        "any_confirmed": any(f["confirmation"] == "CONFIRMED" for f in facts),
-        "any_hard": any(f["hard"] for f in facts),
-    }
+TURN_OUTCOMES = ("DISCOVERY_SEARCH", "CLARIFY_OTHER", "CLARIFY_QUERY_REJECTED", "PATCH_REJECTED",
+                 "MALFORMED", "PROVIDER_ERROR")
+_CONTENT_FAILURES = (MalformedOutputError, TruncationError, ContentFilterError)
 
 
-def _plan_summary(out: FrameResult, message: str) -> dict[str, Any]:
-    if out.search is None:
-        return {"outcome": "none", "area_dropped": None, "arguments": None}
+def replay_production(proposal: FrameProposal, message: str, fixture: dict[str, Any]) -> dict[str, Any]:
+    """What production does with a proposal, offline and with the real functions, in the
+    pipeline's order: plan_search (discovery only; an OTHER search is ignored), then build_patch
+    and apply_patch_checked on a fresh workspace. Returns plan, patch, requirements and the
+    derived ``turn_outcome``. Fact VALUES are never recorded, only keys."""
+    plan: dict[str, Any] = {"outcome": "none", "area_dropped": None, "arguments": None}
+    plan_ok = False
+    if proposal.intent.value == "DISCOVERY":
+        if proposal.search is None:
+            plan["outcome"] = "rejected"
+        else:
+            try:
+                made = plan_search(proposal.search, message)
+                plan = {"outcome": "accepted", "area_dropped": made.area_dropped,
+                        "arguments": made.arguments}
+                plan_ok = True
+            except ArgumentRejected:
+                plan["outcome"] = "rejected"
+    elif proposal.search is not None:
+        plan["outcome"] = "ignored"
+    base = TripWorkspace(id=WORKSPACE_ID, owner_id=OWNER_ID)
+    patch: dict[str, Any] = {"outcome": "applied", "reason": None, "facts_dropped": 0,
+                             "fact_keys": [f.key for f in proposal.facts]}
     try:
-        plan = plan_search(out.search, message)
-    except ArgumentRejected:
-        return {"outcome": "rejected", "area_dropped": None, "arguments": None}
-    except Exception:  # noqa: BLE001 - the record must exist whatever the model sent
-        return {"outcome": "error", "area_dropped": None, "arguments": None}
-    return {"outcome": "accepted", "area_dropped": plan.area_dropped, "arguments": plan.arguments}
+        built = build_patch(base, proposal, search_ok=plan_ok)
+        _, dropped = apply_patch_checked(base, built)
+        patch["facts_dropped"] = dropped
+    except PatchRejected as rejected:
+        patch.update(outcome="rejected", reason=str(getattr(rejected.reason, "value", rejected.reason)))
+    except Exception:  # noqa: BLE001 - a Fact the server cannot build is a rejected patch
+        patch.update(outcome="rejected", reason="SCHEMA")
+    if patch["outcome"] == "rejected":
+        turn = "PATCH_REJECTED"
+    elif proposal.intent.value == "OTHER":
+        turn = "CLARIFY_OTHER"
+    else:
+        turn = "DISCOVERY_SEARCH" if plan_ok else "CLARIFY_QUERY_REJECTED"
+    requirements: dict[str, Any] | None = None
+    if turn == "DISCOVERY_SEARCH":
+        query = plan["arguments"]["text_query"]
+        raw_area = proposal.search.area if proposal.search else None
+        requirements = {
+            "required_words": all(any(score_lib.has_word(query, w) for w in g)
+                                  for g in fixture["required_query_words"]),
+            "forbidden_words": not any(score_lib.has_word(query, w)
+                                       for w in fixture["forbidden_query_words"]),
+            "area_in_message": None if not raw_area
+            else score_lib.area_in_message(raw_area, message),
+            "area_expected": None if fixture["expected_area"] is None
+            else score_lib.area_matches(raw_area, fixture["expected_area"]),
+            "area_absent_ok": not (("any_area" in fixture["must_not"]) and raw_area),
+        }
+    return {"plan": plan, "patch": patch, "requirements": requirements, "turn_outcome": turn}
 
 
 def run_one(stack: Stack, fixture: dict[str, Any], repeat: int) -> dict[str, Any]:
@@ -229,13 +268,14 @@ def run_one(stack: Stack, fixture: dict[str, Any], repeat: int) -> dict[str, Any
         "prompt_sha256": prompt_version_hashes()[0].sha256[:16],
         "outcome": None, "error_kind": None, "error_code": None, "model_calls": 0, "repairs": 0,
         "latency_ms": 0.0, "input_tokens": 0, "output_tokens": 0, "cost_usd": "0",
-        "cost_basis": "none", "finish_reason": None, "intent": None, "tool": None,
-        "search": None, "plan": None, "patch": None, "served_provider": None,
+        "cost_basis": "none", "finish_reason": None, "intent": None,
+        "search": None, "plan": None, "patch": None, "requirements": None,
+        "turn_outcome": None, "served_provider": None,
     }
     try:
         request = build_frame_request(message, workspace, config, budget)
     except Exception:  # noqa: BLE001
-        record.update(outcome="REQUEST_REJECTED")
+        record.update(outcome="REQUEST_REJECTED", turn_outcome="PROVIDER_ERROR")
         return record
     started = time.perf_counter()
     try:
@@ -255,11 +295,13 @@ def run_one(stack: Stack, fixture: dict[str, Any], repeat: int) -> dict[str, Any
             outcome=outcome, error_kind=error.kind.value, error_code=str(error.code.value),
             model_calls=error.calls, input_tokens=usage.input_tokens,
             output_tokens=usage.output_tokens, cost_usd=str(cost), cost_basis=basis,
-            finish_reason=FinishReason.LENGTH.value if isinstance(error, TruncationError) else None)
+            finish_reason=FinishReason.LENGTH.value if isinstance(error, TruncationError) else None,
+            turn_outcome="MALFORMED" if isinstance(error, _CONTENT_FAILURES) else "PROVIDER_ERROR")
         return record
     except Exception as error:  # noqa: BLE001 - class name only; never its text
         record["latency_ms"] = round((time.perf_counter() - started) * 1000, 1)
-        record.update(outcome="INTERNAL_ERROR", error_kind=type(error).__name__)
+        record.update(outcome="INTERNAL_ERROR", error_kind=type(error).__name__,
+                      turn_outcome="PROVIDER_ERROR")
         return record
     record["latency_ms"] = round((time.perf_counter() - started) * 1000, 1)
     out = turn.output
@@ -268,14 +310,16 @@ def run_one(stack: Stack, fixture: dict[str, Any], repeat: int) -> dict[str, Any
         input_tokens=turn.usage.input_tokens, output_tokens=turn.usage.output_tokens,
         cost_usd=str(turn.estimated_cost_usd), cost_basis="reported",
         finish_reason=turn.finish_reason.value, served_provider=turn.provider)
-    if isinstance(out, FrameResult):
+    if isinstance(out, FrameProposal):
         record.update(
-            intent=out.intent.value, tool=out.tool.value if out.tool else None,
+            intent=out.intent.value,
             search=None if out.search is None else {
                 "text_query": out.search.text_query, "area": out.search.area,
                 "language_code": out.search.language_code, "region_code": out.search.region_code,
-                "page_size": out.search.page_size},
-            plan=_plan_summary(out, message), patch=_patch_summary(out))
+                "page_size": out.search.page_size})
+        record.update(replay_production(out, message, fixture))
+    else:
+        record.update(turn_outcome="MALFORMED")
     return record
 
 

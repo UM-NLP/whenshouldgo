@@ -119,17 +119,17 @@ def test_real_adapter_malformed_json_is_a_typed_502_with_cost_and_quota_released
     assert env.turns() == 0 and env.reserved() == set() and env.orchestrator.workspaces == {}
     (entry,) = env.costs.entries()
     assert entry.input_tokens > 0 and entry.model_calls >= 1
-    assert len(transport.requests) == 2  # one bounded repair, then give up
+    assert len(transport.requests) == 1  # FRAME has no repair: a content error repeats at temp 0
 
 
 def test_real_adapter_truncated_output_is_a_typed_502() -> None:
-    cut = completion_response('{"patch":', finish_reason="length")
-    env, transport = real_env(cut, cut)  # a truncated answer gets one bounded repair, also cut
+    cut = completion_response('{"intent":', finish_reason="length")
+    env, transport = real_env(cut)  # FRAME has no repair, so a cut-off answer is one call
     response = env.post()
     assert response.status_code == 502 and response.json()["reason"] == "OUTPUT_TRUNCATED"
-    assert env.turns() == 0 and env.reserved() == set() and len(transport.requests) == 2
+    assert env.turns() == 0 and env.reserved() == set() and len(transport.requests) == 1
     (entry,) = env.costs.entries()
-    assert entry.input_tokens > 0 and entry.model_calls == 2
+    assert entry.input_tokens > 0 and entry.model_calls == 1
 
 
 def test_real_adapter_wrong_schema_is_a_typed_502() -> None:
@@ -137,7 +137,7 @@ def test_real_adapter_wrong_schema_is_a_typed_502() -> None:
     env, transport = real_env(completion_response(wrong), completion_response(wrong))
     response = env.post()
     assert response.status_code == 502 and response.json()["reason"] == "OUTPUT_REJECTED"
-    assert env.turns() == 0 and len(transport.requests) == 2 and env.costs.entries()
+    assert env.turns() == 0 and len(transport.requests) == 1 and env.costs.entries()
 
 
 def test_real_adapter_missing_usage_is_charged_at_the_worst_case() -> None:
@@ -154,23 +154,8 @@ def test_real_adapter_missing_usage_is_charged_at_the_worst_case() -> None:
 def test_real_adapter_success_path_runs_through_to_the_block() -> None:
     config = make_config()
 
-    class EchoingTransport(FakeTransport):
-        """Answers with a FRAME result that echoes the workspace id found in the prompt."""
-
-        def send(self, request, credential):
-            state = next(m["content"] for m in request.body["messages"]
-                         if m["content"].startswith("WORKSPACE_STATE_JSON:"))
-            ids = json.loads(state.split(":", 1)[1])
-            answer = {
-                "patch": {"workspace_id": ids["workspace_id"], "base_version": ids["base_version"],
-                          "next_action": "SEARCH"},
-                "intent": "DISCOVERY", "tool": "search_places",
-                "search": {"text_query": "quiet restaurant"},
-            }
-            self._script = [completion_response(json.dumps(answer))]
-            return super().send(request, credential)
-
-    transport = EchoingTransport([])
+    answer = {"intent": "DISCOVERY", "search": {"text_query": "quiet restaurant"}}
+    transport = FakeTransport([completion_response(json.dumps(answer))])
     gateway = make_gateway(transport, config=config)
     maps = RecordingClient(SyntheticMapsClient(payload=canary_payload()))
     env = Env(gateway=gateway, discovery=maps, config=config)

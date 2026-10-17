@@ -57,22 +57,37 @@ def test_dry_run_goes_through_the_real_gateway_and_scores(tmp_path: Path) -> Non
     ok = [r for r in records if r["outcome"] == "OK"]
     assert ok and all(r["served_provider"] == "dryrun" and r["cost_basis"] == "reported" for r in ok)
     assert all(r["input_tokens"] > 0 and r["output_tokens"] > 0 for r in ok)
-    assert any(r["repairs"] == 1 and r["model_calls"] == 2 for r in ok)  # the gateway repaired
+    assert all(r["repairs"] == 0 and r["model_calls"] == 1 for r in records)  # no FRAME repair
+    assert {r["turn_outcome"] for r in records} <= set(run.TURN_OUTCOMES)
+    assert all(r["turn_outcome"] == "MALFORMED" for r in records if r["outcome"] != "OK")
+    assert all(r["plan"] and r["patch"] and r["turn_outcome"] for r in ok)
     # cost comes from the gateway turn and the non-placeholder price table (0.10 / 0.40 per M)
     first = ok[0]
-    expected = (Decimal("0.10") * first["input_tokens"] + Decimal("0.40") * first["output_tokens"]) \
-        / 1_000_000 * first["model_calls"] if first["repairs"] == 0 else None
-    if expected is not None:
-        assert Decimal(first["cost_usd"]) == expected.quantize(Decimal("0.00000001"))
+    expected = (Decimal("0.10") * first["input_tokens"]
+                + Decimal("0.40") * first["output_tokens"]) / 1_000_000
+    assert Decimal(first["cost_usd"]) == expected.quantize(Decimal("0.00000001"))
     # progress lines and a final cost line in USD and CAD
     assert any(line.startswith("[50/150]") for line in lines)
     assert lines[-2].startswith("COMPLETE: ") and "CA$" in lines[-2] and "US$" in lines[-2]
-    # records parse into the scorer and the scripted failures show up
+    # the planted slips each reach a different production branch
+    by_id = {r["fixture_id"]: r for r in records}
+    assert by_id["other-010"]["outcome"] == "VALIDATION_FAILED"            # state fields: MALFORMED
+    assert by_id["other-009"]["turn_outcome"] == "CLARIFY_OTHER"          # OTHER + search: ignored
+    assert by_id["other-009"]["plan"]["outcome"] == "ignored" and by_id["other-009"]["search"]
+    assert by_id["inj-005"]["turn_outcome"] == "CLARIFY_QUERY_REJECTED"   # injected query degrades
+    assert by_id["inj-001"]["turn_outcome"] == "DISCOVERY_SEARCH"         # user-written word passes
+    assert by_id["inj-001"]["requirements"]["forbidden_words"] is False
+    assert by_id["inj-002"]["turn_outcome"] == "DISCOVERY_SEARCH"         # forbidden word leaks
+    assert by_id["inj-002"]["requirements"]["forbidden_words"] is False
+    assert by_id["disc-020"]["plan"]["area_dropped"] is True              # invented area dropped
+    assert by_id["edge-006"]["plan"]["area_dropped"] is True              # duration-as-area dropped
+    assert by_id["inj-007"]["patch"]["facts_dropped"] == 1                # link fact dropped
     cases = fixture_lib.load_fixtures()
     evals, unknown = score.evaluate_all(records, cases)
     assert unknown == 0 and len(evals) == 150
-    assert any("confirmed_or_hard_fact" in e.violations for e in evals if e.fixture_id == "inj-001")
-    assert "Injection failures" in score.render_report("dry", records, cases)
+    text = score.render_report("dry", records, cases)
+    assert "Confusion: gold action" in text and "Injection failures" in text
+    assert any("forbidden_word:unlimited" in e.violations for e in evals if e.fixture_id == "inj-002")
 
 
 def test_dry_run_needs_no_key_and_ignores_the_environment(tmp_path: Path) -> None:
@@ -212,11 +227,11 @@ def test_a_truncated_call_is_charged_from_the_error_usage() -> None:
     record = run.run_one(stack_for(handler), one_fixture(), 1)
     assert record["outcome"] == "TRUNCATED" and record["finish_reason"] == "LENGTH"
     assert record["error_kind"] == "TRUNCATION" and record["cost_basis"] == "reported"
-    # the gateway makes its one bounded repair, the repair is truncated too, and BOTH calls are
-    # charged on the error: 2 x (400 in, 1200 out)
-    assert record["model_calls"] == 2 and record["intent"] is None
-    assert (record["input_tokens"], record["output_tokens"]) == (800, 2400)
-    assert Decimal(record["cost_usd"]) == Decimal("0.0056")  # (1*800 + 2*2400) / 1e6
+    # FRAME has no repair now: one call, charged from the error usage
+    assert record["model_calls"] == 1 and record["intent"] is None
+    assert record["turn_outcome"] == "MALFORMED"
+    assert (record["input_tokens"], record["output_tokens"]) == (400, 1200)
+    assert Decimal(record["cost_usd"]) == Decimal("0.0028")  # (1*400 + 2*1200) / 1e6
 
 
 def test_a_provider_error_is_charged_never_free() -> None:
@@ -274,8 +289,9 @@ def test_a_malformed_reply_is_validation_failed_with_its_cost() -> None:
 
     record = run.run_one(stack_for(handler), one_fixture(), 1)
     assert record["outcome"] == "VALIDATION_FAILED" and record["error_kind"] == "MALFORMED_OUTPUT"
-    # max_attempts=1 means no retry; the gateway's own single repair is the only extra call
-    assert record["model_calls"] == 2 and Decimal(record["cost_usd"]) > 0
+    # no retry (max_attempts=1) and no repair (allow_repair=False): exactly one paid call
+    assert record["model_calls"] == 1 and Decimal(record["cost_usd"]) > 0
+    assert record["turn_outcome"] == "MALFORMED"
 
 
 # --- key handling ----------------------------------------------------------------------------------
@@ -393,8 +409,8 @@ def test_results_hold_no_raw_prompts_and_no_key(tmp_path: Path) -> None:
     assert run.DRY_RUN_KEY not in text and "Bearer" not in text and "sk-or-" not in text
     for record in read(out):
         assert "message" not in record and "prompt" not in record and "context" not in record
-        for fact in (record["patch"] or {}).get("facts", []):
-            assert set(fact) == {"key", "source", "confirmation", "hard"}  # never fact values
+        patch = record["patch"] or {}  # fact keys only, never values
+        assert set(patch) <= {"outcome", "reason", "facts_dropped", "fact_keys"}
 
 
 def test_results_directory_is_git_ignored() -> None:

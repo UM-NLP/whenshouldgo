@@ -63,12 +63,13 @@ FRAME_STATE_SCHEMA_ALLOWLIST: frozenset[type[BaseModel]] = frozenset({WorkspaceP
 
 
 def _frame_roots() -> frozenset[type[BaseModel]]:
-    """Every root model FRAME may use: the bare patch plus the orchestrator's FrameResult (a
-    patch with an intent and closed search arguments). Imported lazily because app.frame
-    depends on this package; membership is by exact class, a subclass is still refused."""
-    from ..frame import FrameResult
+    """Every root model FRAME may use: the bare patch plus the orchestrator's FrameProposal (an
+    intent, closed search arguments and a few soft facts: no state fields at all). Imported
+    lazily because app.frame depends on this package; membership is by exact class, a subclass
+    or a wrapper is still refused."""
+    from ..frame import FrameProposal
 
-    return FRAME_STATE_SCHEMA_ALLOWLIST | {FrameResult}
+    return FRAME_STATE_SCHEMA_ALLOWLIST | {FrameProposal}
 
 
 class ResiliencePolicy(Frozen):
@@ -173,6 +174,14 @@ def _check_output_schema(request: GenerateRequest) -> None:
     reachable = _model_types(root, set())
     if any(found.model_config.get("extra") != "forbid" for found in reachable):
         raise GatewayConfigError("output schema models must forbid extra fields")
+    from ..frame import FrameProposal
+
+    # The FRAME proposal carries no state type, but it is FRAME's output only: any other call, a
+    # subclass of it or a model that wraps it is refused.
+    if any(issubclass(found, FrameProposal) for found in reachable) and not (
+        request.call_role == CallRole.FRAME and root is FrameProposal
+    ):
+        raise TaintedContextError("output schema may not carry the FRAME proposal for this call")
     state_bearing = any(issubclass(found, STATE_BEARING_TYPES) for found in reachable)
     if not state_bearing:
         return

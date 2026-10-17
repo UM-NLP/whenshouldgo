@@ -138,5 +138,9 @@ def test_joiners_alone_do_not_ban_a_value() -> None:
 
 
 def test_a_search_query_that_fails_the_plain_text_check_is_still_rejected() -> None:
-    with pytest.raises(ValueError):
-        SearchArgs(text_query="see https://evil.example/x")
+    from app.frame import ArgumentRejected, search_arguments
+
+    # the query is checked by the server's plan (the pipeline then degrades to a clarification)
+    with pytest.raises(ArgumentRejected):
+        search_arguments(SearchArgs(text_query="see https://evil.example/x"),
+                         "see https://evil.example/x")

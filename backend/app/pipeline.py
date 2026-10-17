@@ -81,8 +81,10 @@ from .failures import MapsContentToModelNotImplemented, TurnFailure
 from .frame import (
     ArgumentRejected,
     FrameIntent,
-    FrameResult,
+    FrameProposal,
+    SearchPlan,
     build_frame_request,
+    build_patch,
     plan_search,
 )
 from .gateway import (
@@ -430,20 +432,41 @@ class TurnPipeline:
         spend: _Spend,
     ) -> PipelineOutcome | TurnFailure:
         started = self._monotonic()
-        frame = self._frame(principal, request, tool_run.run_id, spend)
+        proposal = self._frame(principal, request, tool_run.run_id, spend)
+        # The model PROPOSES; the server decides. A discovery plan exists only if the proposal has
+        # a search whose QUERY passes plan_search; anything else (no search, a bad query)
+        # degrades to the fixed clarification with a typed warning, never a failed paid turn. An
+        # OTHER proposal's search object, if any, is ignored.
+        plan: SearchPlan | None = None
+        query_rejected = False
+        if proposal.intent == FrameIntent.DISCOVERY:
+            if proposal.search is None:
+                query_rejected = True
+            else:
+                try:
+                    plan = plan_search(proposal.search, message)
+                except ArgumentRejected:
+                    query_rejected = True
+        if query_rejected:
+            self._reject(telemetry.ValidationReason.SCHEMA, telemetry.Phase.TOOL)
         workspace: TripWorkspace | None = None
         dropped = 0
         rejection: PatchRejected | None = None
         try:
-            workspace, dropped = apply_patch_checked(base, frame.patch)  # a copy: not stored yet
+            patch = build_patch(base, proposal, search_ok=plan is not None)
+            workspace, dropped = apply_patch_checked(base, patch)  # a copy: not stored yet
         except PatchRejected as rejected:
             rejection = rejected
+        except ValidationError:
+            return _rejected()
         if workspace is None or rejection is not None:
             reason = rejection.reason if rejection else telemetry.ValidationReason.OTHER
             self._reject(reason, telemetry.Phase.PATCH)
             return _rejected()
         warnings: tuple[TurnWarning, ...] = (TurnWarning.FACT_DROPPED,) if dropped else ()
-        if frame.intent == FrameIntent.OTHER:
+        if query_rejected:
+            warnings = (*warnings, TurnWarning.QUERY_REJECTED)
+        if plan is None:
             return PipelineOutcome(workspace, REPLY_OTHER, None, None, warnings)
         # One wall-clock deadline for FRAME plus the tool call (the run budget's seconds): the
         # tool gets what is left as its timeout, and under a floor it is skipped.
@@ -451,8 +474,8 @@ class TurnPipeline:
         if remaining < MIN_TOOL_SECONDS:
             return PipelineOutcome(workspace, REPLY_PARTIAL, None, None,
                                    (*warnings, TurnWarning.TOOL_BUDGET_EXHAUSTED))
-        outcome = self._discover(principal, message, frame, workspace, allowed, tool_run,
-                                 cache_key, spend, remaining)
+        outcome = self._discover(principal, plan, workspace, allowed, tool_run, cache_key, spend,
+                                 remaining)
         if isinstance(outcome, PipelineOutcome) and warnings:
             return PipelineOutcome(outcome.workspace, outcome.reply, outcome.discovery,
                                    outcome.ref, (*warnings, *outcome.warnings))
@@ -460,7 +483,7 @@ class TurnPipeline:
 
     def _frame(
         self, principal: Principal, request: GenerateRequest, run_id: str, spend: _Spend
-    ) -> FrameResult:
+    ) -> FrameProposal:
         started = perf_counter()
         turn: ModelTurn | None = None
         failure: GatewayError | None = None
@@ -482,14 +505,14 @@ class TurnPipeline:
         return frame
 
     @staticmethod
-    def _checked_frame(turn: ModelTurn) -> FrameResult | None:
-        """The model's output as a FrameResult, re-validated from its dump so an object built
+    def _checked_frame(turn: ModelTurn) -> FrameProposal | None:
+        """The model's output as a FrameProposal, re-validated from its dump so an object built
         around the validators (or a different model class) cannot get through."""
         output = turn.output
-        if not isinstance(output, FrameResult):
+        if not isinstance(output, FrameProposal):
             return None
         try:
-            return FrameResult.model_validate(output.model_dump())
+            return FrameProposal.model_validate(output.model_dump())
         except ValidationError:
             return None
 
@@ -568,23 +591,18 @@ class TurnPipeline:
             spend.gateway.append(("FRAME", usage, calls, None))
 
     def _discover(
-        self, principal: Principal, message: str, frame: FrameResult, workspace: TripWorkspace,
+        self, principal: Principal, plan: SearchPlan, workspace: TripWorkspace,
         allowed: frozenset[ToolId], tool_run: ToolRun, cache_key: str, spend: _Spend,
         remaining: float,
     ) -> PipelineOutcome | TurnFailure:
-        tool = frame.tool
-        if tool is None or tool not in allowed or tool != ToolId.SEARCH_PLACES:
+        """Run discovery for a plan that already passed ``plan_search``. The tool is always
+        search_places (the server owns it) and only if the server allowlist grants it."""
+        if ToolId.SEARCH_PLACES not in allowed:
             self._reject(telemetry.ValidationReason.TOOL_NOT_ALLOWED, telemetry.Phase.TOOL)
-            if tool is not None:
-                self._deny(telemetry.ToolName(tool.value))
+            self._deny(telemetry.ToolName.SEARCH_PLACES)
             return _rejected()
-        if self._discovery is None or self._cache is None or frame.search is None:
+        if self._discovery is None or self._cache is None:
             return _rejected(503)
-        try:
-            plan = plan_search(frame.search, message)
-        except ArgumentRejected:
-            self._reject(telemetry.ValidationReason.SCHEMA, telemetry.Phase.TOOL)
-            return _rejected()
         outcome = self._search(principal, workspace, tool_run, plan.arguments, cache_key, spend,
                                remaining)
         if plan.area_dropped:  # forgiving: noted, never a failure

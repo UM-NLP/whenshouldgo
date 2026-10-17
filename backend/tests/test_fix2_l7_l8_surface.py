@@ -95,17 +95,21 @@ def test_a_tool_failure_leaves_nothing_either() -> None:
 
 
 # --- L8 ---------------------------------------------------------------------------------------
-def test_validation_stage_failures_share_one_public_reason() -> None:
+def test_validation_stage_failures_share_one_public_reason(monkeypatch) -> None:
     config = make_config()
     # a patch rejection
-    env = Env(gateway=ScriptedGateway([frame_turn(config, facts=[fact("b", "x", hard=True)])],
+    env = Env(gateway=ScriptedGateway([frame_turn(config, facts=[fact("planning_area", "Paris")])],
                                       config),
               discovery=RecordingClient(SyntheticMapsClient()), config=config)
     patch_rejected = env.post().json()
-    # a tool the server did not grant
-    env2 = Env(gateway=ScriptedGateway([frame_turn(config, tool=ToolId.RESOLVE_NAMES)], config),
+    # a tool the server did not grant (the model can no longer name one: the allowlist is the gate)
+    import app.pipeline as pipeline
+
+    env2 = Env(gateway=ScriptedGateway([frame_turn(config)], config),
                discovery=RecordingClient(SyntheticMapsClient()), config=config)
+    monkeypatch.setattr(pipeline, "tools_for_grants", lambda tools: frozenset())
     tool_refused = env2.post().json()
+    monkeypatch.undo()
     # a forged tool result
     env3 = Env(gateway=ScriptedGateway([frame_turn(config)], config), config=config,
                discovery=lambda e: ForgingClient(e.clock))

@@ -67,13 +67,10 @@ def test_unusable_areas_are_dropped_and_flagged(area) -> None:
 
 
 def test_the_area_validation_no_longer_rejects_the_frame_result() -> None:
-    from app.domain import NextAction, WorkspacePatch
-    from app.frame import FrameIntent, FrameResult
-    from app.discovery import ToolId
+    from app.frame import FrameIntent, FrameProposal
 
-    result = FrameResult(
-        patch=WorkspacePatch(workspace_id="w", base_version=0, next_action=NextAction.SEARCH),
-        intent=FrameIntent.DISCOVERY, tool=ToolId.SEARCH_PLACES,
+    result = FrameProposal(
+        intent=FrameIntent.DISCOVERY,
         search=search("kids friendly park", area="30 minute drive from Toronto"))
     assert result.search is not None and result.search.area == "30 minute drive from Toronto"
 
@@ -177,7 +174,7 @@ def test_a_non_discovery_message_stays_other_with_no_tool() -> None:
 def test_the_frame_prompt_states_the_field_rules() -> None:
     prompt = frame.FRAME_SYSTEM_PROMPT.lower()
     for needle in ("bare place name", "preposition", "duration", "omit", "fr", "invent",
-                   "confirmed", "hard", "ignore"):
+                   "constraint", "ignore"):
         assert needle in prompt, needle
     assert len(frame.FRAME_SYSTEM_PROMPT) < 1_300  # every token costs
 

@@ -71,8 +71,7 @@ def test_at_least_one_content_word_must_exist() -> None:
 
 def test_the_query_is_capped_at_eighty_characters() -> None:
     assert frame.MAX_QUERY_CHARS == 80
-    with pytest.raises(Exception):
-        search("quiet dinner " * 10)
+    assert not accepted("quiet dinner " * 10)  # over 80 characters: rejected by the plan
 
 
 def test_matching_is_whole_word_unicode_and_case_insensitive() -> None:

@@ -44,7 +44,7 @@ def registry_with(daily: DailyTokenCeiling) -> PolicyRegistry:
 
 
 def hard_fact_turns(config, count: int):
-    return [frame_turn(config, facts=[fact("budget", "free", hard=True)]) for _ in range(count)]
+    return [frame_turn(config, facts=[fact("planning_area", "Paris")]) for _ in range(count)]
 
 
 def test_forced_patch_rejections_trip_the_paid_failure_limiter() -> None:

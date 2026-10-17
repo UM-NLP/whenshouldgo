@@ -121,7 +121,7 @@ def test_successful_and_abuse_shaped_turns_still_trip_the_ceiling() -> None:
     assert env.post(key="two").status_code == 429  # 900 used + 1,200 worst case > 2,000
     bad = completion_response("not json", completion_tokens=900)
     env2, _, _ = real_stack([bad, bad] * 4, guest_turns=100,
-                            policy_registry=registry_with(DailyTokenCeiling(10**9, 4_000)))
+                            policy_registry=registry_with(DailyTokenCeiling(10**9, 2_500)))
     codes = [env2.post(key=f"k{i}").status_code for i in range(4)]
     assert codes[:2] == [502, 502] and codes[2] == 429, codes  # abuse-shaped turns count
 

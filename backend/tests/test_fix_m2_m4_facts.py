@@ -111,5 +111,7 @@ def test_non_finite_numbers_are_rejected(value) -> None:
     "zero​width", "bidi ‮", "<script>", "https://x.example",
 ])
 def test_search_text_is_plain_and_free_of_precise_locations(text) -> None:
-    with pytest.raises(ValidationError):
-        SearchArgs(text_query=text)
+    from app.frame import ArgumentRejected, search_arguments
+
+    with pytest.raises(ArgumentRejected):  # the plan rejects it; the pipeline degrades the turn
+        search_arguments(SearchArgs(text_query=text), f"I want {text}")

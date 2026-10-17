@@ -96,7 +96,7 @@ def test_truncated_output_and_patch_rejection_count() -> None:
     config = limited_config()
     gateway = ScriptedGateway(
         [TruncationError(usage=Usage(input_tokens=5, output_tokens=5), calls=1),
-         frame_turn(config, facts=[fact("budget", "free", hard=True)]),
+         frame_turn(config, facts=[fact("planning_area", "Paris")]),
          frame_turn(config, intent=FrameIntent.OTHER)], config)
     env = Env(gateway=gateway, discovery=RecordingClient(SyntheticMapsClient()), config=config,
               guest_turns=100, policy_registry=roomy())

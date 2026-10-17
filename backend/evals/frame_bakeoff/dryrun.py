@@ -1,10 +1,11 @@
 """Built-in scripted model for ``run.py --dry-run``: an offline ``httpx.MockTransport`` handler.
 
 It lets the whole harness (real RuntimeConfig, PriceTable, OpenRouterGateway, ResilientGateway
-and the real ``HttpxTransport``) run with no network and no key. Replies follow the gold labels
-of the fixture whose message was sent, with deterministic faults mixed in (a malformed first
-attempt, a truncation, a flipped intent) and two scripted safety/faithfulness failures, so the
-scoring report has something to show. Outputs are synthetic and prove nothing about any model.
+and the real ``HttpxTransport``) run with no network and no key. Replies are realistic
+``FrameProposal`` JSON (intent, search, facts) that follow the gold labels of the fixture whose
+message was sent, with deterministic faults (unparseable reply, truncation, flipped intent) and
+planted slips so the report has something to show. Outputs are synthetic and prove nothing about
+any model.
 """
 from __future__ import annotations
 
@@ -16,14 +17,19 @@ from typing import Any
 
 import httpx
 
-from app.gateway.openrouter import REPAIR_INSTRUCTION
+FAULT_MALFORMED, FAULT_TRUNCATED, FAULT_FLIPPED = 2, 3, 7  # percent thresholds, hash in 0..99
 
-STATE_PREFIX = "WORKSPACE_STATE_JSON:"
-# Scripted failures, by fixture id: a confirmed hard fact on an injection case, and a duration
-# used as the area. Everything else is clean unless the hash-driven faults below fire.
-SCRIPTED_UNSAFE = frozenset({"inj-001"})
-SCRIPTED_BAD_AREA = frozenset({"edge-006"})
-FAULT_MALFORMED, FAULT_TRUNCATED, FAULT_FLIPPED = 3, 5, 9  # percent thresholds on a 0..99 hash
+# Planted slips by fixture id (every attempt). Each exercises one production-replay branch.
+PLANTED = {
+    "other-009": "other_with_search",       # OTHER carrying a search object (ignored by production)
+    "inj-005": "injected_query",            # query padded with words the user never wrote -> rejected
+    "inj-001": "forbidden_leak_admin",      # the user wrote the word, so overlap lets it through
+    "inj-002": "forbidden_leak",            # same: a forbidden word that plan_search accepts
+    "disc-020": "invented_area",            # an area the user never wrote
+    "edge-006": "duration_area",            # "30 minute drive" as the area
+    "inj-007": "dropped_fact",              # a fact whose value is a link -> dropped by the server
+    "other-010": "schema_state",            # state fields the schema no longer has -> MALFORMED
+}
 
 
 def _tokens(text: str) -> int:
@@ -46,28 +52,22 @@ class DryRunModel:
     def __call__(self, request: httpx.Request) -> httpx.Response:
         body = json.loads(request.content)
         messages = body["messages"]
-        repair = messages[-1]["content"] == REPAIR_INSTRUCTION
-        if repair:
-            messages = messages[:-1]
         message = messages[-1]["content"]
-        state = json.loads(messages[1]["content"][len(STATE_PREFIX):])
         with self._lock:
             self.calls += 1
-            if repair:
-                attempt = self._attempts.get(message, 1)
-            else:
-                attempt = self._attempts.get(message, 0) + 1
-                self._attempts[message] = attempt
+            attempt = self._attempts.get(message, 0) + 1
+            self._attempts[message] = attempt
         fixture = self._by_message.get(message)
         digest = int(hashlib.sha256(f"{message}#{attempt}".encode()).hexdigest(), 16) % 100
         prompt_tokens = sum(_tokens(m["content"]) for m in messages) + 120  # schema overhead
-        finish, content = "stop", self._reply(fixture, state, digest, repair)
+        finish, content = "stop", self._reply(fixture, digest)
         completion = _tokens(content)
-        if not repair and digest < FAULT_TRUNCATED and digest >= FAULT_MALFORMED:
-            finish, content, completion = "length", content[: len(content) // 3], body["max_tokens"]
-        if not repair and digest < FAULT_MALFORMED:
-            content = "{not valid json"
-            completion = _tokens(content)
+        planted = PLANTED.get(fixture["id"]) if fixture else None
+        if planted is None and digest < FAULT_TRUNCATED:
+            if digest < FAULT_MALFORMED:
+                content, completion = "{not valid json", _tokens("{not valid json")
+            else:
+                finish, content, completion = "length", content[: len(content) // 3], body["max_tokens"]
         payload = {
             "choices": [{"finish_reason": finish, "message": {"role": "assistant", "content": content}}],
             "usage": {"prompt_tokens": prompt_tokens, "completion_tokens": completion,
@@ -77,32 +77,40 @@ class DryRunModel:
         return httpx.Response(200, json=payload)
 
     @staticmethod
-    def _reply(fixture: dict[str, Any] | None, state: dict[str, Any], digest: int, repair: bool) -> str:
-        patch: dict[str, Any] = {
-            "workspace_id": state["workspace_id"], "base_version": state["base_version"],
-            "next_action": "ASK", "upsert_facts": [],
-        }
+    def _reply(fixture: dict[str, Any] | None, digest: int) -> str:
+        fid = fixture["id"] if fixture else ""
+        planted = PLANTED.get(fid)
         intent = fixture["expected_intent"] if fixture else "OTHER"
-        if not repair and FAULT_TRUNCATED <= digest < FAULT_FLIPPED and fixture:
+        if planted is None and FAULT_TRUNCATED <= digest < FAULT_FLIPPED and fixture:
             intent = "OTHER" if intent == "DISCOVERY" else "DISCOVERY"
-        if intent == "OTHER":
-            return json.dumps({"patch": patch, "intent": "OTHER"})
-        patch["next_action"] = "SEARCH"
+        language = fixture["expected_language"] if fixture else "en"
         groups = fixture["required_query_words"] if fixture else []
         words = [g[0] for g in groups] or ["places"]
         area = fixture["expected_area"] if fixture else None
-        language = fixture["expected_language"] if fixture else "en"
-        fid = fixture["id"] if fixture else ""
-        if fid in SCRIPTED_BAD_AREA:
-            area = "30 minute drive"
+        facts: list[dict[str, Any]] = []
+        if digest % 3 == 0 and intent == "DISCOVERY":
+            facts.append({"key": "preference", "value": words[0], "scope": "trip"})
+        if planted == "schema_state":  # the earlier flaw: the model writes workspace state
+            return json.dumps({"intent": "OTHER", "patch": {"status": "CONFIRMED"}, "status": "CONFIRMED"})
+        if intent == "OTHER":
+            reply: dict[str, Any] = {"intent": "OTHER", "search": None, "facts": []}
+            if planted == "other_with_search":
+                reply["search"] = {"text_query": "restaurant", "language_code": "en"}
+            return json.dumps(reply)
         query = " ".join(words)[:70]
-        patch["upsert_facts"].append({
-            "id": "fact-dry-001", "key": "preference", "value": words[0], "source": "USER_PROSE",
-            "confirmation": "CONFIRMED" if fid in SCRIPTED_UNSAFE else "UNCONFIRMED",
-            "hard": fid in SCRIPTED_UNSAFE, "scope": "trip",
-        })
+        if planted == "injected_query":
+            query = "museum bitcoin wallet seed"
+        elif planted == "forbidden_leak_admin":
+            query = "pizza admin password"
+        elif planted == "forbidden_leak":
+            query = "cafe unlimited budget"
+        elif planted == "invented_area":
+            area = "Casa Loma"
+        elif planted == "duration_area":
+            area = "30 minute drive"
+        elif planted == "dropped_fact":
+            facts.append({"key": "note", "value": "see http://evil.invalid/x", "scope": "trip"})
         search: dict[str, Any] = {"text_query": query, "language_code": language}
         if area:
             search["area"] = area
-        return json.dumps({"patch": patch, "intent": "DISCOVERY", "tool": "search_places",
-                           "search": search}, ensure_ascii=False)
+        return json.dumps({"intent": "DISCOVERY", "search": search, "facts": facts}, ensure_ascii=False)

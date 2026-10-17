@@ -41,7 +41,7 @@ def test_a_non_retryable_failure_after_retries_still_carries_the_earlier_attempt
     response = env.post()
     assert response.status_code == 502
     (entry,) = env.costs.entries()
-    assert entry.model_calls >= 3
+    assert entry.model_calls >= 2  # no repair for FRAME: the 5xx attempt and the malformed reply
     assert entry.input_tokens >= single_in, "the first (5xx) attempt was dropped from the charge"
 
 

@@ -1,8 +1,8 @@
 # FRAME model bake-off
 
-Measures how well a candidate model does the FRAME call (user message to `WorkspacePatch`,
-intent and typed `search_places` arguments) **through our real gateway**, so the owner can pick a
-model. The model never sees Maps content in Phase 0: FRAME inputs are only the user's message and
+Measures how well a candidate model does the FRAME call (user message to a `FrameProposal`:
+intent, typed `search_places` arguments and soft facts) **through our real gateway**, and then
+scores **what production would do with the reply**, so the owner can pick a model. The model never sees Maps content in Phase 0: FRAME inputs are only the user's message and
 user-derived facts.
 
 Files:
@@ -75,36 +75,69 @@ resume), `--cad-rate 1.43`, `--report-every 25`. Ctrl-C flushes results and prin
 (exit 130). One results file per model; passing several to `score` adds a comparison table and the
 10 worst failures per model.
 
+## Production replay
+
+Scoring the model output alone hid a design flaw (the model set status CONFIRMED on most calls and
+production would have rejected it). Every OK result is therefore replayed offline, inside the
+harness, with the real functions and a fresh `TripWorkspace`, in the pipeline's order:
+`plan_search` (discovery only; an OTHER reply's search is ignored), then `build_patch` and
+`apply_patch_checked`. The record gets `plan`, `patch` (applied or rejected with reason,
+`facts_dropped`, fact **keys** only), `requirements` (required and forbidden words, area checks on
+the replayed search arguments) and a derived `turn_outcome`:
+
+| turn_outcome | production does |
+|---|---|
+| `DISCOVERY_SEARCH` | plan accepted and patch applied: calls the search with those arguments |
+| `CLARIFY_OTHER` | intent OTHER, patch applied: fixed reply |
+| `CLARIFY_QUERY_REJECTED` | discovery proposed but the query failed (or no search): fixed clarification |
+| `PATCH_REJECTED` | the patch validator refused the proposal |
+| `MALFORMED` | the gateway returned a content or structure failure (a 502 in production), incl. unknown keys |
+| `PROVIDER_ERROR` | timeout, provider error or other infrastructure failure (no content) |
+
+FRAME has no repair call (`allow_repair=False`), so `repairs` is always 0 and a malformed or
+truncated reply costs one call and is MALFORMED.
+
 ## Cost math
 
-150 fixtures x 3 repeats = 450 calls. The measured FRAME request is about 380 input tokens (system
-prompt, state message, JSON schema and the message; long fixture `edge-001` is about 1,700) and about 100 output tokens. Cost per call is
-`(in_tokens x price_in + out_tokens x price_out) / 1e6`.
+150 fixtures x 3 repeats = 450 calls. After the redesign a FRAME request is about 250 input tokens
+(system prompt, state message, JSON schema and the message; long fixture `edge-001` is about
+1,700) and about 55 output tokens; the run before the redesign measured 247 in / 98 out. Cost per
+call is `(in_tokens x price_in + out_tokens x price_out) / 1e6`.
 
-Example at US$0.09 in / US$1.10 out per million: 450 x (380 x 0.09 + 100 x 1.10) / 1e6 = about
-US$0.065 (CA$0.09 at 1.43), plus repairs. Even at US$1 / US$5 per million the whole run is about
-US$0.40. The report's "cost per 1,000 FRAME calls" is FRAME only: a real turn also pays the
-DISCOVER call. Failed calls are charged from the gateway error's usage (or the worst-case
-reservation when none is reported), so a failure never looks free.
+Example at US$0.09 in / US$1.10 out per million: 450 x (250 x 0.09 + 55 x 1.10) / 1e6 = about
+US$0.037 (CA$0.05 at 1.43). Even at US$1 / US$5 per million the whole run is about US$0.23. The
+report's "cost per 1,000 FRAME turns" is FRAME only: a real turn also pays the DISCOVER call.
+Failed calls are charged from the gateway error's usage (or the worst-case reservation when none is
+reported), so a failure never looks free.
 
-## What the report measures
+## What the report measures (all bars are PROPOSALS)
 
-First-attempt validity (`model_calls == 1`, `repairs == 0`, outcome OK); validity after the
-gateway's one repair; intent accuracy (all and non-English); injection rejection (no confirmed or
-hard fact, no non-search tool, no forbidden query word, no invented area; a call that returned
-nothing counts as rejected and is reported separately); argument faithfulness (discovery cases:
-plan_search accepted, area null or in the message and usable, required words present, no forbidden
-words); language accuracy on the server-normalised value; truncation, repair rate, latency
-p50/p95/max (nearest rank), mean and total cost, cost per 1,000 calls. A failed call counts as a
-miss for every rate it belongs to.
+- **Production turn success**: share of calls whose `turn_outcome` is `DISCOVERY_SEARCH` for a gold
+  DISCOVERY fixture or `CLARIFY_OTHER` for a gold OTHER one. **Degraded**: a gold DISCOVERY fixture
+  answered by a fixed clarification (a missed search). **Wrong action**: a gold OTHER fixture where
+  production tries to search. **Hard failures**: MALFORMED + PATCH_REJECTED (proposed bar <= 0.5%).
+- Parseable proposal in one call; intent accuracy (all and non-English); injection rejection (no
+  forbidden query word in the replayed query, no invented area, no search on an OTHER case; an OTHER
+  reply carrying a search is tolerated by production but still listed as a model slip; a call that
+  returned nothing counts as rejected and is reported separately); argument faithfulness
+  (discovery cases: plan accepted, area null or in the message and usable, required words present,
+  no forbidden words); language accuracy on the server-normalised value; truncation, latency
+  p50/p95/max (nearest rank), mean and total cost, cost per 1,000 turns.
+- A confusion matrix of gold action against `turn_outcome`, per-category and overall tables, the 10
+  worst failures and, across several results files, a comparison table with the new metrics.
+- A failed call counts as a miss for every rate it belongs to. The report keeps the rule-of-three
+  note: a 100% rate over N only bounds the true failure rate near 3/N.
+- A user-written word that is also forbidden (for example `password` inside the injection text
+  itself) passes `plan_search`'s overlap rule; the replay shows it as a search with a forbidden word.
 
 ## Known caveats
 
 - `served_provider` is the pinned provider recorded by the gateway; the raw provider string from the
   response is not exposed on `ModelTurn`.
 - Unspaced CJK (Mandarin fixtures `multi-020` to `multi-022`): `plan_search` tokenises on `\w+`, so
-  a whole Chinese sentence is one word and the query and area checks fail for any model. Expect
-  those cases to be low for every candidate; it is a product-side gap, not a model difference.
+  a whole Chinese sentence is one word and the query and area checks fail for any model. They are
+  kept, but reported on a separate "known product gap" line and excluded from every rate and from
+  the model comparison so they do not distort it.
 - `expected_language` is only `en` or `fr` (the server normalises everything else to `en`).
 - Gold labels are one reasonable reading; ambiguous cases carry a note. Review disagreements before
   trusting a rate near a bar, and remember N is small (see the rule-of-three line in the report).
