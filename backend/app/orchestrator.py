@@ -34,6 +34,7 @@ from .domain import (
 from .failures import MapsContentToModelNotImplemented, ResultExpired, TurnFailure
 from .gateway import ModelGateway
 from .guard import OUT_OF_SCOPE_REPLY, SAFETY_REPLY, classify, estimate_tokens, tools_for
+from .location import RoundedLocation
 from .pipeline import DiscoveryRef, TurnPipeline, to_api_block
 from .quota import QuotaService
 from .telemetry import (
@@ -251,8 +252,15 @@ class TurnOrchestrator:
         """Telemetry never raises into the turn: failures are counted in telemetry.health()."""
         trace(event_cls, self.sink, **fields)
 
-    def run_turn(self, principal: Principal, message: str, idempotency_key: str) -> TurnResult:
-        """Run one turn and emit typed trace events (ids, enums and counts only)."""
+    def run_turn(
+        self, principal: Principal, message: str, idempotency_key: str, *,
+        location: RoundedLocation | None = None,
+    ) -> TurnResult:
+        """Run one turn and emit typed trace events (ids, enums and counts only). ``location`` is
+        an already consented, already rounded foreground location (see app/location.py). It is
+        used only by the pipeline for a discovery request with no usable area, is not part of the
+        replay fingerprint (a replay under the same key returns the stored result whatever the
+        location now is) and is stored nowhere."""
         if not isinstance(principal, Principal):
             raise TypeError("principal must be a server-derived Principal")
         if principal.kind == PrincipalKind.DISABLED:
@@ -268,7 +276,7 @@ class TurnOrchestrator:
             input_token_estimate=estimate_tokens(message),
         )
         replayed: list[bool] = []
-        result = self._run_turn(principal, message, idempotency_key, common, replayed)
+        result = self._run_turn(principal, message, idempotency_key, common, replayed, location)
         if result.domain is None:
             outcome = PolicyOutcome.BLOCKED_TOO_LONG
         elif result.domain == DomainClass.SAFETY:
@@ -305,6 +313,7 @@ class TurnOrchestrator:
         idempotency_key: str,
         common: dict[str, str | None],
         replayed: list[bool],
+        location: RoundedLocation | None = None,
     ) -> TurnResult:
         def quota_event(outcome: QuotaOutcome) -> None:
             self._trace(QuotaEvent, **common, outcome=outcome, principal_kind=principal.kind)
@@ -370,7 +379,7 @@ class TurnOrchestrator:
                         principal.kind)
                     outcome = self._pipeline.run(
                         principal, message, base, tools, discovery_cache_key(idempotency_key),
-                        daily_ceiling=daily)
+                        daily_ceiling=daily, location=location)
                     workspace = outcome.workspace
                     free = outcome.free
                     reply, block, ref, warnings = (
@@ -467,17 +476,6 @@ class TurnOrchestrator:
             goal=message,
             status=WorkspaceStatus.EXPLORING,
             version=base.version + 1,
-            facts=[
-                Fact(
-                    id="planning_area",
-                    key="planning_area",
-                    value="Toronto/GTA",
-                    source=FactSource.INFERENCE,
-                    confirmation=Confirmation.UNCONFIRMED,
-                    hard=False,
-                    scope="trip",
-                )
-            ],
         )
 
     @staticmethod
@@ -488,6 +486,6 @@ class TurnOrchestrator:
                 "visible login and shows assumptions before it uses them."
             )
         return (
-            "I'll look for same-day Toronto/GTA options and keep Toronto/GTA as an editable "
-            "assumption. What area are you starting from?"
+            "I can help plan same-day outings. Tell me what you'd like to do and where, for "
+            'example "quiet vegetarian dinner near Union Station". What area are you starting from?'
         )

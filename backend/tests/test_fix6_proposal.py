@@ -259,7 +259,7 @@ def test_an_injection_output_cannot_create_a_hard_or_confirmed_fact() -> None:
     assert env2.post({"message": MESSAGE}).status_code == 200
     facts = env2.orchestrator.workspaces[("guest-a", "default")].facts
     assert all(not f.hard and f.confirmation.value == "UNCONFIRMED" for f in facts)
-    assert {f.id for f in facts} == {"planning_area", "party"}
+    assert {f.id for f in facts} == {"party"}
 
 
 def test_unparseable_and_truncated_replies_cost_exactly_one_call() -> None:

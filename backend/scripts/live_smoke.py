@@ -165,6 +165,18 @@ def _json_body(response: Any) -> dict[str, Any]:
     return body if isinstance(body, dict) else {}
 
 
+def parse_location(text: str) -> tuple[float, float]:
+    """``LAT,LON`` -> floats. The error text is static: the value is never echoed."""
+    try:
+        lat_text, lon_text = text.split(",")
+        lat, lon = float(lat_text), float(lon_text)
+    except ValueError:
+        raise argparse.ArgumentTypeError("expected LAT,LON (two numbers)") from None
+    if not (-90 <= lat <= 90 and -180 <= lon <= 180):  # also false for nan
+        raise argparse.ArgumentTypeError("latitude or longitude out of range")
+    return lat, lon
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="python scripts/live_smoke.py",
@@ -177,6 +189,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--max-spend-usd", type=Decimal, default=Decimal("0.02"),
                    help="abort before a turn when the ledger total is at or above this")
     p.add_argument("--json-out", default=None, help="sanitized summary path (keep out of Git)")
+    p.add_argument("--location", type=parse_location, default=None, metavar="LAT,LON",
+                   help="send this foreground location with each turn (never printed or written; "
+                        "use a public landmark, not a person's location)")
+    p.add_argument("--grant-location-consent", action="store_true",
+                   help="POST /v1/me/consents (LOCATION_FOREGROUND) before the turns")
     p.add_argument("--cad-rate", type=Decimal, default=Decimal("1.43"))
     p.add_argument("--dry-run", action="store_true",
                    help="fake model transport and Maps simulator; no network and no keys")
@@ -233,6 +250,11 @@ def _run(args: argparse.Namespace, emit: Callable[[str], None], environ: Mapping
                                "price_table_version": runtime.price_table.version,
                                "message_sha256_16": message_hash, "turns": []}
     exit_code = EXIT_OK
+    auth = {"Authorization": f"Bearer {SMOKE_TOKEN}"}
+    if args.grant_location_consent:
+        granted = client.post("/v1/me/consents", headers=auth, json={
+            "purpose": "LOCATION_FOREGROUND", "notice_version": "location-notice-1"})
+        emit(f"consent: LOCATION_FOREGROUND HTTP {granted.status_code}")
     for number in range(1, args.turns + 1):
         before = ledger_totals(runtime)
         if before["cost"] >= cap:
@@ -243,9 +265,12 @@ def _run(args: argparse.Namespace, emit: Callable[[str], None], environ: Mapping
             break
         started = time.perf_counter()
         try:
+            payload: dict[str, Any] = {"message": args.message}
+            if args.location is not None:
+                payload["location"] = {"latitude": args.location[0], "longitude": args.location[1]}
             response = client.post(
-                "/v1/agent/turns", json={"message": args.message},
-                headers={"Authorization": f"Bearer {SMOKE_TOKEN}",
+                "/v1/agent/turns", json=payload,
+                headers={**auth,
                          "Idempotency-Key": f"smoke-{os.getpid()}-{number}-{int(time.time())}"})
             status, body = response.status_code, _json_body(response)
         except Exception as error:  # noqa: BLE001 - class name only, never its text
@@ -266,6 +291,7 @@ def _run(args: argparse.Namespace, emit: Callable[[str], None], environ: Mapping
             "kill_switch_tripped": runtime.kill_switch.tripped,
             "quota_latch_tripped": runtime.quota_latch.tripped,
             "discovery": None,
+            "location": "none" if args.location is None else "sent",
         }
         titles: list[str] = []
         block = body.get("discovery") if status == 200 else None
@@ -276,6 +302,7 @@ def _run(args: argparse.Namespace, emit: Callable[[str], None], environ: Mapping
                 "framing": block.get("framing"), "cache_expires_at": block.get("cache_expires_at")}
             titles = [str(p.get("title", "")) for p in places if isinstance(p, dict)]
         emit(f"turn {number}: HTTP {status}; {elapsed:.2f}s; warnings={record['warnings']}")
+        emit("  location: none" if args.location is None else "  location: sent (rounded)")
         if status != 200:
             emit(f"  error code={record['error_code']} reason={record['error_reason']}")
             exit_code = EXIT_FAILED_TURN

@@ -47,18 +47,18 @@ def test_inferred_soft_fact_is_applied_to_a_copy_and_goal_is_untouched() -> None
     base = workspace(ASSUMPTION)
     result = apply_patch(base, patch(upsert_facts=[fact("party", "two adults")]))
     assert result is not base and base.facts == [ASSUMPTION]
-    assert {f.id for f in result.facts} == {"planning_area", "party"}
+    assert {f.id for f in result.facts} == {"planning_area", "party"}  # a pre-existing fact stays
     assert result.goal is None and result.version == 4
     added = next(f for f in result.facts if f.id == "party")
     assert (added.source, added.confirmation, added.hard) == (
         FactSource.INFERENCE, Confirmation.UNCONFIRMED, False)
 
 
-def test_server_adds_the_toronto_assumption_once_and_never_overwrites_it() -> None:
+def test_no_workspace_is_given_a_planning_area_and_an_existing_one_is_kept() -> None:
     first = apply_patch(workspace(), patch())
-    again = apply_patch(first, patch(base_version=first.version))
-    assert [f.id for f in again.facts] == ["planning_area"]
-    assert first.facts[0].source == FactSource.INFERENCE and first.facts[0].hard is False
+    assert first.facts == []  # Fix 10: the product assumes no place
+    kept = apply_patch(workspace(ASSUMPTION), patch())
+    assert [f.id for f in kept.facts] == ["planning_area"]
 
 
 @pytest.mark.parametrize("proposed", [

@@ -17,7 +17,7 @@ def test_travel_turn_creates_a_workspace_with_editable_assumption() -> None:
     result = TurnOrchestrator(dev_scaffold=True).run_turn(GUEST, "I want something to eat", "one")
     assert result.domain == DomainClass.TRAVEL
     assert result.workspace is not None
-    assert result.workspace.assumptions[0].confirmation == Confirmation.UNCONFIRMED
+    assert result.workspace.facts == []  # Fix 10: no workspace is born with a place
     assert "maps_grounded_discovery" in result.tools
 
 

@@ -107,7 +107,7 @@ def test_happy_path_applies_patch_runs_discovery_and_returns_the_block_verbatim(
     # FRAME patch applied: a soft inference, unconfirmed, next to the server's assumption
     workspace = env2.orchestrator.workspaces[("guest-a", "default")]
     facts = {f.id: f for f in workspace.facts}
-    assert set(facts) == {"planning_area", "party"}
+    assert set(facts) == {"party"}
     assert facts["party"].source == FactSource.INFERENCE
     assert facts["party"].confirmation == Confirmation.UNCONFIRMED and not facts["party"].hard
     assert workspace.goal is None and workspace.version == 1
@@ -374,7 +374,7 @@ def test_tool_budget_exhaustion_returns_the_validated_partial_result_with_a_warn
     payload = TurnResponse.model_validate(response.json())
     assert payload.discovery is None and payload.warnings == ("TOOL_BUDGET_EXHAUSTED",)
     workspace = env.orchestrator.workspaces[("guest-a", "default")]
-    assert {f.id for f in workspace.facts} == {"planning_area", "party"}
+    assert {f.id for f in workspace.facts} == {"party"}
     assert env.turns() == 1 and len(env.cache) == 0
     assert "couldn't look up places" in payload.reply
 

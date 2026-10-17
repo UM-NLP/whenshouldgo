@@ -159,7 +159,7 @@ def test_injection_output_yields_no_facts_and_an_unchanged_workspace() -> None:
     assert response.status_code == 200, response.text
     assert response.json()["warnings"] == ["NEEDS_AREA"]  # Fix 9: the message names no place
     workspace = env.orchestrator.workspaces[("guest-a", "default")]
-    assert [f.id for f in workspace.facts] == ["planning_area"]
+    assert [f.id for f in workspace.facts] == []  # Fix 10: no place is assumed
     assert all(not f.hard and f.confirmation.value == "UNCONFIRMED" for f in workspace.facts)
     assert workspace.goal is None
     assert env.discovery.calls == []  # no place was named: nothing is sent to Google

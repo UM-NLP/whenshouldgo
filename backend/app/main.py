@@ -6,16 +6,27 @@ from datetime import datetime
 import anyio
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.requests import ClientDisconnect
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from .auth import IdentityVerifier, PrincipalResolver, current_principal
+from .consent import (
+    NOTICE_VERSIONS,
+    SUPPORTED_PURPOSES,
+    ConsentStore,
+    InMemoryConsentStore,
+    OperationLimiter,
+    WrongNoticeVersion,
+)
 from .costs import CostLedger
 from .discovery import DisplayCache, GroundingLiteClient
 from .domain import (
+    ConsentPurpose,
+    ConsentRecord,
+    ConsentProcessor,
     ErrorBody,
     ErrorCode,
     ErrorReason,
@@ -26,6 +37,7 @@ from .domain import (
 )
 from .failures import TurnFailure
 from .gateway import ModelGateway
+from .location import LocationInput
 from .orchestrator import IdempotencyKeyReused, TurnOrchestrator
 from .quota import QuotaService, ReservationConflict
 from .telemetry import (
@@ -43,10 +55,44 @@ from .telemetry import (
 
 
 class TurnRequest(BaseModel):
-    # Identity is never accepted from the body; extra fields are rejected (422).
-    model_config = ConfigDict(extra="forbid")
+    # Identity is never accepted from the body; extra fields are rejected (422). Rejected input is
+    # never echoed in an error (it can be a location).
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
 
     message: str = Field(min_length=1, max_length=20_000)
+    # Optional, foreground, consented: see app/location.py. Rounded on parse; hidden from repr and
+    # from validation errors; never part of the idempotency fingerprint.
+    location: LocationInput | None = Field(default=None, repr=False)
+
+
+class ConsentGrantRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    purpose: ConsentPurpose
+    notice_version: str = Field(min_length=1, max_length=40)
+
+
+class ConsentView(BaseModel):
+    """An active consent as the client sees it (never a coordinate; withdrawn ones are not listed)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    purpose: ConsentPurpose
+    notice_version: str
+    processors: tuple[ConsentProcessor, ...]
+    granted_at: datetime
+
+    @classmethod
+    def of(cls, record: ConsentRecord) -> "ConsentView":
+        return cls(id=record.id, purpose=record.purpose, notice_version=record.notice_version,
+                   processors=record.processors, granted_at=record.granted_at)
+
+
+class ConsentList(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    consents: tuple[ConsentView, ...]
 
 
 _STATUS_CODES = {
@@ -186,6 +232,7 @@ def create_app(
     clock: Callable[[], datetime] | None = None,
     cost_ledger: CostLedger | None = None,
     dev_scaffold: bool = False,
+    consent_store: ConsentStore | None = None,
 ) -> FastAPI:
     """Build the API. With no verifier, every authenticated route fails closed (401).
 
@@ -212,6 +259,8 @@ def create_app(
     )
     application.add_middleware(_TraceMiddleware)
     application.state.verifier = verifier
+    application.state.consents = consent_store or InMemoryConsentStore(clock)
+    application.state.consent_limiter = OperationLimiter(clock)
     application.state.resolver = resolver or PrincipalResolver(
         policies=application.state.orchestrator.quotas.policies
     )
@@ -255,8 +304,16 @@ def create_app(
         if principal.kind == PrincipalKind.DISABLED:
             raise _error(403, ErrorCode.POLICY, "account unavailable")
         turn_orchestrator: TurnOrchestrator = request.app.state.orchestrator
+        if body.location is not None and not request.app.state.consents.has_active(
+            principal.uid, ConsentPurpose.LOCATION_FOREGROUND
+        ):
+            # Before any quota, model or tool work: nothing is consumed or stored.
+            raise _error(403, ErrorCode.POLICY, "location consent required",
+                         ErrorReason.LOCATION_CONSENT_REQUIRED)
         try:
-            result = turn_orchestrator.run_turn(principal, body.message, idempotency_key)
+            result = turn_orchestrator.run_turn(
+                principal, body.message, idempotency_key,
+                location=body.location.rounded() if body.location is not None else None)
         except ReservationConflict as error:
             raise _error(409, ErrorCode.CONFLICT, "request already in progress") from error
         except IdempotencyKeyReused as error:
@@ -280,6 +337,48 @@ def create_app(
             )
         except ValidationError as error:
             raise _error(500, ErrorCode.VALIDATION, "turn result violated the response contract") from error
+
+    def _consent_principal(request: Request, principal: Principal) -> ConsentStore:
+        if principal.kind == PrincipalKind.DISABLED:
+            raise _error(403, ErrorCode.POLICY, "account unavailable")
+        wait = request.app.state.consent_limiter.check(principal.uid)
+        if wait is not None:
+            raise _error(429, ErrorCode.QUOTA, "too many requests", ErrorReason.RATE_LIMITED, wait)
+        return request.app.state.consents
+
+    @application.post("/v1/me/consents", response_model=ConsentView, responses=_ERROR_RESPONSES)
+    def grant_consent(
+        body: ConsentGrantRequest, request: Request,
+        principal: Principal = Depends(current_principal),
+    ) -> ConsentView:
+        store = _consent_principal(request, principal)
+        if body.purpose not in SUPPORTED_PURPOSES or body.notice_version != NOTICE_VERSIONS[body.purpose]:
+            raise _error(422, ErrorCode.VALIDATION, "unsupported purpose or notice version")
+        try:
+            return ConsentView.of(store.grant(principal.uid, body.purpose, body.notice_version))
+        except WrongNoticeVersion:
+            raise _error(422, ErrorCode.VALIDATION, "unsupported purpose or notice version") from None
+
+    @application.get("/v1/me/consents", response_model=ConsentList, responses=_ERROR_RESPONSES)
+    def list_consents(
+        request: Request, principal: Principal = Depends(current_principal)
+    ) -> ConsentList:
+        store = _consent_principal(request, principal)
+        return ConsentList(consents=tuple(ConsentView.of(r) for r in store.active(principal.uid)))
+
+    @application.delete("/v1/me/consents/{purpose}", status_code=204, response_class=Response,
+                        responses=_ERROR_RESPONSES)
+    def withdraw_consent(
+        purpose: str, request: Request, principal: Principal = Depends(current_principal)
+    ) -> Response:
+        store = _consent_principal(request, principal)
+        try:
+            parsed = ConsentPurpose(purpose)
+        except ValueError:
+            raise _error(404, ErrorCode.VALIDATION, "no such consent") from None
+        if parsed not in SUPPORTED_PURPOSES or not store.withdraw(principal.uid, parsed):
+            raise _error(404, ErrorCode.VALIDATION, "no such consent")
+        return Response(status_code=204)
 
     return application
 

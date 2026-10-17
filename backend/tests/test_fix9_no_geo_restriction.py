@@ -27,9 +27,10 @@ from app.domain import TurnWarning
 from app.frame import FrameIntent, FrameProposal, SearchArgs, plan_search
 
 EN_REPLY = ('Where should I look? Tell me a city, neighbourhood or landmark, for example '
-            '"quiet vegetarian dinner near Union Station".')
+            '"quiet vegetarian dinner near Union Station", or share your location in the app.')
 FR_REPLY = ('Où dois-je chercher ? Indiquez une ville, un quartier ou un lieu, par exemple '
-            '« café tranquille près du Vieux-Port ».')
+            '« café tranquille près du Vieux-Port », ou partagez votre position '
+            "dans l'application.")
 MSG = "Something fun for the kids on Saturday morning"
 
 

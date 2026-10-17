@@ -49,7 +49,8 @@ MAX_UPSERTS = 10
 MAX_REMOVALS = 10
 MAX_FACTS = 50
 MAX_FACT_VALUE_CHARS = 200
-# Created and owned by the server: the model can neither change nor remove it.
+# RESERVED key: the model can neither write nor remove it. No workspace is born with it (the
+# product assumes no place); a later feature may set it from a user-confirmed area.
 SERVER_OWNED_FACT_IDS = frozenset({"planning_area"})
 ALLOWED_NEXT_ACTIONS = frozenset({
     NextAction.ASK, NextAction.SEARCH, NextAction.PRESENT_SHORTLIST,
@@ -74,13 +75,6 @@ class PatchRejected(Exception):
 def _n(text: str) -> str:
     """The comparison form of an id or key: NFKC and case-folded."""
     return unicodedata.normalize("NFKC", text).casefold()
-
-
-def planning_area_fact() -> Fact:
-    return Fact(
-        id="planning_area", key="planning_area", value="Toronto/GTA", source=FactSource.INFERENCE,
-        confirmation=Confirmation.UNCONFIRMED, hard=False, scope="trip",
-    )
 
 
 def _protected(fact: Fact) -> bool:
@@ -166,8 +160,6 @@ def apply_patch_checked(workspace: TripWorkspace, patch: WorkspacePatch) -> tupl
             raise PatchRejected(ValidationReason.HARD_CONSTRAINT)
 
     facts = {fact_id: fact for fact_id, fact in existing.items() if fact_id not in remove_ids}
-    if "planning_area" not in facts:
-        facts["planning_area"] = planning_area_fact()  # the editable Toronto/GTA assumption
     for fact_id, proposed in keep:
         facts[fact_id] = proposed
     if len(facts) > MAX_FACTS:

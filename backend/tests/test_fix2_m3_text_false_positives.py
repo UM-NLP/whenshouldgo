@@ -94,7 +94,7 @@ def test_one_bad_fact_is_dropped_and_the_rest_is_kept() -> None:
     good, also_good = fact("party", "two adults"), fact("pace", "slow and easy")
     bad = fact("note", "see https://evil.example/x")
     result, dropped = apply_patch_checked(workspace(), patch(good, bad, also_good))
-    assert {f.id for f in result.facts} == {"planning_area", "party", "pace"}
+    assert {f.id for f in result.facts} == {"party", "pace"}
     assert dropped == 1 and result.version == 4
 
 
@@ -115,7 +115,7 @@ def test_a_dropped_fact_adds_a_typed_warning_and_the_turn_succeeds() -> None:
     assert response.status_code == 200, response.text
     assert response.json()["warnings"] == ["FACT_DROPPED"]
     facts = {f.id for f in env.orchestrator.workspaces[("guest-a", "default")].facts}
-    assert facts == {"planning_area", "party"}
+    assert facts == {"party"}
 
 
 @pytest.mark.parametrize("text", [

@@ -85,8 +85,10 @@ from .frame import (
     SearchPlan,
     build_frame_request,
     build_patch,
+    message_language,
     plan_search,
 )
+from .location import RoundedLocation
 from .gateway import (
     BudgetExceededError,
     ContentFilterError,
@@ -120,20 +122,23 @@ _TOOL_GRANTS: dict[str, frozenset[ToolId]] = {
 # request the model can search for. One fixed, travel-focused clarification (no tool, no
 # discovery call, never general conversation). It is a completed turn: the model was called and
 # the user got a response, so it counts like any other (docs/access-tiers.md).
-REPLY_OTHER = (
-    "I can help plan same-day outings in Toronto/GTA. Tell me what you'd like to do or where "
-    "you'd like to go, and I'll keep Toronto/GTA as an editable assumption. "
-    "What area are you starting from?"
-)
+REPLY_OTHER = {
+    "en": "I can help plan same-day outings. Tell me what you'd like to do and where, for "
+          'example "quiet vegetarian dinner near Union Station". What area are you starting from?',
+    "fr": "Je peux aider à planifier des sorties le jour même. Dites-moi ce que vous "
+          "voulez faire et où, par exemple « café tranquille près du "
+          "Vieux-Port ». Dans quel secteur partez-vous ?",
+}
 # A discovery request with no usable place (none given, or the model's area was dropped). With no
 # place Google would search around the SERVER's network location, so there is no lookup at all:
 # one fixed question, in the language the server decided. A completed turn without a result for
 # the user, so it is free exactly like QUERY_REJECTED.
 REPLY_NEEDS_AREA = {
     "en": 'Where should I look? Tell me a city, neighbourhood or landmark, for example '
-          '"quiet vegetarian dinner near Union Station".',
-    "fr": 'Où dois-je chercher ? Indiquez une ville, un quartier ou un lieu, par exemple '
-          '« café tranquille près du Vieux-Port ».',
+          '"quiet vegetarian dinner near Union Station", or share your location in the app.',
+    "fr": "Où dois-je chercher ? Indiquez une ville, un quartier ou un lieu, par exemple "
+          "« café tranquille près du Vieux-Port », ou partagez votre position "
+          "dans l'application.",
 }
 REPLY_PARTIAL = (
     "I saved what you told me, but I couldn't look up places right now. Please try again "
@@ -386,6 +391,7 @@ class TurnPipeline:
     def run(
         self, principal: Principal, message: str, base: TripWorkspace, tools: tuple[str, ...],
         cache_key: str, *, daily_ceiling: DailyTokenCeiling | None,
+        location: RoundedLocation | None = None,
     ) -> PipelineOutcome:
         self.assert_maps_policy()
         run_id = f"run-{uuid.uuid4().hex[:16]}"
@@ -398,7 +404,7 @@ class TurnPipeline:
         spend = _Spend()
         try:
             outcome = self._run(principal, message, base, allowed, tool_run, cache_key, request,
-                                budget, spend)
+                                budget, spend, location)
         except TurnFailure as failure:
             self._flush(principal, run_id, spend, self._failure_attribution(failure))
             self._note_failure(principal, run_id, failure, spend)
@@ -452,7 +458,7 @@ class TurnPipeline:
     def _run(
         self, principal: Principal, message: str, base: TripWorkspace, allowed: frozenset[ToolId],
         tool_run: ToolRun, cache_key: str, request: GenerateRequest, budget: RunBudget,
-        spend: _Spend,
+        spend: _Spend, location: RoundedLocation | None = None,
     ) -> PipelineOutcome | TurnFailure:
         started = self._monotonic()
         proposal = self._frame(principal, request, tool_run.run_id, spend)
@@ -471,6 +477,14 @@ class TurnPipeline:
                 except ArgumentRejected:
                     query_rejected = True
         needs_area = plan is not None and not plan.has_area
+        if needs_area and location is not None:
+            # No named place, but the user shared their own (consented, rounded) location: bias the
+            # search to it instead of asking. The query text is unchanged and a named area never
+            # gets here (the text wins; the two are not mixed). The coordinates live only in this
+            # arguments dict, which goes to the tool call and nowhere else.
+            plan = SearchPlan({**plan.arguments, "location_bias": location.bias()},
+                              plan.area_dropped, False)
+            needs_area = False
         if query_rejected:
             self._reject(telemetry.ValidationReason.SCHEMA, telemetry.Phase.TOOL)
         elif needs_area:
@@ -497,7 +511,8 @@ class TurnPipeline:
             return PipelineOutcome(workspace, REPLY_NEEDS_AREA[language], None, None,
                                    (*warnings, TurnWarning.NEEDS_AREA), free=True)
         if plan is None:  # the fixed clarification: no result for the user, so a free turn
-            return PipelineOutcome(workspace, REPLY_OTHER, None, None, warnings, free=True)
+            return PipelineOutcome(workspace, REPLY_OTHER[message_language(message)], None, None,
+                                   warnings, free=True)
         # One wall-clock deadline for FRAME plus the tool call (the run budget's seconds): the
         # tool gets what is left as its timeout, and under a floor it is skipped.
         remaining = budget.seconds_remaining - (self._monotonic() - started)

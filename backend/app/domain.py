@@ -380,7 +380,7 @@ class TripWorkspace(Strict):
     owner_id: Ident  # set from the verified token only
     status: WorkspaceStatus = WorkspaceStatus.CAPTURED
     version: int = 0
-    timezone: str = "America/Toronto"
+    timezone: str = "UTC"  # the client supplies a real IANA zone later
     goal: Annotated[str, StringConstraints(max_length=20_000)] | None = None
     facts: list[Fact] = Field(default_factory=list)
     evidence: list[Evidence] = Field(default_factory=list)
@@ -736,6 +736,9 @@ class ErrorReason(StrEnum):
     OVER_BUDGET = "OVER_BUDGET"  # one run exceeded its own processing budget
     RATE_LIMITED = "RATE_LIMITED"  # a daily ceiling or the paid-failure limiter (Retry-After)
     DISCOVERY_UNAVAILABLE = "DISCOVERY_UNAVAILABLE"  # includes a tripped kill switch
+    # The request carried a location but the principal holds no active LOCATION_FOREGROUND
+    # consent: refused before any model or tool work, nothing consumed.
+    LOCATION_CONSENT_REQUIRED = "LOCATION_CONSENT_REQUIRED"
 
 
 class ErrorBody(Frozen):
