@@ -1,6 +1,6 @@
 # GitHub issue drafts
 
-Updated 2026-10-14. These drafts were prepared for the repository `UM-NLP/whenshouldgo` and have not been created: the coding session had no GitHub access. Create each as an issue, add them to Project 2, then replace the “TBD” numbers in [../backlog.md](../backlog.md) and [../project-board.md](../project-board.md). Legal items are research follow-ups, not legal advice; each needs counsel or a written Google answer before its gate passes. Context: [open-questions.md](open-questions.md).
+Updated 2026-10-17. These drafts were prepared for the repository `UM-NLP/whenshouldgo` and created as issues #24 to #35 on 2026-10-17 (LEGAL-01 to LEGAL-07 are #24 to #30, LLMOPS-01 #31, HISTORY-01 #32, ROUTINE-01 #33, NOTIFY-01 #34, ACCESS-02 #35) and added to Project 2. The "Updates to existing issues" section was posted as comments on #14, #15, #16, #20 and #21. This file stays as the source text; the issues are authoritative. Legal items are research follow-ups, not legal advice; each needs counsel or a written Google answer before its gate passes. Context: [open-questions.md](open-questions.md).
 
 ## Legal and privacy issues
 
