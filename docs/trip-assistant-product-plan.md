@@ -88,7 +88,7 @@ Every option contains the reason it fits, its main tradeoff, ranges rather than 
 
 ## MVP wedge
 
-The validating product is an **agent-assisted same-day local outing** for Toronto/GTA consumers.
+The validating product is an **agent-assisted same-day local outing** for consumers anywhere. There is no geographic restriction (owner decision, 2026-10-17); Toronto is the founders' home market, not a limit.
 
 It supports:
 

@@ -138,7 +138,7 @@ def test_tools_outside_the_allowlist_are_denied_before_any_request(tool: str) ->
 CIRCLE = {"circle": {"center": {"latitude": 43.65, "longitude": -79.38}, "radius_meters": 5000}}
 VALID_CALLS = [
     ("search_places", ARGS),
-    ("search_places", {**ARGS, "location_bias": CIRCLE, "language_code": "en", "region_code": "CA"}),
+    ("search_places", {**ARGS, "location_bias": CIRCLE, "language_code": "en"}),
     ("search_places", {**ARGS, "location_bias": {"circle": {"center": {"latitude": 1.0, "longitude": 2.0}}}}),
     ("lookup_weather", {"location": LOC}),
     ("lookup_weather", {"location": {"place_id": "SYNTH_PLACE_000000000000001"}, "units_system": "IMPERIAL",

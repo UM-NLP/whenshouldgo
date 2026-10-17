@@ -5,7 +5,7 @@ Use this role for client behavior, API presentation, and Trip Board changes in
 
 Read `AGENTS.md`, `docs/trip-assistant-product-plan.md`,
 `docs/trip-assistant-roadmap.md`, `docs/data-and-history-design.md` and the guest experience in
-`docs/access-tiers.md`. Build the Toronto/GTA same-day local-outing journey on
+`docs/access-tiers.md`. Build the same-day local-outing journey (anywhere, no geographic restriction) on
 mobile web only: a vague category or named destination, same-day driving, one
 recommendation plus up to two alternatives, an editable Trip Board, manual refresh,
 reminder proposal, outcome check-in and Google Maps handoff.

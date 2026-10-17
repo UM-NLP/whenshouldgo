@@ -125,6 +125,16 @@ REPLY_OTHER = (
     "you'd like to go, and I'll keep Toronto/GTA as an editable assumption. "
     "What area are you starting from?"
 )
+# A discovery request with no usable place (none given, or the model's area was dropped). With no
+# place Google would search around the SERVER's network location, so there is no lookup at all:
+# one fixed question, in the language the server decided. A completed turn without a result for
+# the user, so it is free exactly like QUERY_REJECTED.
+REPLY_NEEDS_AREA = {
+    "en": 'Where should I look? Tell me a city, neighbourhood or landmark, for example '
+          '"quiet vegetarian dinner near Union Station".',
+    "fr": 'Où dois-je chercher ? Indiquez une ville, un quartier ou un lieu, par exemple '
+          '« café tranquille près du Vieux-Port ».',
+}
 REPLY_PARTIAL = (
     "I saved what you told me, but I couldn't look up places right now. Please try again "
     "in a moment."
@@ -460,13 +470,16 @@ class TurnPipeline:
                     plan = plan_search(proposal.search, message)
                 except ArgumentRejected:
                     query_rejected = True
+        needs_area = plan is not None and not plan.has_area
         if query_rejected:
             self._reject(telemetry.ValidationReason.SCHEMA, telemetry.Phase.TOOL)
+        elif needs_area:
+            self._reject(telemetry.ValidationReason.NEEDS_AREA, telemetry.Phase.TOOL)
         workspace: TripWorkspace | None = None
         dropped = 0
         rejection: PatchRejected | None = None
         try:
-            patch = build_patch(base, proposal, search_ok=plan is not None)
+            patch = build_patch(base, proposal, search_ok=plan is not None and not needs_area)
             workspace, dropped = apply_patch_checked(base, patch)  # a copy: not stored yet
         except PatchRejected as rejected:
             rejection = rejected
@@ -479,6 +492,10 @@ class TurnPipeline:
         warnings: tuple[TurnWarning, ...] = (TurnWarning.FACT_DROPPED,) if dropped else ()
         if query_rejected:
             warnings = (*warnings, TurnWarning.QUERY_REJECTED)
+        if plan is not None and needs_area:
+            language = "fr" if plan.arguments.get("language_code") == "fr" else "en"
+            return PipelineOutcome(workspace, REPLY_NEEDS_AREA[language], None, None,
+                                   (*warnings, TurnWarning.NEEDS_AREA), free=True)
         if plan is None:  # the fixed clarification: no result for the user, so a free turn
             return PipelineOutcome(workspace, REPLY_OTHER, None, None, warnings, free=True)
         # One wall-clock deadline for FRAME plus the tool call (the run budget's seconds): the

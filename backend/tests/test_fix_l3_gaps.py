@@ -154,7 +154,7 @@ def test_real_adapter_missing_usage_is_charged_at_the_worst_case() -> None:
 def test_real_adapter_success_path_runs_through_to_the_block() -> None:
     config = make_config()
 
-    answer = {"intent": "DISCOVERY", "search": {"text_query": "quiet restaurant"}}
+    answer = {"intent": "DISCOVERY", "search": {"text_query": "quiet restaurant", "area": "Toronto"}}
     transport = FakeTransport([completion_response(json.dumps(answer))])
     gateway = make_gateway(transport, config=config)
     maps = RecordingClient(SyntheticMapsClient(payload=canary_payload()))

@@ -126,8 +126,13 @@ def dry_transports(message: str, turns: int) -> tuple[Any, Any]:
     from maps_simulator import FakeMcpTransport, mcp_ok, synthetic_payload  # noqa: PLC0415
 
     words = re.findall(r"[A-Za-z]+", message)
-    answer = json.dumps({"intent": "DISCOVERY",
-                         "search": {"text_query": " ".join(words[:6]) or "restaurant"}})
+    search: dict[str, str] = {"text_query": " ".join(words[:6]) or "restaurant"}
+    # The first capitalised phrase that is not the sentence's first word stands in for the model's
+    # "area"; a message with none exercises the NEEDS_AREA clarification (no Maps call).
+    places = re.findall(r"(?<=\s)[A-Z][a-z]+(?: [A-Z][a-z]+)*", message)
+    if places:
+        search["area"] = places[0]
+    answer = json.dumps({"intent": "DISCOVERY", "search": search})
 
     class DryModel:
         def send(self, request: Any, credential: Any) -> Any:

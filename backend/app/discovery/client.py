@@ -124,7 +124,7 @@ TOOL_SPECS: dict[ToolId, ToolSpec] = {
              "location_bias": _object({"circle": _object(
                  {"center": _LATLNG, "radius_meters": {"type": "number", "minimum": 1, "maximum": 50_000}},
                  ["center"])}, ["circle"]),
-             "language_code": _CODE, "region_code": _CODE,
+             "language_code": _CODE,
              # TODO(verify-live): declared by tools/list as pageSize (int32) and
              # includeExtendedDetails (bool) but never sent in the capture; their semantics and
              # billing are unknown. Optional and unset by default (the server then returned 5 places).

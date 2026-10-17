@@ -195,18 +195,21 @@ def cost_line(totals: Totals, cad_rate: float, done: int, planned: int) -> str:
 
 
 # --- one call ---------------------------------------------------------------------------
-TURN_OUTCOMES = ("DISCOVERY_SEARCH", "CLARIFY_OTHER", "CLARIFY_QUERY_REJECTED", "PATCH_REJECTED",
-                 "MALFORMED", "PROVIDER_ERROR")
+TURN_OUTCOMES = ("DISCOVERY_SEARCH", "CLARIFY_OTHER", "CLARIFY_QUERY_REJECTED",
+                 "CLARIFY_NEEDS_AREA", "PATCH_REJECTED", "MALFORMED", "PROVIDER_ERROR")
 _CONTENT_FAILURES = (MalformedOutputError, TruncationError, ContentFilterError)
 
 
 def replay_production(proposal: FrameProposal, message: str, fixture: dict[str, Any]) -> dict[str, Any]:
     """What production does with a proposal, offline and with the real functions, in the
-    pipeline's order: plan_search (discovery only; an OTHER search is ignored), then build_patch
-    and apply_patch_checked on a fresh workspace. Returns plan, patch, requirements and the
+    pipeline's order: plan_search (discovery only; an OTHER search is ignored; an accepted plan
+    with no usable area is the NEEDS_AREA clarification, no search), then build_patch and
+    apply_patch_checked on a fresh workspace. Returns plan, patch, requirements and the
     derived ``turn_outcome``. Fact VALUES are never recorded, only keys."""
-    plan: dict[str, Any] = {"outcome": "none", "area_dropped": None, "arguments": None}
+    plan: dict[str, Any] = {"outcome": "none", "area_dropped": None, "arguments": None,
+                            "has_area": None}
     plan_ok = False
+    searches = False  # a search would actually run: an accepted plan WITH a usable area
     if proposal.intent.value == "DISCOVERY":
         if proposal.search is None:
             plan["outcome"] = "rejected"
@@ -214,8 +217,9 @@ def replay_production(proposal: FrameProposal, message: str, fixture: dict[str, 
             try:
                 made = plan_search(proposal.search, message)
                 plan = {"outcome": "accepted", "area_dropped": made.area_dropped,
-                        "arguments": made.arguments}
+                        "arguments": made.arguments, "has_area": made.has_area}
                 plan_ok = True
+                searches = made.has_area
             except ArgumentRejected:
                 plan["outcome"] = "rejected"
     elif proposal.search is not None:
@@ -224,7 +228,7 @@ def replay_production(proposal: FrameProposal, message: str, fixture: dict[str, 
     patch: dict[str, Any] = {"outcome": "applied", "reason": None, "facts_dropped": 0,
                              "fact_keys": [f.key for f in proposal.facts]}
     try:
-        built = build_patch(base, proposal, search_ok=plan_ok)
+        built = build_patch(base, proposal, search_ok=searches)
         _, dropped = apply_patch_checked(base, built)
         patch["facts_dropped"] = dropped
     except PatchRejected as rejected:
@@ -235,8 +239,10 @@ def replay_production(proposal: FrameProposal, message: str, fixture: dict[str, 
         turn = "PATCH_REJECTED"
     elif proposal.intent.value == "OTHER":
         turn = "CLARIFY_OTHER"
+    elif searches:
+        turn = "DISCOVERY_SEARCH"
     else:
-        turn = "DISCOVERY_SEARCH" if plan_ok else "CLARIFY_QUERY_REJECTED"
+        turn = "CLARIFY_NEEDS_AREA" if plan_ok else "CLARIFY_QUERY_REJECTED"
     requirements: dict[str, Any] | None = None
     if turn == "DISCOVERY_SEARCH":
         query = plan["arguments"]["text_query"]
@@ -315,7 +321,7 @@ def run_one(stack: Stack, fixture: dict[str, Any], repeat: int) -> dict[str, Any
             intent=out.intent.value,
             search=None if out.search is None else {
                 "text_query": out.search.text_query, "area": out.search.area,
-                "language_code": out.search.language_code, "region_code": out.search.region_code,
+                "language_code": out.search.language_code,
                 "page_size": out.search.page_size})
         record.update(replay_production(out, message, fixture))
     else:

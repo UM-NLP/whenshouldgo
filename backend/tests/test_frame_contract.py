@@ -73,7 +73,7 @@ def test_workspace_state_message_has_user_facts_only_and_no_ids() -> None:
 
 def test_frame_proposal_is_closed_and_bounded() -> None:
     ok = FrameProposal(intent=FrameIntent.DISCOVERY, search=search())
-    assert ok.search is not None and ok.search.region_code == "CA" and ok.facts == []
+    assert ok.search is not None and ok.search.language_code == "en" and ok.facts == []
     base = dict(intent=FrameIntent.DISCOVERY, search=search())
     for extra in ({"reply": "hello"}, {"urls": ["https://x"]}, {"allowed_tools": ["x"]},
                   {"patch": {}}, {"tool": "search_places"}, {"status": "CONFIRMED"}):
@@ -86,7 +86,7 @@ def test_frame_proposal_is_closed_and_bounded() -> None:
 
 @pytest.mark.parametrize("bad", [
     dict(text_query="x" * 501),  # the schema cap; the strict 80-character rule is the plan's
-    dict(text_query="ok", region_code="US"),
+    dict(text_query="ok", region_code="CA"),  # Fix 9: no region is ever requested
     dict(text_query="ok", area="y" * 201),  # only a loose structural cap; the rest is forgiving
     dict(text_query="ok", page_size=0),
     dict(text_query="ok", page_size=6),
@@ -102,7 +102,7 @@ def test_search_arguments_are_built_from_the_closed_model_only() -> None:
     args = search_arguments(search("brunch", area="Leslieville", page_size=3),
                             "any brunch in Leslieville please")
     assert args == {"text_query": "brunch near Leslieville", "language_code": "en",
-                    "region_code": "CA", "page_size": 3}
+                    "page_size": 3}
     assert search_arguments(search("brunch"), "brunch")["text_query"] == "brunch"
     assert "page_size" not in search_arguments(search("brunch"), "brunch")
 

@@ -5,7 +5,8 @@ documents in `docs/` before making a change. They are the product source of trut
 
 ## Non-negotiable rules
 
-- Build Phase 0 only: same-day Toronto/GTA local outings on mobile web.
+- Build Phase 0 only: same-day local outings on mobile web, anywhere (no geographic
+  restriction; owner decision 2026-10-17).
 - Treat the model, tool output, client input, and retrieved text as untrusted.
 - The server owns tenant identity, access tier, quotas, tool allowlists, state
   transitions, evidence freshness, and confirmation of external actions.

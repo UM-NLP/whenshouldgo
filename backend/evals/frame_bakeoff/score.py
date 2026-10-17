@@ -9,7 +9,9 @@ have contributed to (a call that returned nothing is not a correct answer).
 
 The headline numbers score what PRODUCTION does with each reply (the ``turn_outcome`` recorded by
 the harness's production replay: plan_search, build_patch, apply_patch_checked), not only what
-the model wrote.
+the model wrote. Production never searches without a place, so for a gold DISCOVERY fixture with
+no expected area the correct action is CLARIFY_NEEDS_AREA (asking for the missing area).
+Result files recorded before that change have no ``plan.has_area`` and are scored as before.
 """
 from __future__ import annotations
 
@@ -45,8 +47,8 @@ BARS: tuple[tuple[str, str, str, float, str], ...] = (
 # Mandarin fixtures that plan_search cannot pass for ANY model (it tokenises on \w+, so an
 # unspaced sentence is one word). Scored on their own line, outside every model metric.
 KNOWN_GAP_IDS = frozenset({"multi-020", "multi-021", "multi-022"})
-TURN_COLUMNS = ("DISCOVERY_SEARCH", "CLARIFY_OTHER", "CLARIFY_QUERY_REJECTED", "PATCH_REJECTED",
-                "MALFORMED", "PROVIDER_ERROR")
+TURN_COLUMNS = ("DISCOVERY_SEARCH", "CLARIFY_OTHER", "CLARIFY_QUERY_REJECTED",
+                "CLARIFY_NEEDS_AREA", "PATCH_REJECTED", "MALFORMED", "PROVIDER_ERROR")
 _CONNECTORS = ("close to", "next to", "autour de", "près de", "pres de", "near", "nearby",
                "around", "in", "at", "by", "the", "de la", "du", "des", "de", "au", "aux", "à",
                "la", "le", "les", "dans", "vers")
@@ -161,7 +163,14 @@ def evaluate_record(rec: dict[str, Any], fx: dict[str, Any]) -> RecordEval:
     ok = rec.get("outcome") == "OK"
     expects_discovery = fx["expected_intent"] == "DISCOVERY"
     turn = str(rec.get("turn_outcome") or "UNKNOWN")
-    gold_turn = "DISCOVERY_SEARCH" if expects_discovery else "CLARIFY_OTHER"
+    # Production never searches without a place (it would fall back to the server's own location):
+    # for a gold DISCOVERY fixture with NO area the correct action is to ASK for the area.
+    if not expects_discovery:
+        gold_turn = "CLARIFY_OTHER"
+    elif fx["expected_area"] is None:
+        gold_turn = "CLARIFY_NEEDS_AREA"
+    else:
+        gold_turn = "DISCOVERY_SEARCH"
     ev = RecordEval(
         fixture_id=fx["id"], repeat=int(rec.get("repeat", 0)), category=fx["category"],
         non_english=fx["category"] == "multilingual", expects_discovery=expects_discovery,
@@ -171,8 +180,11 @@ def evaluate_record(rec: dict[str, Any], fx: dict[str, Any]) -> RecordEval:
         repaired=int(rec.get("repairs") or 0) > 0,
         intent_correct=ok and rec.get("intent") == fx["expected_intent"],
         turn=turn, turn_ok=turn == gold_turn,
-        degraded=expects_discovery and turn in ("CLARIFY_QUERY_REJECTED", "CLARIFY_OTHER"),
-        wrong_action=(not expects_discovery) and turn in ("DISCOVERY_SEARCH", "CLARIFY_QUERY_REJECTED"),
+        degraded=expects_discovery and (
+            turn in ("CLARIFY_QUERY_REJECTED", "CLARIFY_OTHER")
+            or (turn == "CLARIFY_NEEDS_AREA" and gold_turn != "CLARIFY_NEEDS_AREA")),
+        wrong_action=(not expects_discovery) and turn in (
+            "DISCOVERY_SEARCH", "CLARIFY_QUERY_REJECTED", "CLARIFY_NEEDS_AREA"),
         hard_failure=turn in ("MALFORMED", "PATCH_REJECTED"),
         violations=[], slips=[], faithful=None, language_ok=None, area_match=None,
         area_dropped=bool((rec.get("plan") or {}).get("area_dropped")),
@@ -199,7 +211,8 @@ def evaluate_record(rec: dict[str, Any], fx: dict[str, Any]) -> RecordEval:
     # (a) production-effective violations: what production would actually do wrong.
     # (b) slips neutralised by the server: a bad model output that had no production effect.
     plan_info = rec.get("plan") or {}
-    searched = plan_info.get("outcome") == "accepted"      # a search WOULD run (intent DISCOVERY)
+    # a search WOULD run: an accepted plan with a usable area (no area is the NEEDS_AREA turn)
+    searched = plan_info.get("outcome") == "accepted" and plan_info.get("has_area") is not False
     area_survives = searched and not ev.area_dropped       # the area reaches the tool arguments
     effective: list[str] = []
     slips: list[str] = []
@@ -404,7 +417,8 @@ def _usd(v: Decimal | None, places: int = 6) -> str:
 def render_confusion(evals: list[RecordEval]) -> list[str]:
     table = confusion(evals)
     short = {"DISCOVERY_SEARCH": "SEARCH", "CLARIFY_OTHER": "CLR_OTHER",
-             "CLARIFY_QUERY_REJECTED": "CLR_QUERY", "PATCH_REJECTED": "PATCH_REJ",
+             "CLARIFY_QUERY_REJECTED": "CLR_QUERY", "CLARIFY_NEEDS_AREA": "CLR_AREA",
+             "PATCH_REJECTED": "PATCH_REJ",
              "MALFORMED": "MALFORMED", "PROVIDER_ERROR": "PROV_ERR"}
     lines = ["Confusion: gold action (rows) vs production turn_outcome (columns)",
              f"  {'gold':<12}" + "".join(f"{short[c]:>11}" for c in TURN_COLUMNS)]

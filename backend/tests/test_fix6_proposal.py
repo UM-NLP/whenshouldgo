@@ -159,13 +159,13 @@ def test_omitting_each_optional_field_still_validates() -> None:
     cls = proposal_cls()
     assert cls is not None
     full = {"intent": "DISCOVERY",
-            "search": {"text_query": "q", "area": "a", "language_code": "en", "region_code": "CA",
+            "search": {"text_query": "q", "area": "a", "language_code": "en",
                        "page_size": 2},
             "facts": [{"key": "party", "value": "two", "scope": "trip"}]}
     cls.model_validate(full)
     for key in ("search", "facts"):
         cls.model_validate({k: v for k, v in full.items() if k != key})
-    for key in ("area", "language_code", "region_code", "page_size"):
+    for key in ("area", "language_code", "page_size"):
         cls.model_validate({**full, "search": {k: v for k, v in full["search"].items() if k != key}})
     for key in ("value", "scope"):
         cls.model_validate({**full, "facts": [{k: v for k, v in full["facts"][0].items()

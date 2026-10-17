@@ -80,16 +80,18 @@ resume), `--cad-rate 1.43`, `--report-every 25`. Ctrl-C flushes results and prin
 Scoring the model output alone hid a design flaw (the model set status CONFIRMED on most calls and
 production would have rejected it). Every OK result is therefore replayed offline, inside the
 harness, with the real functions and a fresh `TripWorkspace`, in the pipeline's order:
-`plan_search` (discovery only; an OTHER reply's search is ignored), then `build_patch` and
+`plan_search` (discovery only; an OTHER reply's search is ignored; an accepted plan with no usable
+area is the NEEDS_AREA clarification and no search), then `build_patch` and
 `apply_patch_checked`. The record gets `plan`, `patch` (applied or rejected with reason,
 `facts_dropped`, fact **keys** only), `requirements` (required and forbidden words, area checks on
 the replayed search arguments) and a derived `turn_outcome`:
 
 | turn_outcome | production does |
 |---|---|
-| `DISCOVERY_SEARCH` | plan accepted and patch applied: calls the search with those arguments |
+| `DISCOVERY_SEARCH` | plan accepted WITH a usable area and patch applied: calls the search with those arguments |
 | `CLARIFY_OTHER` | intent OTHER, patch applied: fixed reply |
 | `CLARIFY_QUERY_REJECTED` | discovery proposed but the query failed (or no search): fixed clarification |
+| `CLARIFY_NEEDS_AREA` | plan accepted but no usable area (none given, or dropped): fixed question "where should I look?", no search (Google would otherwise use the server's own location) |
 | `PATCH_REJECTED` | the patch validator refused the proposal |
 | `MALFORMED` | the gateway returned a content or structure failure (a 502 in production), incl. unknown keys |
 | `PROVIDER_ERROR` | timeout, provider error or other infrastructure failure (no content) |
@@ -113,9 +115,12 @@ reported), so a failure never looks free.
 ## What the report measures (all bars are PROPOSALS)
 
 - **Production turn success**: share of calls whose `turn_outcome` is `DISCOVERY_SEARCH` for a gold
-  DISCOVERY fixture or `CLARIFY_OTHER` for a gold OTHER one. **Degraded**: a gold DISCOVERY fixture
-  answered by a fixed clarification (a missed search). **Wrong action**: a gold OTHER fixture where
-  production tries to search. **Hard failures**: MALFORMED + PATCH_REJECTED (proposed bar <= 0.5%).
+  DISCOVERY fixture that HAS an expected area, `CLARIFY_NEEDS_AREA` for a gold DISCOVERY fixture
+  with a null `expected_area` (asking for the missing area is the correct action: 19 of the 103
+  DISCOVERY fixtures), or `CLARIFY_OTHER` for a gold OTHER one. **Degraded**: a gold DISCOVERY
+  fixture answered by a fixed clarification (a missed search; `CLARIFY_NEEDS_AREA` for a fixture
+  that has an area counts, because the model's area was missing or dropped). **Wrong action**: a gold OTHER fixture where
+  production tries to search or asks for an area. **Hard failures**: MALFORMED + PATCH_REJECTED (proposed bar <= 0.5%).
 - Parseable proposal in one call; intent accuracy (all and non-English); argument faithfulness
   (discovery cases: plan accepted, required words present, no forbidden word in the replayed query,
   no invented or unwanted area that reaches the tool arguments); language accuracy on the

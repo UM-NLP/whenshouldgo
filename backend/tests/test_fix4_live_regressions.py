@@ -9,8 +9,6 @@ D: an injection message yields an empty patch and an unchanged workspace.
 """
 from __future__ import annotations
 
-from app.frame import default_location_bias
-
 import pytest
 from wiring_support import TRAVEL, Env, ScriptedGateway, frame_turn, real_stack, search
 
@@ -48,10 +46,10 @@ def test_a_duration_in_area_is_dropped_not_fatal_and_costs_no_repair() -> None:
                 "area": "30 minute drive from Toronto"})
     response = env.post({"message": MESSAGE_A})
     assert response.status_code == 200, response.text
-    assert response.json()["warnings"] == ["AREA_DROPPED"]
+    # Fix 9: a dropped area leaves no place, so the turn asks where instead of searching.
+    assert response.json()["warnings"] == ["NEEDS_AREA"]
     assert len(transport.requests) == 1, "a repair call was spent on a droppable field"
-    assert call_args(env)["text_query"] == "kids friendly park with playground"  # no area folded
-    assert response.json()["discovery"] is not None
+    assert env.discovery.calls == [] and response.json()["discovery"] is None
 
 
 @pytest.mark.parametrize("area", [
@@ -137,10 +135,11 @@ def test_french_is_detected_even_when_the_model_says_en() -> None:
 @pytest.mark.parametrize("claimed", ["english", "EN", "de", "zz", "", "fra", "e"])
 def test_any_other_language_code_is_normalised_never_fatal(claimed) -> None:
     env, transport, _ = real_stack(intent="DISCOVERY", search={
-        "text_query": "quiet restaurant", "language_code": claimed})
+        "text_query": "quiet restaurant", "area": "Toronto", "language_code": claimed})
     assert env.post().status_code == 200
     assert len(transport.requests) == 1, "a language slip cost a repair call"
-    assert call_args(env)["language_code"] == "en"
+    # Fix 9: "de" is on the broadened allowlist; every other slip is normalised to "en".
+    assert call_args(env)["language_code"] == ("de" if claimed == "de" else "en")
 
 
 def test_an_english_message_with_fr_claimed_is_normalised_to_en() -> None:
@@ -158,13 +157,12 @@ def test_injection_output_yields_no_facts_and_an_unchanged_workspace() -> None:
     env, _, _ = real_stack(intent="DISCOVERY", search={"text_query": "pizza place"})
     response = env.post({"message": MESSAGE_D})
     assert response.status_code == 200, response.text
+    assert response.json()["warnings"] == ["NEEDS_AREA"]  # Fix 9: the message names no place
     workspace = env.orchestrator.workspaces[("guest-a", "default")]
     assert [f.id for f in workspace.facts] == ["planning_area"]
     assert all(not f.hard and f.confirmation.value == "UNCONFIRMED" for f in workspace.facts)
     assert workspace.goal is None
-    # Fix 8: the only coordinates sent are the fixed default bias (no area was usable).
-    assert call_args(env) == {"text_query": "pizza place", "language_code": "en",
-                              "region_code": "CA", "location_bias": default_location_bias()}
+    assert env.discovery.calls == []  # no place was named: nothing is sent to Google
 
 
 def test_a_non_discovery_message_stays_other_with_no_tool() -> None:
@@ -204,4 +202,6 @@ def test_scripted_gateway_still_works_with_an_unfixed_area_for_old_callers() -> 
         "quiet restaurant", area="30 minutes"))], config), discovery=maps, config=config)
     maps.inner._now = env.clock  # noqa: SLF001
     response = env.post()
-    assert response.status_code == 200 and response.json()["warnings"] == ["AREA_DROPPED"]
+    # Fix 9: the dropped area leaves no place: NEEDS_AREA, no lookup.
+    assert response.status_code == 200 and response.json()["warnings"] == ["NEEDS_AREA"]
+    assert maps.calls == []

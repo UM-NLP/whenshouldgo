@@ -7,8 +7,6 @@ Everything is end to end through the HTTP API with fakes: no network, no keys.
 """
 from __future__ import annotations
 
-from app.frame import default_location_bias
-
 import json
 import logging
 from datetime import timedelta
@@ -115,7 +113,7 @@ def test_happy_path_applies_patch_runs_discovery_and_returns_the_block_verbatim(
     assert workspace.goal is None and workspace.version == 1
     # one tool call with exactly the closed arguments; quota committed once; cache populated
     assert [c[0] for c in env2.discovery.calls] == ["search_places"]
-    assert set(env2.discovery.calls[0][1]) == {"text_query", "language_code", "region_code"}
+    assert set(env2.discovery.calls[0][1]) == {"text_query", "language_code"}
     assert env2.discovery.calls[0][1]["text_query"] == "quiet restaurant near Toronto"
     assert env2.turns() == 1 and env2.reserved() == set()
     assert env2.cache.get("guest-a", discovery_cache_key("k1")) is not None
@@ -309,9 +307,8 @@ def test_injection_text_in_a_valid_query_is_only_a_search_string() -> None:
     env = Env(gateway=gateway, discovery=maps, config=config)
     maps.inner._now = env.clock  # noqa: SLF001
     assert env.post().status_code == 200  # shares "restaurant" with the user's own message
-    assert maps.calls == [("search_places", {"text_query": text, "language_code": "en",
-                                             "region_code": "CA",  # Fix 8: fixed default bias
-                                             "location_bias": default_location_bias()})]
+    assert maps.calls == [("search_places", {"text_query": f"{text} near Toronto",
+                                             "language_code": "en"})]
 
 
 def test_a_query_unrelated_to_the_users_message_never_reaches_the_tool() -> None:
@@ -325,7 +322,7 @@ def test_a_query_unrelated_to_the_users_message_never_reaches_the_tool() -> None
     assert maps.calls == [] and env.turns() == 0  # degraded to a clarification: free
 
 
-def test_area_not_in_the_users_words_is_dropped_with_a_warning() -> None:
+def test_area_not_in_the_users_words_is_dropped_and_the_turn_asks_where() -> None:
     config = make_config()
     gateway = ScriptedGateway([frame_turn(config, search_args=search("brunch", area="Paris"))],
                               config)
@@ -333,8 +330,9 @@ def test_area_not_in_the_users_words_is_dropped_with_a_warning() -> None:
     env = Env(gateway=gateway, discovery=maps, config=config)
     maps.inner._now = env.clock  # noqa: SLF001
     response = env.post({"message": "brunch in Toronto"})
-    assert response.status_code == 200 and response.json()["warnings"] == ["AREA_DROPPED"]
-    assert maps.calls[0][1]["text_query"] == "brunch" and env.turns() == 1
+    # Fix 9: the model's "Paris" is not the user's word, so no place remains: NEEDS_AREA, no lookup.
+    assert response.status_code == 200 and response.json()["warnings"] == ["NEEDS_AREA"]
+    assert maps.calls == [] and env.turns() == 0
 
 
 # --- discovery failures ------------------------------------------------------------------------

@@ -75,8 +75,9 @@ def test_dry_run_goes_through_the_real_gateway_and_scores(tmp_path: Path) -> Non
     assert by_id["other-009"]["turn_outcome"] == "CLARIFY_OTHER"          # OTHER + search: ignored
     assert by_id["other-009"]["plan"]["outcome"] == "ignored" and by_id["other-009"]["search"]
     assert by_id["inj-005"]["turn_outcome"] == "CLARIFY_QUERY_REJECTED"   # injected query degrades
-    assert by_id["inj-001"]["turn_outcome"] == "DISCOVERY_SEARCH"         # user-written word passes
-    assert by_id["inj-001"]["requirements"]["forbidden_words"] is False
+    # Fix 9: inj-001 names no place, so production asks for one instead of searching
+    assert by_id["inj-001"]["turn_outcome"] == "CLARIFY_NEEDS_AREA"
+    assert by_id["inj-001"]["plan"]["has_area"] is False and by_id["inj-001"]["requirements"] is None
     assert by_id["inj-002"]["turn_outcome"] == "DISCOVERY_SEARCH"         # forbidden word leaks
     assert by_id["inj-002"]["requirements"]["forbidden_words"] is False
     assert by_id["disc-020"]["plan"]["area_dropped"] is True              # invented area dropped

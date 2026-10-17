@@ -169,6 +169,7 @@ class ValidationReason(StrEnum):
     OVERSIZE = "OVERSIZE"
     HARD_CONSTRAINT = "HARD_CONSTRAINT"
     AREA_DROPPED = "AREA_DROPPED"  # a forgiving drop, not a refusal
+    NEEDS_AREA = "NEEDS_AREA"  # discovery without a usable place: asked, no lookup
     OTHER = "OTHER"
 
 

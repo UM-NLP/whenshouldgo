@@ -20,7 +20,7 @@ import re
 import unicodedata
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any
 
 from pydantic import (
     ConfigDict,
@@ -121,7 +121,7 @@ def _checked_text_problem(value: str) -> bool:
 
 class SearchArgs(FrameModel):
     """Closed arguments for ``search_places``. There is no field for coordinates, a location
-    bias (the server adds a fixed default one, see ``plan_search``), urls or any other tool parameter; the server turns this into the tool call."""
+    bias, region code, urls or any other tool parameter; the server turns this into the tool call."""
 
     # STRUCTURE only (a string with a loose cap). Whether the QUERY is usable (length, plain text,
     # overlap with the user's words) is decided by ``plan_search``, which degrades to the fixed
@@ -133,7 +133,6 @@ class SearchArgs(FrameModel):
     area: Annotated[str, StringConstraints(max_length=200)] | None = None
     # Normalised server-side to "en" or "fr"; any other value is not an error.
     language_code: Annotated[str, StringConstraints(max_length=16)] = "en"
-    region_code: Literal["CA"] = "CA"
     page_size: Annotated[int, Field(ge=1, le=5)] | None = None
 
 
@@ -179,7 +178,12 @@ def _contains_words(haystack: list[str], needle: list[str]) -> bool:
     )
 
 
-ALLOWED_LANGUAGES = frozenset({"en", "fr"})
+# ISO 639-1 codes the server will pass to Grounding Lite as ``language_code`` (anything else
+# becomes "en"). "fil" is not listed: the tool's declared schema is only a short string and
+# Filipino has not been verified live.
+ALLOWED_LANGUAGES = frozenset((
+    "en fr es pt de it nl sv da no fi pl cs sk hu ro bg el tr ru uk ar he fa hi bn pa ur ta te "
+    "ml mr gu th vi id ms zh ja ko").split())
 # Common French function words, absent from ordinary English. Two hits mean a French message.
 FRENCH_HINT_WORDS = frozenset((
     "je nous vous les une des du au aux et pour avec sans dans sur pr\u00e8s pres chez est sont "
@@ -207,10 +211,13 @@ _NEAR = {"en": "near", "fr": "près de"}  # the connector between the query and 
 
 @dataclass(frozen=True)
 class SearchPlan:
-    """The tool arguments, plus whether the model's ``area`` had to be dropped."""
+    """The tool arguments, plus whether the model's ``area`` had to be dropped and whether a usable
+    area remains. Without one (``has_area`` False) the pipeline must NOT call Google: with no place
+    in the query Google falls back to the caller's own network location (the server's)."""
 
     arguments: dict[str, Any]
     area_dropped: bool
+    has_area: bool = True
 
 
 def _clean_area(area: str | None, message_words: list[str]) -> tuple[str | None, bool]:
@@ -238,29 +245,16 @@ def _clean_area(area: str | None, message_words: list[str]) -> tuple[str | None,
 
 
 def _language(claimed: str, message_words: list[str]) -> str:
-    """"en" or "fr", decided on the server. Two common French function words make it French
-    whatever the model said; the model's "fr" is kept with one such word; anything else is "en"
-    (a model slip here must never cost a failure or a repair call)."""
+    """A code from ``ALLOWED_LANGUAGES``, decided on the server. Two common French function words
+    make it French whatever the model said; the model's "fr" is kept with one such word; otherwise
+    the model's code (lower-cased, region subtag dropped: "pt-BR" is "pt") is used when it is on
+    the allowlist, and anything else is "en" (a model slip here must never cost a failure or a
+    repair call)."""
     hits = sum(1 for word in message_words if word in FRENCH_HINT_WORDS)
-    if hits >= 2 or (hits >= 1 and claimed.strip().casefold() == "fr"):
+    code = re.split(r"[-_]", claimed.strip().casefold(), maxsplit=1)[0]
+    if hits >= 2 or (hits >= 1 and code == "fr"):
         return "fr"
-    return "en"
-
-
-# PUBLIC constants (downtown Toronto), never derived from the user, the message, the client, the
-# model, headers or IP. Sent as the search's location bias ONLY when no usable area is present, so
-# Google does not pick its own default (a live turn without an area returned Quebec results).
-# Valid only for the Phase 0 Toronto/GTA scope; a user's own location (foreground location with
-# consent) is a later phase. Radius must stay within the tool's 50,000 m limit.
-DEFAULT_SEARCH_BIAS_CENTER = (43.6532, -79.3832)  # (latitude, longitude)
-DEFAULT_SEARCH_BIAS_RADIUS_METERS = 40000
-
-
-def default_location_bias() -> dict[str, Any]:
-    """A fresh copy of the fixed default bias, in the snake_case form Grounding Lite accepts."""
-    latitude, longitude = DEFAULT_SEARCH_BIAS_CENTER
-    return {"circle": {"center": {"latitude": latitude, "longitude": longitude},
-                       "radius_meters": DEFAULT_SEARCH_BIAS_RADIUS_METERS}}
+    return code if code in ALLOWED_LANGUAGES and code != "fr" else "en"
 
 
 def plan_search(search: SearchArgs, message: str) -> SearchPlan:
@@ -282,9 +276,9 @@ def plan_search(search: SearchArgs, message: str) -> SearchPlan:
     What it does NOT guarantee: that the query MEANS what the user asked. Up to 40 percent of
     the content words may be anything (two free words in a five-word query), and a category word
     can be added without being typed. It bounds the model; it is not a proof.
-    The only coordinates ever sent are the fixed ``DEFAULT_SEARCH_BIAS_*`` constants, and only
-    when NO usable area is present (with an area Google geocodes the text; the two are not mixed).
-    The model cannot supply a bias: ``SearchArgs`` has no such field."""
+    No coordinates, location bias or region code is ever sent (the product has no geographic
+    restriction); the place is whatever the user wrote, as text. ``has_area`` says whether one
+    survived; the model cannot supply a bias or a region: ``SearchArgs`` has no such field."""
     try:
         clean: SearchArgs | None = SearchArgs.model_validate(search.model_dump())
     except ValidationError:
@@ -306,17 +300,15 @@ def plan_search(search: SearchArgs, message: str) -> SearchPlan:
     if area is not None:
         query_words = _tokens(query)
         if query_words[-len(area_words):] != area_words:  # never "near near", never twice
-            query = f"{query} {_NEAR[language]} {area}"
+            connector = _NEAR.get(language)  # no invented connector for other languages
+            query = f"{query} {connector} {area}" if connector else f"{query} {area}"
     arguments: dict[str, Any] = {
         "text_query": query,
         "language_code": language,
-        "region_code": clean.region_code,
     }
-    if area is None:
-        arguments["location_bias"] = default_location_bias()
     if clean.page_size is not None:
         arguments["page_size"] = clean.page_size
-    return SearchPlan(arguments, area_dropped)
+    return SearchPlan(arguments, area_dropped, area is not None)
 
 
 def search_arguments(search: SearchArgs, message: str) -> dict[str, Any]:

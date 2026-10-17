@@ -176,6 +176,9 @@ def fact(fact_id: str = "party", value: str = "two adults", **overrides: Any) ->
 
 
 def search(text_query: str = "quiet restaurant", **overrides: Any) -> SearchArgs:
+    # Fix 9: a search without a usable area is never sent to Google (NEEDS_AREA), so the default
+    # carries the place the standard TRAVEL message names. Pass area=None to test the no-area case.
+    overrides.setdefault("area", "Toronto")
     return SearchArgs(text_query=text_query, **overrides)
 
 
@@ -397,7 +400,7 @@ class FrameEchoTransport(FakeTransport):
         else:
             answer: dict[str, Any] = {"intent": self.intent}
             if self.intent == "DISCOVERY":
-                answer["search"] = self.search or {"text_query": self.query}
+                answer["search"] = self.search or {"text_query": self.query, "area": "Toronto"}
             if self.facts:
                 answer["facts"] = self.facts
             self._script = [completion_response(

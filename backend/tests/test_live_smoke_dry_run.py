@@ -122,3 +122,9 @@ def test_ssl_modes_keep_verification_on() -> None:
     assert type(model) is HttpxTransport and type(discovery) is HttpxMcpTransport
     with pytest.raises(smoke.SmokeRefused):
         smoke.build_ssl_context("none")
+
+
+def test_a_message_without_a_place_prints_the_needs_area_turn_as_a_normal_200() -> None:
+    code, out = run(["--dry-run", "--message", "something fun for the kids"])
+    assert code == 0 and "HTTP 200" in out and "warnings=['NEEDS_AREA']" in out
+    assert "discovery:" not in out and "grounding_lite_calls=0" in out

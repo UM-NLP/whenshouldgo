@@ -236,8 +236,44 @@ def test_confusion_matrix_counts_gold_against_production() -> None:
     assert table["OTHER"]["CLARIFY_OTHER"] == 1 and table["OTHER"]["DISCOVERY_SEARCH"] == 1
     assert sum(sum(row.values()) for row in table.values()) == 4
     assert set(score.TURN_COLUMNS) == {
-        "DISCOVERY_SEARCH", "CLARIFY_OTHER", "CLARIFY_QUERY_REJECTED", "PATCH_REJECTED",
-        "MALFORMED", "PROVIDER_ERROR"}
+        "DISCOVERY_SEARCH", "CLARIFY_OTHER", "CLARIFY_QUERY_REJECTED", "CLARIFY_NEEDS_AREA",
+        "PATCH_REJECTED", "MALFORMED", "PROVIDER_ERROR"}
+
+
+PLAN_NO_AREA = {"outcome": "accepted", "area_dropped": False, "has_area": False,
+                "arguments": {"text_query": "quiet cafe", "language_code": "en"}}
+NO_AREA_FX = dict(expected_area=None, message="a quiet cafe please")
+
+
+def needs_area_rec(fid: str = "f-1", **over: Any) -> dict[str, Any]:
+    return rec(fid, search={"text_query": "quiet cafe", "area": None, "language_code": "en"},
+               plan=PLAN_NO_AREA, turn_outcome="CLARIFY_NEEDS_AREA", **over)
+
+
+def test_asking_for_the_missing_area_is_the_correct_action_for_a_no_area_fixture() -> None:
+    e = ev(needs_area_rec(), fx(**NO_AREA_FX))
+    assert e.turn_ok is True and e.degraded is False and e.wrong_action is False
+    assert e.faithful is True
+    searching = ev(rec(), fx(**NO_AREA_FX))  # a search where no place exists is not the gold action
+    assert searching.turn_ok is False
+
+
+def test_needs_area_for_a_fixture_that_has_an_area_is_a_degraded_miss() -> None:
+    e = ev(needs_area_rec(), fx())
+    assert e.turn_ok is False and e.degraded is True
+
+
+def test_needs_area_for_an_other_fixture_is_a_wrong_action() -> None:
+    e = ev(needs_area_rec(), fx(**OTHER_FX))
+    assert e.wrong_action is True
+
+
+def test_confusion_has_a_needs_area_column() -> None:
+    evals, _ = score.evaluate_all([needs_area_rec("n-1"), rec("d-1")],
+                                  [fx(id="n-1", **NO_AREA_FX), fx(id="d-1")])
+    table = score.confusion(evals)
+    assert table["DISCOVERY"]["CLARIFY_NEEDS_AREA"] == 1 and table["DISCOVERY"]["DISCOVERY_SEARCH"] == 1
+    assert "CLR_AREA" in "".join(score.render_confusion(evals))
 
 
 def test_empty_groups_yield_none_not_zero() -> None:

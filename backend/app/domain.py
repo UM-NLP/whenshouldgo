@@ -805,6 +805,7 @@ class TurnWarning(StrEnum):
     FACT_DROPPED = "FACT_DROPPED"  # one proposed fact had unacceptable text and was left out
     AREA_DROPPED = "AREA_DROPPED"  # the model's search area was unusable and was left out
     QUERY_REJECTED = "QUERY_REJECTED"  # no usable search query: a clarification, no lookup
+    NEEDS_AREA = "NEEDS_AREA"  # no usable place in the request: asked where to look, no lookup
 
 
 class TurnResponse(Frozen):

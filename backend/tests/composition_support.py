@@ -34,7 +34,7 @@ class ProviderModel:
     def send(self, request: Any, credential: Any) -> Any:
         self.requests.append(request)
         self.credentials.append(credential.reveal())
-        answer = {"intent": "DISCOVERY", "search": {"text_query": "quiet restaurant"}}
+        answer = {"intent": "DISCOVERY", "search": {"text_query": "quiet restaurant", "area": "Toronto"}}
         return completion_response(json.dumps(answer), prompt_tokens=250, completion_tokens=60,
                                    provider="DeepInfra")
 

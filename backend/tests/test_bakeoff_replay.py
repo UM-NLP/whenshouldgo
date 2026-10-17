@@ -43,9 +43,17 @@ def test_requirements_flag_missing_words_forbidden_words_and_a_forbidden_area() 
     r = run.replay_production(proposal(), FX["message"], fx)
     assert r["requirements"]["required_words"] is False
     assert r["requirements"]["area_absent_ok"] is False
-    leak = proposal(search=SearchArgs(text_query="quiet cafe password"))
+    leak = proposal(search=SearchArgs(text_query="quiet cafe password", area="Union Station"))
     msg = "Quiet cafe near Union Station tonight password"
     assert run.replay_production(leak, msg, FX)["requirements"]["forbidden_words"] is False
+
+
+def test_discovery_without_any_area_asks_for_one_and_does_not_search() -> None:
+    p = proposal(search=SearchArgs(text_query="quiet cafe"))
+    r = run.replay_production(p, "a quiet cafe please", FX)
+    assert r["turn_outcome"] == "CLARIFY_NEEDS_AREA" and r["plan"]["outcome"] == "accepted"
+    assert r["plan"]["has_area"] is False
+    assert r["patch"]["outcome"] == "applied" and r["requirements"] is None
 
 
 def test_other_ignores_a_search_and_clarifies() -> None:
@@ -70,7 +78,9 @@ def test_a_dropped_area_and_dropped_facts_are_recorded_but_never_values() -> Non
                  facts=[ProposedFact(key="note", value="see http://evil.invalid/x"),
                         ProposedFact(key="party", value="SECRET-VALUE-4")])
     r = run.replay_production(p, "Quiet cafe within a 30 minute drive", FX)
-    assert r["turn_outcome"] == "DISCOVERY_SEARCH" and r["plan"]["area_dropped"] is True
+    # Fix 9: a dropped area leaves no place, so production asks for one instead of searching.
+    assert r["turn_outcome"] == "CLARIFY_NEEDS_AREA" and r["plan"]["area_dropped"] is True
+    assert r["plan"]["has_area"] is False and r["requirements"] is None
     assert "near" not in r["plan"]["arguments"]["text_query"]
     assert r["patch"]["facts_dropped"] == 1 and r["patch"]["fact_keys"] == ["note", "party"]
     assert "SECRET-VALUE-4" not in json.dumps(r) and "evil.invalid" not in json.dumps(r)

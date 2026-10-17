@@ -61,7 +61,7 @@ def test_the_provider_schema_keeps_optional_fields_optional() -> None:
     defs = schema["$defs"]
     assert set(defs["SearchArgs"]["required"]) == {"text_query"}
     assert set(defs["SearchArgs"]["properties"]) == {
-        "text_query", "area", "language_code", "region_code", "page_size"}
+        "text_query", "area", "language_code", "page_size"}
     assert set(defs["ProposedFact"]["required"]) == {"key"}
     assert set(defs["ProposedFact"]["properties"]) == {"key", "value", "scope"}
     assert schema["properties"]["search"]["default"] is None  # the optional-null pattern
@@ -75,7 +75,7 @@ def test_the_provider_schema_keeps_optional_fields_optional() -> None:
 FULL = {
     "intent": "DISCOVERY",
     "search": {"text_query": "quiet restaurant", "area": "Union Station", "language_code": "en",
-               "region_code": "CA", "page_size": 3},
+               "page_size": 3},
     "facts": [{"key": "party", "value": "two", "scope": "trip"}],
 }
 
@@ -120,7 +120,7 @@ PATHS = list(optional_paths(SCHEMA, FULL, SCHEMA.get("$defs", {})))
 def test_the_full_payload_validates_and_the_walker_finds_the_optional_fields() -> None:
     assert validates(FULL)
     assert {p[-1] for p in PATHS} == {
-        "search", "facts", "area", "language_code", "region_code", "page_size", "value", "scope"}
+        "search", "facts", "area", "language_code", "page_size", "value", "scope"}
 
 
 @pytest.mark.parametrize("path", PATHS, ids=lambda p: ".".join(map(str, p)))
