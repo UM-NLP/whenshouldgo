@@ -116,7 +116,7 @@ def test_daily_token_ceiling_blocks_before_the_model_is_called() -> None:
     second = env.post(key="two")  # 900 used + 1,200 worst case > 2,000
     assert second.status_code == 429, "daily output ceiling was not enforced"
     assert (second.json()["code"], second.json().get("reason")) == ("QUOTA", "RATE_LIMITED")
-    assert len(gateway.requests) == 1 and env.reserved() == set() and env.turns() == 1
+    assert len(gateway.requests) == 1 and env.reserved() == set() and env.turns() == 0
     assert env.post(key="b", token="tok-b").status_code == 200  # another principal
 
 

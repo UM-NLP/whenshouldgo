@@ -74,6 +74,9 @@ class CostLedger:
         self._by_principal: dict[str, deque[CostEntry]] = {}
         # principal id -> when a turn failed AFTER a provider call was sent (abuse-shaped).
         self._failed: dict[str, deque[datetime]] = {}
+        # principal id -> when a FREE turn completed (OTHER or a degraded query): they do not
+        # consume the allowance, so this is what bounds them. Same retention as the failure marks.
+        self._free: dict[str, deque[datetime]] = {}
         self._writes = 0
         # Process-wide running total of PROVIDER-attributable spend since start (never pruned).
         # The whole-pilot budget and the shared Firestore ledger (ACCESS-02) will consume this and
@@ -90,19 +93,20 @@ class CostLedger:
                 entries.popleft()
             if not entries:
                 del self._by_principal[uid]
-        marks = self._failed.get(uid)
-        if marks is not None:
-            cutoff = now - self._failure_retention
-            while marks and marks[0] <= cutoff:
-                marks.popleft()
-            if not marks:
-                del self._failed[uid]
+        for table in (self._failed, self._free):
+            marks = table.get(uid)
+            if marks is not None:
+                cutoff = now - self._failure_retention
+                while marks and marks[0] <= cutoff:
+                    marks.popleft()
+                if not marks:
+                    del table[uid]
 
     def _after_write_locked(self, uid: str, now: datetime) -> None:
         self._prune_locked(uid, now)
         self._writes += 1
         if self._writes % self._sweep_every == 0:
-            for other in {*self._by_principal, *self._failed}:
+            for other in {*self._by_principal, *self._failed, *self._free}:
                 self._prune_locked(other, now)
 
     def record(self, entry: CostEntry) -> None:
@@ -137,6 +141,24 @@ class CostLedger:
         with self._lock:
             self._failed.setdefault(principal_id, deque()).append(now)
             self._after_write_locked(principal_id, now)
+
+    def record_free_turn(self, principal_id: str) -> None:
+        """Mark a completed turn that did not consume the allowance."""
+        now = self._clock()
+        with self._lock:
+            self._free.setdefault(principal_id, deque()).append(now)
+            self._after_write_locked(principal_id, now)
+
+    def free_turns(self, principal_id: str, *, window: timedelta) -> int:
+        cutoff = self._clock() - window
+        with self._lock:
+            return sum(1 for at in self._free.get(principal_id, ()) if at > cutoff)
+
+    def oldest_free_turn_at(self, principal_id: str, *, window: timedelta) -> datetime | None:
+        cutoff = self._clock() - window
+        with self._lock:
+            times = [at for at in self._free.get(principal_id, ()) if at > cutoff]
+        return min(times) if times else None
 
     # -- reads ----------------------------------------------------------------------------------
     def entries(self) -> tuple[CostEntry, ...]:

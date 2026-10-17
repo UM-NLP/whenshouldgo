@@ -169,7 +169,8 @@ def test_intent_other_runs_frame_only_and_commits_without_a_tool_call() -> None:
     response = env.post()
     assert response.status_code == 200 and response.json()["discovery"] is None
     assert "What area are you starting from?" in response.json()["reply"]
-    assert maps.calls == [] and env.turns() == 1 and len(env.cache) == 0
+    # an OTHER turn is served but free: the allowance is not consumed (see test_fix7_free_turns)
+    assert maps.calls == [] and env.turns() == 0 and len(env.cache) == 0
 
 
 # --- FRAME failures change nothing and release the quota -----------------------------------
@@ -210,13 +211,12 @@ def test_frame_failure_is_typed_changes_nothing_and_keeps_the_allowance(
     assert len(calls) == 1 and calls[0].finish_reason == t.FinishReason.ERROR
     # the same key can be retried after the failure
     gateway.items.append(frame_turn(config, intent=FrameIntent.OTHER))
-    assert env.post().status_code == 200 and env.turns() == 1
+    assert env.post().status_code == 200 and env.turns() == 0  # OTHER: free, not counted
 
 
 def test_a_failed_turn_does_not_disturb_an_existing_workspace() -> None:
     config = make_config()
-    gateway = ScriptedGateway([frame_turn(config, intent=FrameIntent.OTHER,
-                                          facts=[fact("party", "two")]),
+    gateway = ScriptedGateway([frame_turn(config, facts=[fact("party", "two")]),
                                TruncationError(usage=_usage(), calls=1)], config)
     env = Env(gateway=gateway, discovery=RecordingClient(SyntheticMapsClient()), config=config)
     assert env.post(key="one").status_code == 200
@@ -280,7 +280,7 @@ def test_forged_oversize_or_injected_arguments_never_reach_the_tool() -> None:
         response = env.post()
         # the query never reaches the tool; the turn degrades to the fixed clarification
         assert response.status_code == 200 and response.json()["warnings"] == ["QUERY_REJECTED"], index
-        assert maps.calls == [] and env.turns() == 1, index
+        assert maps.calls == [] and env.turns() == 0, index  # a degraded turn is free
 
 
 def test_structurally_malformed_search_fields_are_malformed_output() -> None:
@@ -319,7 +319,7 @@ def test_a_query_unrelated_to_the_users_message_never_reaches_the_tool() -> None
     env = Env(gateway=gateway, discovery=maps, config=config)
     response = env.post()  # was a 502 after a paid call: now a clarification and a warning
     assert response.status_code == 200 and response.json()["warnings"] == ["QUERY_REJECTED"]
-    assert maps.calls == [] and env.turns() == 1
+    assert maps.calls == [] and env.turns() == 0  # degraded to a clarification: free
 
 
 def test_area_not_in_the_users_words_is_dropped_with_a_warning() -> None:
@@ -521,8 +521,7 @@ def test_concurrent_duplicate_requests_run_the_pipeline_once() -> None:
 
 def test_concurrent_distinct_turns_for_one_tenant_are_serialised_and_never_overspend() -> None:
     config = make_config()
-    gateway = ScriptedGateway([frame_turn(config, intent=FrameIntent.OTHER) for _ in range(8)],
-                              config)
+    gateway = ScriptedGateway([frame_turn(config) for _ in range(8)], config)  # discovery turns
     env = Env(gateway=gateway, discovery=RecordingClient(SyntheticMapsClient()), config=config,
               guest_turns=3)
     statuses: list[int] = []

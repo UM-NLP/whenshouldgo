@@ -22,7 +22,7 @@ def test_intent_other_for_a_message_the_guard_passed_is_a_fixed_redirect_without
     # One travel-focused clarification, never general conversation (it is a completed turn).
     assert "Toronto/GTA" in body["reply"] and "starting from" in body["reply"]
     assert "outing" in body["reply"].lower()
-    assert env.turns() == 1
+    assert env.turns() == 0  # a free turn: served, allowance not consumed
 
 
 def test_a_guard_refusal_makes_no_model_call_and_a_french_request_reaches_frame() -> None:

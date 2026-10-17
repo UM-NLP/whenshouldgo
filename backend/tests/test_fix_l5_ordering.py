@@ -7,12 +7,11 @@ from maps_simulator import SyntheticMapsClient
 from test_gateway_support import make_config
 from wiring_support import Env, RecordingClient, ScriptedGateway, frame_turn
 
-from app.frame import FrameIntent
 
 
 def env_for(turns: int = 3) -> tuple[Env, ScriptedGateway]:
     config = make_config()
-    gateway = ScriptedGateway([frame_turn(config, intent=FrameIntent.OTHER) for _ in range(turns)],
+    gateway = ScriptedGateway([frame_turn(config) for _ in range(turns)],
                               config)
     return Env(gateway=gateway, discovery=RecordingClient(SyntheticMapsClient()),
                config=config), gateway

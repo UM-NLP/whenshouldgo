@@ -12,10 +12,11 @@ from wiring_support import Env, RecordingClient, ScriptedGateway, frame_turn
 from app.frame import FrameIntent
 
 
-def other_env(count: int = 3) -> Env:
+def other_env(count: int = 3, *, free: bool = False) -> Env:
+    """Discovery turns (they consume the allowance); ``free`` makes them OTHER turns instead."""
     config = make_config()
-    gateway = ScriptedGateway([frame_turn(config, intent=FrameIntent.OTHER) for _ in range(count)],
-                              config)
+    turn = frame_turn(config, intent=FrameIntent.OTHER) if free else frame_turn(config)
+    gateway = ScriptedGateway([turn for _ in range(count)], config)
     return Env(gateway=gateway, discovery=RecordingClient(SyntheticMapsClient()), config=config)
 
 
@@ -53,7 +54,7 @@ def test_a_duplicate_after_the_commit_is_replayed() -> None:
 def test_a_response_that_cannot_be_built_fails_before_the_commit(monkeypatch) -> None:
     import app.pipeline as pipeline
 
-    env = other_env()
+    env = other_env(free=True)
     monkeypatch.setattr(pipeline, "REPLY_OTHER", "x" * 10_000)  # violates the response contract
     response = env.post(key="k")
     assert response.status_code == 500

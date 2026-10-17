@@ -15,11 +15,10 @@ from wiring_support import (
 )
 
 from app.domain import Principal, PrincipalKind
-from app.frame import FrameIntent
 
 
 def slow_frame(config, entered: threading.Event, proceed: threading.Event):
-    inner = frame_turn(config, intent=FrameIntent.OTHER)
+    inner = frame_turn(config)
 
     def slow(request):
         entered.set()
@@ -36,7 +35,7 @@ def test_a_second_turn_for_one_tenant_times_out_with_a_typed_conflict(monkeypatc
     config = make_config()
     entered, proceed = threading.Event(), threading.Event()
     gateway = ScriptedGateway(
-        [slow_frame(config, entered, proceed), frame_turn(config, intent=FrameIntent.OTHER)],
+        [slow_frame(config, entered, proceed), frame_turn(config)],
         config)
     env = Env(gateway=gateway, discovery=RecordingClient(SyntheticMapsClient()), config=config)
     first: list = []
@@ -57,7 +56,7 @@ def test_other_tenants_are_not_blocked_by_a_slow_turn() -> None:
     config = make_config()
     entered, proceed = threading.Event(), threading.Event()
     gateway = ScriptedGateway(
-        [slow_frame(config, entered, proceed), frame_turn(config, intent=FrameIntent.OTHER)],
+        [slow_frame(config, entered, proceed), frame_turn(config)],
         config)
     env = Env(gateway=gateway, discovery=RecordingClient(SyntheticMapsClient()), config=config)
     worker = threading.Thread(target=lambda: env.post(key="slow"))
@@ -71,7 +70,7 @@ def test_other_tenants_are_not_blocked_by_a_slow_turn() -> None:
 
 def test_idle_locks_are_evicted() -> None:
     config = make_config()
-    gateway = ScriptedGateway([frame_turn(config, intent=FrameIntent.OTHER) for _ in range(30)],
+    gateway = ScriptedGateway([frame_turn(config) for _ in range(30)],
                               config)
     env = Env(gateway=gateway, discovery=RecordingClient(SyntheticMapsClient()), config=config)
     version = env.quotas.policies.current().version
@@ -86,7 +85,7 @@ def test_the_lock_is_released_after_a_failed_turn() -> None:
 
     config = make_config()
     gateway = ScriptedGateway([TruncationError(calls=1),
-                               frame_turn(config, intent=FrameIntent.OTHER)], config)
+                               frame_turn(config)], config)
     env = Env(gateway=gateway, discovery=RecordingClient(SyntheticMapsClient()), config=config)
     assert env.post(key="a").status_code == 502
     assert len(env.orchestrator._workspace_locks) == 0  # noqa: SLF001

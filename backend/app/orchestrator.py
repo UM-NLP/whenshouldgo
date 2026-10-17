@@ -345,6 +345,7 @@ class TurnOrchestrator:
             return exhausted
         key = (principal.uid, "default")
         committed = False
+        free = False  # a served turn that gave the user no result does not consume the allowance
         try:
             quota_event(QuotaOutcome.DUPLICATE if reservation.duplicate else QuotaOutcome.RESERVED)
             if reservation.duplicate:
@@ -371,6 +372,7 @@ class TurnOrchestrator:
                         principal, message, base, tools, discovery_cache_key(idempotency_key),
                         daily_ceiling=daily)
                     workspace = outcome.workspace
+                    free = outcome.free
                     reply, block, ref, warnings = (
                         outcome.reply, outcome.discovery, outcome.ref, outcome.warnings)
                 elif self._pipeline is not None:
@@ -394,7 +396,10 @@ class TurnOrchestrator:
                 self.workspaces[key] = workspace
                 self._committed[record_key] = (_fingerprint(message), ReplayRecord(stored, ref))
                 try:
-                    self.quotas.commit(reservation)
+                    if free:
+                        self.quotas.release(reservation)  # served, but not counted
+                    else:
+                        self.quotas.commit(reservation)
                 except BaseException as fault:
                     counted = idempotency_key in self.quotas.usage_for(principal.uid).committed_keys
                     if not counted:
@@ -418,7 +423,7 @@ class TurnOrchestrator:
             raise
         # Emitted after the reservation try block: a telemetry fault cannot release a
         # committed unit or lose the replay record.
-        quota_event(QuotaOutcome.COMMITTED)
+        quota_event(QuotaOutcome.RELEASED if free else QuotaOutcome.COMMITTED)
         return result
 
     @staticmethod

@@ -11,18 +11,17 @@ from maps_simulator import SyntheticMapsClient
 from test_gateway_support import make_config
 from wiring_support import Env, RecordingClient, ScriptedGateway, frame_turn
 
-from app.frame import FrameIntent
 
 
 def slow_gateway(config, entered: threading.Event, proceed: threading.Event, extra: int = 3):
-    inner = frame_turn(config, intent=FrameIntent.OTHER)
+    inner = frame_turn(config)
 
     def slow(request):
         entered.set()
         proceed.wait(5)
         return inner(request)
 
-    return ScriptedGateway([slow] + [frame_turn(config, intent=FrameIntent.OTHER)
+    return ScriptedGateway([slow] + [frame_turn(config)
                                      for _ in range(extra)], config)
 
 

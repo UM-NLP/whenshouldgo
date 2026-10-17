@@ -134,6 +134,7 @@ REPLY_PARTIAL = (
 # policy; the paid-failed-turn limit is ``RuntimeConfig.max_paid_failed_turns_per_hour``.
 DAILY_WINDOW = timedelta(hours=24)
 PAID_FAILURE_WINDOW = timedelta(hours=1)
+FREE_TURN_WINDOW = timedelta(hours=1)
 MAX_RETRY_AFTER_SECONDS = 3600
 # PLACEHOLDER (owner-tunable): below this many seconds left in the run the tool is skipped and
 # the validated partial result is returned (a search needs at least about a second).
@@ -182,6 +183,9 @@ class PipelineOutcome:
     discovery: DiscoveryBlock | None
     ref: DiscoveryRef | None
     warnings: tuple[TurnWarning, ...] = ()
+    # True when the user got no result (intent OTHER, or a degraded discovery proposal): the turn
+    # is served but does NOT consume the allowance (the orchestrator releases the reservation).
+    free: bool = False
 
 
 @dataclass
@@ -360,6 +364,13 @@ class TurnPipeline:
             oldest = self._costs.oldest_failed_paid_turn_at(principal.uid, window=PAID_FAILURE_WINDOW)
             raise TurnFailure(429, ErrorCode.QUOTA, ErrorReason.RATE_LIMITED,
                               retry_after=self._retry_after(oldest, PAID_FAILURE_WINDOW, 60))
+        # Free turns cost a model call but not an allowance unit, so they have their own cap
+        # (and it is not the paid-failure limiter: they are completed 200s).
+        free = self._costs.free_turns(principal.uid, window=FREE_TURN_WINDOW)
+        if free >= self._config.max_free_turns_per_hour:
+            oldest = self._costs.oldest_free_turn_at(principal.uid, window=FREE_TURN_WINDOW)
+            raise TurnFailure(429, ErrorCode.QUOTA, ErrorReason.RATE_LIMITED,
+                              retry_after=self._retry_after(oldest, FREE_TURN_WINDOW, 60))
 
     # -- the run ----------------------------------------------------------------------------------
     def run(
@@ -392,6 +403,8 @@ class TurnPipeline:
         # A deadline or tool-budget partial is a provider-side shortfall, not the user's spend.
         partial = TurnWarning.TOOL_BUDGET_EXHAUSTED in outcome.warnings
         self._flush(principal, run_id, spend, Attribution.PROVIDER if partial else Attribution.USER)
+        if outcome.free:
+            self._costs.record_free_turn(principal.uid)
         return outcome
 
     @staticmethod
@@ -466,8 +479,8 @@ class TurnPipeline:
         warnings: tuple[TurnWarning, ...] = (TurnWarning.FACT_DROPPED,) if dropped else ()
         if query_rejected:
             warnings = (*warnings, TurnWarning.QUERY_REJECTED)
-        if plan is None:
-            return PipelineOutcome(workspace, REPLY_OTHER, None, None, warnings)
+        if plan is None:  # the fixed clarification: no result for the user, so a free turn
+            return PipelineOutcome(workspace, REPLY_OTHER, None, None, warnings, free=True)
         # One wall-clock deadline for FRAME plus the tool call (the run budget's seconds): the
         # tool gets what is left as its timeout, and under a floor it is skipped.
         remaining = budget.seconds_remaining - (self._monotonic() - started)

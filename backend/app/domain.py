@@ -680,6 +680,12 @@ class RuntimeConfig(Frozen):
     # daily token ceiling in the entitlement policy are what bound abuse of paid calls. Enforced
     # before the model is called; over the limit is a typed 429 QUOTA / OVER_BUDGET.
     max_paid_failed_turns_per_hour: int = Field(default=10, ge=1, le=1_000)
+    # OWNER-TUNABLE PLACEHOLDER: the most FREE turns one principal may cause per rolling hour. A
+    # turn that ends without a result for the user (intent OTHER, or a discovery proposal degraded
+    # to the fixed clarification) does not consume the allowance, but it costs a model call, so
+    # this caps it. Over the limit is a typed 429 RATE_LIMITED with Retry-After, before FRAME. It
+    # is separate from the paid-failed-turn limit (free turns are completed 200s, not failures).
+    max_free_turns_per_hour: int = Field(default=30, ge=1, le=1_000)
     # Decision 17 and legal open question 2 (docs/legal/open-questions.md): in Phase 0 the
     # model never sees Google Maps content. Prompt caching at OpenRouter's upstream hosts is
     # therefore not a concern, and the server shows Google's grounded text verbatim. True

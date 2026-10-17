@@ -217,7 +217,7 @@ def test_other_with_a_search_object_ignores_it_and_gets_the_fixed_reply(search_o
     assert len(transport.requests) == 1, "a repair call was spent"
     assert response.json()["discovery"] is None and response.json()["warnings"] == []
     assert "What area are you starting from?" in response.json()["reply"]
-    assert env.discovery.calls == [] and env.turns() == 1
+    assert env.discovery.calls == [] and env.turns() == 0
 
 
 @pytest.mark.parametrize("reply", [
@@ -236,7 +236,7 @@ def test_a_bad_query_degrades_to_the_fixed_reply_with_a_warning(reply) -> None:
     assert response.json()["discovery"] is None
     assert "What area are you starting from?" in response.json()["reply"]
     assert len(transport.requests) == 1 and env.discovery.calls == []
-    assert env.turns() == 1 and env.reserved() == set()  # a completed turn, cost recorded
+    assert env.turns() == 0 and env.reserved() == set()  # served free (not counted); cost recorded
     assert len(env.costs.entries()) == 1
     assert env.events(t.ValidationRejection), "the degradation must stay visible in telemetry"
 
