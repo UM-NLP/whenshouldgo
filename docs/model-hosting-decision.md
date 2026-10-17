@@ -8,6 +8,30 @@ Use a low-cost open model reached through **OpenRouter** as the default behind a
 
 The specific model and upstream host are chosen by a bake-off on synthetic fixtures (tool-calling reliability, strict JSON output, travel-domain classification, injection resistance, latency and cost), not by price alone. A candidate must have a zero-data-retention endpoint and written terms on file in `docs/legal/` before use. Cheap open models vary widely in tool calling and structured output, so the evaluation suite is the selection gate.
 
+### Selection (owner decision, 2026-10-17)
+
+Primary FRAME model: `google/gemma-4-31b-it` at DeepInfra (provider slug `deepinfra`). Second: `qwen/qwen3-next-80b-a3b-instruct` at DeepInfra. Both requests carried the zero-retention, data-collection-deny and no-fallback parameters, and OpenRouter served them, so it treats both DeepInfra endpoints as zero-retention eligible. Written DeepInfra terms (retention, training, caching, data location) and a data processing agreement are still required before pilot traffic; DeepInfra's data location is unverified and probably outside Canada, which the consent notice must state.
+
+### Bake-off result (live, 2026-10-17)
+
+150 synthetic hand-labelled fixtures (50 discovery, 30 non-discovery, 30 multilingual, 20 injection, 20 edge) x 3 repeats = 450 calls per model through the real gateway, with every reply replayed through the production query-planning and patch steps (`backend/evals/frame_bakeoff/`). The fixtures were written and labelled by an agent and the harness was tuned against them, so this is a first-pass comparison and not an independent test; the pass bars are proposals and the 450-call sample resolves failure rates only to about 1%.
+
+| | Gemma 4 31B | Qwen3-Next 80B | gpt-oss-120b |
+|---|---|---|---|
+| Production turn success | 99.3% | 99.3% | 35.6% |
+| Parseable first attempt | 100% | 100% | 36.7% |
+| Intent accuracy | 99.3% | 99.3% | 36.1% |
+| Faithfulness | 99.0% | 97.0% | 35.3% |
+| Latency median / 95th percentile | 1.00 / 2.22 s | 1.33 / 3.30 s | n/a (provider errors) |
+| Cost per 1,000 FRAME turns | US$0.064 | US$0.063 | n/a |
+| Cost of the run | US$0.0289 | US$0.0285 | US$0.0148 |
+
+`gpt-oss-120b` is excluded for now: 62.6% of its calls ended in provider errors (rate limiting, then the circuit breaker), and as a reasoning model it spent about 336 output tokens per call against about 36 for Gemma 4. The cause of the rate limiting is unknown. Qwen3-Next's one failed bar (injection rejection 95%) came from a search attached to an OTHER intent that the server ignores; the scorer is being changed to report such neutralised slips separately.
+
+An earlier run with the model filling the whole workspace patch was far worse (about 6% production turn success, because the model set patch status to CONFIRMED on 61% of calls). That drove the FRAME redesign recorded in decision 23: the model proposes an intent, a search and soft facts, and the server owns state and routing.
+
+Verified live: the response `provider` field is the display name (`DeepInfra`), not the slug; cached tokens were zero; one FRAME call is about 250 input and 40 to 100 output tokens. Known limits: unspaced Mandarin fails the query overlap rule (a product gap), and a word the user wrote that is off-topic (for example "password") passes the overlap rule.
+
 ## Gateway
 
 ```text

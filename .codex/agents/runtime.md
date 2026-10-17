@@ -15,7 +15,8 @@ action confirmation.
   CONFIRMED -> ARMED -> ACTIVE -> ADAPTING -> COMPLETED`, plus `CANCELLED`,
   `EXPIRED`, `UNSUPPORTED`. Only validated server commands confirm, arm or
   activate a plan; plan versions are immutable.
-- Model output is a strict `WorkspacePatch`. Reject unknown fields, invalid
+- Model output is a strict, minimal proposal (Phase 0: intent, optional search,
+  optional soft facts); the server builds the `WorkspacePatch`. Reject unknown fields, invalid
   transitions, missing provenance, stale evidence and any inference promoted to a
   hard fact. Changing date, travelers, destination or a fixed anchor invalidates
   dependent evidence and plans.

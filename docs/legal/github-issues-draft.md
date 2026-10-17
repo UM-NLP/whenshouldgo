@@ -13,7 +13,7 @@ Done when: the launch stage and eligibility are on file, or the owner has record
 
 ### LEGAL-02: Written processor terms for OpenRouter and the upstream model host
 Phase 0 entry gate. Grounding Lite terms require that the model provider not store, cache or train on Maps content.
-- Choose candidate hosts from the model bake-off; read each host's retention and training terms.
+- The bake-off chose DeepInfra (Gemma 4 31B primary, Qwen3-Next second, 2026-10-17); read DeepInfra's retention, training, caching and data-location terms and request its data processing agreement.
 - Request a data processing agreement and sub-processor list from OpenRouter (none is published).
 - Get Google's answer on whether zero data retention with in-memory prompt caching meets “not cached by the LLM” (question 2). The 2026-10-15 analysis says it cannot be confirmed compliant: OpenRouter allows implicit in-memory prompt caching under zero retention. Verify and disable reusable prompt caching on every allowlisted upstream endpoint and fallback, or get Google's written acceptance, and record it per provider.
 - Save the terms in `docs/legal/` and review each host's stated retention monthly.

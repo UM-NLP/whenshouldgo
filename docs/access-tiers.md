@@ -19,7 +19,7 @@ These numbers are an initial experiment, not a promise that they are economicall
 
 ## What is counted
 
-A **user turn** is one user submission for which the service returns a completed assistant response. The assistant response, clarification question, internal reasoning, retries and tool calls never add turns. Validation failures, provider failures, safety refusals, duplicate idempotency keys and server errors do not consume a user turn.
+A **user turn** is one user submission for which the service returns a completed assistant response. A response that is only the fixed clarification (the model judged the message not to be an outing request, or its search was rejected) does not consume a turn; its cost is still recorded, and a per-user limit on such free turns applies. The assistant response, clarification question, internal reasoning, retries and tool calls never add turns. Validation failures, provider failures, safety refusals, duplicate idempotency keys and server errors do not consume a user turn.
 
 An **activated trip** is counted once when the user accepts a plan and then saves it, schedules a reminder or launches the Maps handoff. Searches, abandoned workspaces and generated plans the user does not act on are not trips. Edits within that workspace remain the same trip unless the user changes its core goal, destination or service date and accepts the resulting new plan. The interface explains before an edit will create another trip.
 

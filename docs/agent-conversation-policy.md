@@ -37,7 +37,7 @@ TravelSession
 
 Multiple goal hypotheses may coexist: `FIND_A_PLACE`, `ROUTE_TO_KNOWN_PLACE`, `DAY_PLAN`, `MULTI_DAY_ITINERARY`, `TRANSPORT_RESEARCH` and `REPLAN`.
 
-Every state change is a strict `WorkspacePatch`. The server rejects unknown fields, invalid transitions, missing provenance and attempts to convert an inference into a confirmed hard fact.
+Every state change is a strict `WorkspacePatch` built by the server. In Phase 0 the model proposes only an intent, an optional search and optional soft facts; the server builds the patch with its own ids, status and next action. The server rejects unknown fields, invalid transitions, missing provenance and attempts to convert an inference into a confirmed hard fact.
 
 ## Next action
 

@@ -37,7 +37,7 @@ flowchart LR
 3. Compile only relevant workspace state, confirmed facts, permissions, fresh evidence, memory and remaining budget.
 4. Expose the minimum tool set for the validated travel intent.
 5. Gather independent read evidence in parallel.
-6. Require a strict `WorkspacePatch`, candidate action or grounded response from the model.
+6. Require a strict, minimal proposal from the model (in Phase 0: an intent, an optional search and optional soft facts); the server builds the `WorkspacePatch`, candidate action or grounded response itself.
 7. Validate schema, domain, tenant, permissions, provenance, freshness, hard constraints, arithmetic, finish reason, tokens and cost.
 8. Ask one focused question only when the missing answer materially changes the result; otherwise show assumptions and options.
 9. Create an immutable proposed plan version with evidence and tradeoffs.

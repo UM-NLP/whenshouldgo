@@ -83,6 +83,7 @@ The owner supplied answers to the eleven questions ([google-maps-grounding-lite-
 |---|---|
 | ZDR with in-memory prompt caching vs Google's “not cached by the LLM” | Google's written answer (question 2) and written terms from OpenRouter and the chosen upstream host |
 | OpenRouter has no sub-processor list or Canadian terms | Request a DPA and sub-processor information; select hosts after reading their terms |
+| DeepInfra is the chosen host for both FRAME models (decision 6, 2026-10-17): retention, training, prompt caching, data location, sub-processors and a data processing agreement are not on file; its location is probably outside Canada | Obtain DeepInfra's written terms and DPA, record them in `docs/legal/`, and state the cross-border processing in the consent notice. Phase 0 sends only user messages and user-derived facts to the model, never Maps content |
 | iOS web-push requirements and FCM data terms | Re-fetch Apple and Firebase pages from a machine that can load them |
 | Whether the Google Cloud billing account is in the EEA (different terms apply) | Check the billing address |
 | Grounding Lite pricing and quotas (research found conflicting sources, one paid SKU listed) | Confirm in the Google Cloud console |
