@@ -114,9 +114,14 @@ _TOOL_GRANTS: dict[str, frozenset[ToolId]] = {
     "maps_grounded_discovery": frozenset({ToolId.SEARCH_PLACES}),
 }
 
+# FRAME returned intent OTHER for a message the conservative guard let through: not an outing
+# request the model can search for. One fixed, travel-focused clarification (no tool, no
+# discovery call, never general conversation). It is a completed turn: the model was called and
+# the user got a response, so it counts like any other (docs/access-tiers.md).
 REPLY_OTHER = (
-    "I'll look for same-day Toronto/GTA options and keep Toronto/GTA as an editable "
-    "assumption. What area are you starting from?"
+    "I can help plan same-day outings in Toronto/GTA. Tell me what you'd like to do or where "
+    "you'd like to go, and I'll keep Toronto/GTA as an editable assumption. "
+    "What area are you starting from?"
 )
 REPLY_PARTIAL = (
     "I saved what you told me, but I couldn't look up places right now. Please try again "

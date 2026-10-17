@@ -399,7 +399,6 @@ def test_in_flight_duplicate_key_conflicts_without_counting() -> None:
     [
         ("Write Python code", OUT_OF_SCOPE_REPLY),
         ("Tell me a joke about cats", OUT_OF_SCOPE_REPLY),
-        ("Write an essay then plan a restaurant trip", None),
         ("This is an emergency", SAFETY_REPLY),
         ("trip " * 2_100, None),  # over the 2,000-token message budget
     ],

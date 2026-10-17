@@ -208,6 +208,9 @@ _TRAVEL_WORDS = frozenset((
     "minutes heures").split())
 
 
+_NEAR = {"en": "near", "fr": "près de"}  # the connector between the query and the area
+
+
 @dataclass(frozen=True)
 class SearchPlan:
     """The tool arguments, plus whether the model's ``area`` had to be dropped."""
@@ -226,8 +229,10 @@ def _clean_area(area: str | None, message_words: list[str]) -> tuple[str | None,
         return None, False
     text = unicodedata.normalize("NFKC", area).strip()
     folded = text.casefold()
+    if not text:
+        return None, False  # an empty area is "no area", not a drop (live runs send "")
     if (
-        not text or len(text) > MAX_AREA_CHARS or plain_text_problem(text)
+        len(text) > MAX_AREA_CHARS or plain_text_problem(text)
         or _DURATION.search(folded) or _TRAVEL_WORDS & set(_tokens(folded))
     ):
         return None, True
@@ -260,7 +265,7 @@ def plan_search(search: SearchArgs, message: str) -> SearchPlan:
 
     Anything else is rejected (``ArgumentRejected``). The AREA and the LANGUAGE are forgiving: an
     unusable area is dropped (``area_dropped``), a bad language becomes "en"/"fr" on the server,
-    and the area is folded as "<query> near <area>" unless the query already ends with it.
+    and the area is folded as "<query> near <area>" ("près de" in French) unless the query already ends with it.
 
     What this guarantees: the search text is mostly the user's own words plus generic category
     words, and a lone shared word, a stopword or a pile of injected words cannot get through.
@@ -276,6 +281,7 @@ def plan_search(search: SearchArgs, message: str) -> SearchPlan:
         raise ArgumentRejected()
     query = clean.text_query
     message_words = _tokens(message)
+    language = _language(clean.language_code, message_words)
     area, area_dropped = _clean_area(clean.area, message_words)
     area_words = _tokens(area) if area is not None else []
     content = [w for w in _tokens(query) if len(w) >= MIN_WORD_CHARS and w not in STOPWORDS]
@@ -286,10 +292,10 @@ def plan_search(search: SearchArgs, message: str) -> SearchPlan:
     if area is not None:
         query_words = _tokens(query)
         if query_words[-len(area_words):] != area_words:  # never "near near", never twice
-            query = f"{query} near {area}"
+            query = f"{query} {_NEAR[language]} {area}"
     arguments: dict[str, Any] = {
         "text_query": query,
-        "language_code": _language(clean.language_code, message_words),
+        "language_code": language,
         "region_code": clean.region_code,
     }
     if clean.page_size is not None:

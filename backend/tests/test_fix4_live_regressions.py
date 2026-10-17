@@ -56,8 +56,8 @@ def test_a_duration_in_area_is_dropped_not_fatal_and_costs_no_repair() -> None:
     "30 minute drive from Toronto", "30 minutes", "a 20 min walk", "5 km", "2 miles away",
     "1 hour", "15 minutes en voiture", "à 10 minutes de marche", "drive", "walking distance",
     "Toronto",  # the user never wrote it
-    "12 Queen Street West", "43.6532,-79.3832", "https://evil.example", "y" * 81, "",
-])
+    "12 Queen Street West", "43.6532,-79.3832", "https://evil.example", "y" * 81,
+])  # an EMPTY area is no area, not a drop (test_guard_frame_other_and_area)
 def test_unusable_areas_are_dropped_and_flagged(area) -> None:
     arguments, dropped = plan("kids friendly park with playground", MESSAGE_A, area=area)
     assert "near" not in arguments["text_query"].split(), arguments
@@ -108,7 +108,8 @@ def test_a_leading_preposition_is_not_folded_twice() -> None:
 ])
 def test_area_connectors_are_stripped_and_folded_once(area, message, folded) -> None:
     arguments, dropped = plan("cafe", message, area=area)
-    assert arguments["text_query"] == f"cafe near {folded}", arguments
+    connector = "près de" if arguments["language_code"] == "fr" else "near"
+    assert arguments["text_query"] == f"cafe {connector} {folded}", arguments
     assert dropped in (False, None)
     assert "near near" not in arguments["text_query"]
 
@@ -131,7 +132,7 @@ def test_french_is_detected_even_when_the_model_says_en() -> None:
         "language_code": "en"})
     assert env.post({"message": MESSAGE_C}).status_code == 200
     assert call_args(env)["language_code"] == "fr"
-    assert call_args(env)["text_query"] == "restaurant tranquille near Vieux-Port"
+    assert call_args(env)["text_query"] == "restaurant tranquille près de Vieux-Port"
 
 
 @pytest.mark.parametrize("claimed", ["english", "EN", "de", "zz", "", "fra", "e"])

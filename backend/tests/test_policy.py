@@ -21,10 +21,12 @@ def test_travel_turn_creates_a_workspace_with_editable_assumption() -> None:
     assert "maps_grounded_discovery" in result.tools
 
 
-def test_mixed_request_does_not_receive_tools() -> None:
+def test_mixed_request_continues_as_travel_and_keeps_only_the_outing() -> None:
+    # The model never writes reply text, so the off-topic part cannot be answered: the message
+    # is not refused and FRAME extracts only the travel search.
     result = TurnOrchestrator(dev_scaffold=True).run_turn(GUEST, "Write code then plan a restaurant trip", "one")
-    assert result.domain == DomainClass.MIXED
-    assert result.tools == ()
+    assert result.domain == DomainClass.TRAVEL
+    assert "maps_grounded_discovery" in result.tools
 
 
 def test_orchestrator_rejects_bare_principal_id() -> None:
