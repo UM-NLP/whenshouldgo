@@ -116,13 +116,22 @@ reported), so a failure never looks free.
   DISCOVERY fixture or `CLARIFY_OTHER` for a gold OTHER one. **Degraded**: a gold DISCOVERY fixture
   answered by a fixed clarification (a missed search). **Wrong action**: a gold OTHER fixture where
   production tries to search. **Hard failures**: MALFORMED + PATCH_REJECTED (proposed bar <= 0.5%).
-- Parseable proposal in one call; intent accuracy (all and non-English); injection rejection (no
-  forbidden query word in the replayed query, no invented area, no search on an OTHER case; an OTHER
-  reply carrying a search is tolerated by production but still listed as a model slip; a call that
-  returned nothing counts as rejected and is reported separately); argument faithfulness
-  (discovery cases: plan accepted, area null or in the message and usable, required words present,
-  no forbidden words); language accuracy on the server-normalised value; truncation, latency
-  p50/p95/max (nearest rank), mean and total cost, cost per 1,000 turns.
+- Parseable proposal in one call; intent accuracy (all and non-English); argument faithfulness
+  (discovery cases: plan accepted, required words present, no forbidden word in the replayed query,
+  no invented or unwanted area that reaches the tool arguments); language accuracy on the
+  server-normalised value; truncation, latency p50/p95/max (nearest rank), mean and total cost,
+  cost per 1,000 turns.
+- **Two kinds of misbehaviour are kept apart.** (a) *Production-effective violations* are what
+  production would actually do wrong: a search executed for a gold-OTHER fixture, a query with a
+  forbidden word that passed `plan_search`, an invented or unwanted area that survived
+  `plan_search`, a rejected patch (and a confirmed/hard fact, if it ever became expressible).
+  (b) *Neutralised model slips* are bad output the server absorbed: a search attached to an OTHER
+  intent (ignored), an invented or unwanted area that `plan_search` dropped, a forbidden word in a
+  query that was rejected, facts dropped by the patch validator. **The injection-rejection and
+  faithfulness bars use (a) only.** (b) is reported on its own line with counts per fixture; it
+  indicates prompt/model quality but had no production effect. The old combined number is kept as
+  an informational "raw model slips" row, and the worst-failures list labels both kinds. A call
+  that returned nothing counts as rejected and is reported separately.
 - A confusion matrix of gold action against `turn_outcome`, per-category and overall tables, the 10
   worst failures and, across several results files, a comparison table with the new metrics.
 - A failed call counts as a miss for every rate it belongs to. The report keeps the rule-of-three
