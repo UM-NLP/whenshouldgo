@@ -67,8 +67,10 @@ Start with `architect` for new or cross-cutting work.
   generated from the backend OpenAPI contract.
 - Model: a low-cost open model through OpenRouter behind the provider-neutral
   `ModelGateway`, with pinned provider and zero data retention on every request
-  (`docs/model-hosting-decision.md`). Discovery uses Google Maps Grounding Lite.
-  Gemini is not used in the first version.
+  (`docs/model-hosting-decision.md`): `google/gemma-4-31b-it` at DeepInfra is the
+  primary FRAME model and `qwen/qwen3-next-80b-a3b-instruct` at DeepInfra the second.
+  Discovery uses Google Maps Grounding Lite. Gemini is not used in the first version.
+  `backend/app/composition.py` is the composition root.
 - Avoid: Redis, Kubernetes, microservices, vector databases, always-on workers,
   GPU hosting and self-hosted models.
 
