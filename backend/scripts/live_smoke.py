@@ -194,6 +194,8 @@ def build_parser() -> argparse.ArgumentParser:
                         "use a public landmark, not a person's location)")
     p.add_argument("--grant-location-consent", action="store_true",
                    help="POST /v1/me/consents (LOCATION_FOREGROUND) before the turns")
+    p.add_argument("--show-reply", action="store_true",
+                   help="print the full reply and Google's verbatim block to the terminal only (never written to disk, not combined with --json-out)")
     p.add_argument("--cad-rate", type=Decimal, default=Decimal("1.43"))
     p.add_argument("--dry-run", action="store_true",
                    help="fake model transport and Maps simulator; no network and no keys")
@@ -312,6 +314,17 @@ def _run(args: argparse.Namespace, emit: Callable[[str], None], environ: Mapping
                  f"framing={d['framing']} cache_expires_at={d['cache_expires_at']}")
             for title in titles:  # terminal only: attribution, never written to disk
                 emit(f"    - {title}")
+        if args.show_reply and status == 200:  # terminal only, never written to disk
+            sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+            shown = {k: v for k, v in body.items() if k != "discovery"}
+            indent = "\n  "
+            emit("  --- reply (server-authored) ---")
+            emit("  " + json.dumps(shown, ensure_ascii=False, indent=2).replace("\n", indent))
+            if isinstance(block, dict):
+                emit("  --- Google grounded text (verbatim) ---")
+                emit("  " + str(block.get("text", "")).replace("\n", indent))
+                for pl in block.get("places") or []:
+                    emit(f"  [source] {pl.get('title')} -> {pl.get('place_url')}")
         emit(f"  model: in={record['input_tokens']} out={record['output_tokens']} "
              f"cost US${d_cost:.6f} = CA${d_cost * args.cad_rate:.6f}"
              + (f" ({record['unpriced_gateway_entries']} unpriced)"
