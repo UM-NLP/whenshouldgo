@@ -12,7 +12,7 @@ Updated 2026-10-11. Authoritative board: [@UM-NLP's When Should Go — Project 2
 | 3 | [#21 Quality, safety, cost, and pilot](https://github.com/UM-NLP/whenshouldgo/issues/21) | Queued | #20 |
 | 4 | [#11 Android product gate and MVP](https://github.com/UM-NLP/whenshouldgo/issues/11) | Gated | #21 exit decision |
 | 5 | [#15 Calendar and explicit routines](https://github.com/UM-NLP/whenshouldgo/issues/15) | Future | Android/account/privacy gates |
-| 5 | [#16 Event-driven monitoring and reminders](https://github.com/UM-NLP/whenshouldgo/issues/16) | Future | #15 plus notification and cost gates |
+| 5 | [#16 Event-driven monitoring and reminders](https://github.com/UM-NLP/whenshouldgo/issues/16) | Future | NOTIFY-01 (#34) plus cost gates |
 | 5 | [#17 Same-day multi-stop optimizer](https://github.com/UM-NLP/whenshouldgo/issues/17) | Future | Demand evidence |
 | 5 | [#18 Multi-day trip builder](https://github.com/UM-NLP/whenshouldgo/issues/18) | Future | Separate validation |
 | 5 | [#19 Android voice entry](https://github.com/UM-NLP/whenshouldgo/issues/19) | Future | #23 and Android retention |
