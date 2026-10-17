@@ -168,6 +168,7 @@ class ValidationReason(StrEnum):
     STORAGE_CLASS = "STORAGE_CLASS"
     OVERSIZE = "OVERSIZE"
     HARD_CONSTRAINT = "HARD_CONSTRAINT"
+    AREA_DROPPED = "AREA_DROPPED"  # a forgiving drop, not a refusal
     OTHER = "OTHER"
 
 

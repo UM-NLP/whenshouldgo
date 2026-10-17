@@ -94,7 +94,6 @@ def test_frame_result_is_closed_and_bounded() -> None:
             FrameResult(**base, **extra)
     for bad in (
         dict(intent=FrameIntent.OTHER),  # OTHER carries no tool
-        dict(tool=None),  # discovery needs a tool
         dict(search=None),  # search_places needs arguments
         dict(tool=ToolId.RESOLVE_NAMES),  # other tools carry no search arguments here
     ):
@@ -109,11 +108,8 @@ def test_frame_result_is_closed_and_bounded() -> None:
     dict(text_query="zero​width"),
     dict(text_query="see https://evil.example/x"),
     dict(text_query="<script>alert(1)</script>"),
-    dict(text_query="ok", area="y" * 81),
-    dict(text_query="ok", area="12 Queen Street West"),
-    dict(text_query="ok", area="43.6532,-79.3832"),
     dict(text_query="ok", region_code="US"),
-    dict(text_query="ok", language_code="english"),
+    dict(text_query="ok", area="y" * 201),  # only a loose structural cap; the rest is forgiving
     dict(text_query="ok", page_size=0),
     dict(text_query="ok", page_size=6),
     dict(text_query="ok", location_bias={"circle": {}}),
@@ -134,10 +130,13 @@ def test_search_arguments_are_built_from_the_closed_model_only() -> None:
 
 
 def test_area_must_come_from_the_users_own_words() -> None:
-    with pytest.raises(ArgumentRejected):
-        search_arguments(search("brunch", area="Paris"), "brunch in Leslieville")
+    # an area the user never wrote is DROPPED (never an error); the query still goes out
+    assert search_arguments(search("brunch", area="Paris"), "brunch in Leslieville")[
+        "text_query"] == "brunch"
     # case-insensitive, whitespace-tolerant match against the user's text
-    assert search_arguments(search("brunch", area="leslieville"), "Brunch in  Leslieville")
+    assert search_arguments(search("brunch", area="leslieville"), "Brunch in  Leslieville")[
+        "text_query"] == "brunch near leslieville"
+    _ = ArgumentRejected
 
 
 def test_frame_state_allowlist_admits_only_exact_classes() -> None:

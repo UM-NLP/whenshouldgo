@@ -322,14 +322,16 @@ def test_a_query_unrelated_to_the_users_message_never_reaches_the_tool() -> None
     assert maps.calls == [] and env.turns() == 0
 
 
-def test_area_not_in_the_users_words_is_rejected() -> None:
+def test_area_not_in_the_users_words_is_dropped_with_a_warning() -> None:
     config = make_config()
     gateway = ScriptedGateway([frame_turn(config, search_args=search("brunch", area="Paris"))],
                               config)
-    maps = RecordingClient(SyntheticMapsClient())
+    maps = RecordingClient(SyntheticMapsClient(payload=canary_payload()))
     env = Env(gateway=gateway, discovery=maps, config=config)
-    assert_error(env.post({"message": "brunch in Toronto"}), 502, "VALIDATION", "OUTPUT_REJECTED")
-    assert maps.calls == [] and env.turns() == 0
+    maps.inner._now = env.clock  # noqa: SLF001
+    response = env.post({"message": "brunch in Toronto"})
+    assert response.status_code == 200 and response.json()["warnings"] == ["AREA_DROPPED"]
+    assert maps.calls[0][1]["text_query"] == "brunch" and env.turns() == 1
 
 
 # --- discovery failures ------------------------------------------------------------------------

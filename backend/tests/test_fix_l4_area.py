@@ -17,11 +17,16 @@ def accepted(query: str, message: str, **kw) -> bool:
     return True
 
 
+def folded(query: str, message: str, **kw) -> str:
+    return search_arguments(search(query, **kw), message)["text_query"]
+
+
 def test_area_must_match_whole_words_not_substrings() -> None:
-    assert not accepted("brunch", "brunch in Leslieville", area="Leslie")
-    assert not accepted("brunch", "brunch in Leslieville", area="Lesl")
-    assert accepted("brunch", "brunch in Leslieville", area="Leslieville")
-    assert not accepted("brunch", "brunch in Torontonian parks", area="Toronto")
+    # a non-matching area is dropped (the query goes out without it), never an error
+    assert folded("brunch", "brunch in Leslieville", area="Leslie") == "brunch"
+    assert folded("brunch", "brunch in Leslieville", area="Lesl") == "brunch"
+    assert folded("brunch", "brunch in Leslieville", area="Leslieville") == "brunch near Leslieville"
+    assert folded("brunch", "brunch in Torontonian parks", area="Toronto") == "brunch"
 
 
 def test_area_matching_is_nfkc_and_case_insensitive() -> None:
@@ -31,8 +36,9 @@ def test_area_matching_is_nfkc_and_case_insensitive() -> None:
 
 
 def test_a_multiword_area_must_be_contiguous_words() -> None:
-    assert not accepted("brunch", "brunch near Yonge then Bloor", area="Yonge Bloor")
-    assert accepted("brunch", "brunch near Yonge Bloor", area="Yonge Bloor")
+    assert folded("brunch", "brunch near Yonge then Bloor", area="Yonge Bloor") == "brunch"
+    assert folded("brunch", "brunch near Yonge Bloor", area="Yonge Bloor") == (
+        "brunch near Yonge Bloor")
 
 
 def test_the_query_must_share_a_meaningful_token_with_the_message() -> None:
@@ -58,5 +64,5 @@ def test_overlap_is_case_insensitive_and_unicode_aware() -> None:
 
 
 @pytest.mark.parametrize("area", ["Paris", "Leslieville East"])
-def test_an_area_the_user_never_wrote_is_rejected(area) -> None:
-    assert not accepted("brunch", "brunch in Leslieville", area=area)
+def test_an_area_the_user_never_wrote_is_dropped(area) -> None:
+    assert folded("brunch", "brunch in Leslieville", area=area) == "brunch"

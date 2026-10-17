@@ -83,7 +83,7 @@ from .frame import (
     FrameIntent,
     FrameResult,
     build_frame_request,
-    search_arguments,
+    plan_search,
 )
 from .gateway import (
     BudgetExceededError,
@@ -576,11 +576,18 @@ class TurnPipeline:
         if self._discovery is None or self._cache is None or frame.search is None:
             return _rejected(503)
         try:
-            arguments = search_arguments(frame.search, message)
+            plan = plan_search(frame.search, message)
         except ArgumentRejected:
             self._reject(telemetry.ValidationReason.SCHEMA, telemetry.Phase.TOOL)
             return _rejected()
-        return self._search(principal, workspace, tool_run, arguments, cache_key, spend, remaining)
+        outcome = self._search(principal, workspace, tool_run, plan.arguments, cache_key, spend,
+                               remaining)
+        if plan.area_dropped:  # forgiving: noted, never a failure
+            self._reject(telemetry.ValidationReason.AREA_DROPPED, telemetry.Phase.TOOL)
+            if isinstance(outcome, PipelineOutcome):
+                return PipelineOutcome(outcome.workspace, outcome.reply, outcome.discovery,
+                                       outcome.ref, (*outcome.warnings, TurnWarning.AREA_DROPPED))
+        return outcome
 
     def _search(
         self, principal: Principal, workspace: TripWorkspace, run: ToolRun,

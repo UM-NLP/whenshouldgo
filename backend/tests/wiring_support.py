@@ -397,8 +397,11 @@ class FrameEchoTransport(FakeTransport):
     def __init__(
         self, before: Sequence[Any] = (), *, intent: str = "OTHER", query: str = "quiet restaurant",
         prompt_tokens: int | None = 100, completion_tokens: int | None = 20,
+        search: dict[str, Any] | None = None, omit_tool: bool = False,
     ) -> None:
         super().__init__([])
+        self.omit_tool = omit_tool  # a model that leaves out the (server-owned) "tool" field
+        self.search = search  # the exact search object the "model" returns (overrides query)
         self.before = list(before)
         self.intent = intent
         self.query = query
@@ -417,7 +420,9 @@ class FrameEchoTransport(FakeTransport):
                 "intent": self.intent,
             }
             if self.intent == "DISCOVERY":
-                answer.update(tool="search_places", search={"text_query": self.query})
+                answer.update(search=self.search or {"text_query": self.query})
+                if not self.omit_tool:
+                    answer["tool"] = "search_places"
             self._script = [completion_response(
                 json.dumps(answer), prompt_tokens=self.usage[0], completion_tokens=self.usage[1])]
         return super().send(request, credential)
@@ -427,13 +432,15 @@ def real_stack(
     before: Sequence[Any] = (), *, attempts: int = 3, discovery: Any = None,
     config: RuntimeConfig | None = None, intent: str = "OTHER", query: str = "quiet restaurant",
     prompt_tokens: int | None = 100, completion_tokens: int | None = 20,
-    breaker_threshold: int = 5, **env_kw: Any,
+    breaker_threshold: int = 5, search: dict[str, Any] | None = None, omit_tool: bool = False,
+    **env_kw: Any,
 ) -> tuple[Env, FrameEchoTransport, Any]:
     """An Env over the REAL ResilientGateway wrapping the REAL OpenRouterGateway (a fake
     transport underneath): the stack ScriptedGateway cannot exercise."""
     config = config or make_config()
     transport = FrameEchoTransport(before, intent=intent, query=query,
-                                   prompt_tokens=prompt_tokens, completion_tokens=completion_tokens)
+                                   prompt_tokens=prompt_tokens, completion_tokens=completion_tokens,
+                                   search=search, omit_tool=omit_tool)
     inner = make_gateway(transport, config=config)
     gateway = ResilientGateway(
         inner, ResiliencePolicy(max_attempts=attempts, breaker_failure_threshold=breaker_threshold),

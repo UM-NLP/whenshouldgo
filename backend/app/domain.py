@@ -797,6 +797,7 @@ class TurnWarning(StrEnum):
 
     TOOL_BUDGET_EXHAUSTED = "TOOL_BUDGET_EXHAUSTED"
     FACT_DROPPED = "FACT_DROPPED"  # one proposed fact had unacceptable text and was left out
+    AREA_DROPPED = "AREA_DROPPED"  # the model's search area was unusable and was left out
 
 
 class TurnResponse(Frozen):
