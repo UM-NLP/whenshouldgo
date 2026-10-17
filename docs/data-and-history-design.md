@@ -41,7 +41,7 @@ OutingRecord  (schema_version, id, owner_id, workspace_id, plan_version)
 
 `ConsentRecord` is append-only: `schema_version, id, owner_id, purpose, notice_version, processors[], scope{retention_days, channels, ...}, granted_at, withdrawn_at?, context`.
 
-- Purposes: `LOCATION_FOREGROUND`, `HISTORY_STORE`, `PATTERN_INFERENCE`, `PROACTIVE_NOTIFY`, `CLOUD_SYNC` and later `CALENDAR_READ`.
+- Purposes: `LOCATION_FOREGROUND`, `SAVED_PLACE` (Phase 1: user-confirmed Home, Work and custom labels; rounded position plus label; decision 24), `HISTORY_STORE`, `PATTERN_INFERENCE`, `PROACTIVE_NOTIFY`, `CLOUD_SYNC` and later `CALENDAR_READ`.
 - Each use checks the active consent for its purpose when it reads data.
 - Withdrawal starts a cascade job that stops scheduled work, drops the push subscription and deletes or stops using the data for that purpose.
 - The notice names the processors (Google, OpenRouter and the upstream model host), states that processing may happen outside Canada, and states the retention period.
