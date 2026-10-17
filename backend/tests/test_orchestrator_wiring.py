@@ -7,6 +7,8 @@ Everything is end to end through the HTTP API with fakes: no network, no keys.
 """
 from __future__ import annotations
 
+from app.frame import default_location_bias
+
 import json
 import logging
 from datetime import timedelta
@@ -308,7 +310,8 @@ def test_injection_text_in_a_valid_query_is_only_a_search_string() -> None:
     maps.inner._now = env.clock  # noqa: SLF001
     assert env.post().status_code == 200  # shares "restaurant" with the user's own message
     assert maps.calls == [("search_places", {"text_query": text, "language_code": "en",
-                                             "region_code": "CA"})]
+                                             "region_code": "CA",  # Fix 8: fixed default bias
+                                             "location_bias": default_location_bias()})]
 
 
 def test_a_query_unrelated_to_the_users_message_never_reaches_the_tool() -> None:

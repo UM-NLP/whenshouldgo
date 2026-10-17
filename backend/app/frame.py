@@ -121,7 +121,7 @@ def _checked_text_problem(value: str) -> bool:
 
 class SearchArgs(FrameModel):
     """Closed arguments for ``search_places``. There is no field for coordinates, a location
-    bias, urls or any other tool parameter; the server turns this into the tool call."""
+    bias (the server adds a fixed default one, see ``plan_search``), urls or any other tool parameter; the server turns this into the tool call."""
 
     # STRUCTURE only (a string with a loose cap). Whether the QUERY is usable (length, plain text,
     # overlap with the user's words) is decided by ``plan_search``, which degrades to the fixed
@@ -247,6 +247,22 @@ def _language(claimed: str, message_words: list[str]) -> str:
     return "en"
 
 
+# PUBLIC constants (downtown Toronto), never derived from the user, the message, the client, the
+# model, headers or IP. Sent as the search's location bias ONLY when no usable area is present, so
+# Google does not pick its own default (a live turn without an area returned Quebec results).
+# Valid only for the Phase 0 Toronto/GTA scope; a user's own location (foreground location with
+# consent) is a later phase. Radius must stay within the tool's 50,000 m limit.
+DEFAULT_SEARCH_BIAS_CENTER = (43.6532, -79.3832)  # (latitude, longitude)
+DEFAULT_SEARCH_BIAS_RADIUS_METERS = 40000
+
+
+def default_location_bias() -> dict[str, Any]:
+    """A fresh copy of the fixed default bias, in the snake_case form Grounding Lite accepts."""
+    latitude, longitude = DEFAULT_SEARCH_BIAS_CENTER
+    return {"circle": {"center": {"latitude": latitude, "longitude": longitude},
+                       "radius_meters": DEFAULT_SEARCH_BIAS_RADIUS_METERS}}
+
+
 def plan_search(search: SearchArgs, message: str) -> SearchPlan:
     """The exact tool arguments, built only from the closed model. Re-validates the model (a
     forged or ``model_construct``-ed instance cannot slip through). The QUERY is strict, on
@@ -266,7 +282,9 @@ def plan_search(search: SearchArgs, message: str) -> SearchPlan:
     What it does NOT guarantee: that the query MEANS what the user asked. Up to 40 percent of
     the content words may be anything (two free words in a five-word query), and a category word
     can be added without being typed. It bounds the model; it is not a proof.
-    Coordinates are never sent: there is no location bias in Phase 0."""
+    The only coordinates ever sent are the fixed ``DEFAULT_SEARCH_BIAS_*`` constants, and only
+    when NO usable area is present (with an area Google geocodes the text; the two are not mixed).
+    The model cannot supply a bias: ``SearchArgs`` has no such field."""
     try:
         clean: SearchArgs | None = SearchArgs.model_validate(search.model_dump())
     except ValidationError:
@@ -294,6 +312,8 @@ def plan_search(search: SearchArgs, message: str) -> SearchPlan:
         "language_code": language,
         "region_code": clean.region_code,
     }
+    if area is None:
+        arguments["location_bias"] = default_location_bias()
     if clean.page_size is not None:
         arguments["page_size"] = clean.page_size
     return SearchPlan(arguments, area_dropped)

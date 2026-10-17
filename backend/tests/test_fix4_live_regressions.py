@@ -9,6 +9,8 @@ D: an injection message yields an empty patch and an unchanged workspace.
 """
 from __future__ import annotations
 
+from app.frame import default_location_bias
+
 import pytest
 from wiring_support import TRAVEL, Env, ScriptedGateway, frame_turn, real_stack, search
 
@@ -160,8 +162,9 @@ def test_injection_output_yields_no_facts_and_an_unchanged_workspace() -> None:
     assert [f.id for f in workspace.facts] == ["planning_area"]
     assert all(not f.hard and f.confirmation.value == "UNCONFIRMED" for f in workspace.facts)
     assert workspace.goal is None
+    # Fix 8: the only coordinates sent are the fixed default bias (no area was usable).
     assert call_args(env) == {"text_query": "pizza place", "language_code": "en",
-                              "region_code": "CA"}
+                              "region_code": "CA", "location_bias": default_location_bias()}
 
 
 def test_a_non_discovery_message_stays_other_with_no_tool() -> None:
