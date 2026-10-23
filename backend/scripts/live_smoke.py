@@ -215,6 +215,8 @@ def main(
         parser.error(f"--turns must be between 1 and {MAX_TURNS}")
     if args.max_spend_usd <= 0:
         parser.error("--max-spend-usd must be positive")
+    if args.show_reply and args.json_out:
+        parser.error("--show-reply cannot be combined with --json-out")
     try:
         return _run(args, emit, os.environ if env is None else env)
     except (SmokeRefused, ConfigurationError) as refusal:

@@ -338,7 +338,7 @@ def test_f7_403_shape_and_openapi_lists_error_responses() -> None:
         client.post("/v1/agent/turns", json={"message": "hi"}, headers=H), 403, "POLICY"
     )
     assert "allowed_tools" not in body and "workspace_id" not in body
-    responses = client.get("/openapi.json").json()["paths"]["/v1/agent/turns"]["post"]["responses"]
+    responses = client.app.openapi()["paths"]["/v1/agent/turns"]["post"]["responses"]
     for status in ("200", "401", "403", "409", "422", "429"):
         assert status in responses
     for status in ("401", "403", "409", "422", "429"):

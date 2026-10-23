@@ -117,7 +117,7 @@ def test_consent_operations_are_rate_limited_per_principal() -> None:
 
 def test_the_openapi_contract_documents_the_endpoints_and_typed_errors() -> None:
     env, _, _ = env_with()
-    spec = env.client.get("/openapi.json").json()
+    spec = env.client.app.openapi()
     assert set(spec["paths"]["/v1/me/consents"]) == {"get", "post"}
     assert "delete" in spec["paths"]["/v1/me/consents/{purpose}"]
     post = spec["paths"]["/v1/me/consents"]["post"]

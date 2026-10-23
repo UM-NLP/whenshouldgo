@@ -128,3 +128,10 @@ def test_a_message_without_a_place_prints_the_needs_area_turn_as_a_normal_200() 
     code, out = run(["--dry-run", "--message", "something fun for the kids"])
     assert code == 0 and "HTTP 200" in out and "warnings=['NEEDS_AREA']" in out
     assert "discovery:" not in out and "grounding_lite_calls=0" in out
+
+
+def test_show_reply_with_json_out_is_an_argument_error(tmp_path) -> None:
+    import pytest as _pytest
+    with _pytest.raises(SystemExit) as exit_info:
+        smoke.main(["--dry-run", "--show-reply", "--json-out", str(tmp_path / "o.json")], emit=lambda _l: None)
+    assert exit_info.value.code == 2

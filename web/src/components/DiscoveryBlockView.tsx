@@ -25,6 +25,11 @@ function SourceLink({ href, children }: { href: string; children: string }) {
  * Google's grounded answer. Order is fixed: the branding label, then the verbatim text, then the
  * sources immediately after it with nothing in between. The server's own framing is outside this
  * component (the reply bubble above it).
+ *
+ * Each source is ONLY the title link to attribution_url exactly as supplied: no client-authored
+ * second link. OPEN ITEM: counsel must confirm this layout (link preview, the extra "Retrieved"
+ * line after the sources) against Google's attribution requirements
+ * (docs/legal/open-questions.md, "Other open items").
  */
 export function DiscoveryBlockView({ block }: { block: DiscoveryBlock }) {
   const retrieved = new Date(block.retrieved_at);
@@ -38,12 +43,6 @@ export function DiscoveryBlockView({ block }: { block: DiscoveryBlock }) {
         {block.places.map((place, index) => (
           <li key={`${index}-${place.place_url}`}>
             <SourceLink href={place.attribution_url}>{place.title}</SourceLink>
-            {place.place_url !== place.attribution_url ? (
-              <>
-                {" "}
-                <SourceLink href={place.place_url}>Open in Google Maps</SourceLink>
-              </>
-            ) : null}
           </li>
         ))}
       </ul>

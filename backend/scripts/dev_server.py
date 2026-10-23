@@ -88,6 +88,27 @@ class SpendCap:
         await self.app(scope, receive, send)
 
 
+class HostGuard:
+    """ASGI middleware: only a loopback Host header with the configured port is served (400
+    otherwise), so a DNS-rebinding page cannot talk to this server with the public dev token."""
+
+    def __init__(self, app: Any, port: int) -> None:
+        self.app = app
+        self._allowed = frozenset(
+            f"{name}:{port}" for name in ("127.0.0.1", "localhost", "[::1]"))
+
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        if scope["type"] in ("http", "websocket"):
+            host = dict(scope.get("headers") or ()).get(b"host", b"").decode("latin-1").lower()
+            if host not in self._allowed:
+                if scope["type"] == "http":
+                    await JSONResponse({"detail": "invalid host"}, status_code=400)(scope, receive, send)
+                else:
+                    await send({"type": "websocket.close", "code": 1008})
+                return
+        await self.app(scope, receive, send)
+
+
 def dry_transports() -> tuple[Any, Any]:
     """Unlimited offline fakes: the model reads the user's message from the request body."""
     sys.path.insert(0, str(BACKEND / "tests"))
@@ -169,6 +190,7 @@ def build_dev_app(
     app: Any = runtime.app
     if not args.dry_run:  # the cap is the only guard on live spend; dry runs cost nothing
         app = SpendCap(app, lambda: runtime, args.max_spend_usd)
+    app = HostGuard(app, args.port)
     return app, runtime
 
 
@@ -188,6 +210,8 @@ def main(
     emit(f"{mode}; model={runtime.config.model_id}; listening on http://{args.host}:{args.port}")
     if not args.dry_run:
         emit(f"spend cap US${args.max_spend_usd} (grounding_lite counted as US$0)")
+    emit("NOTICE: Google Grounding Lite spend is not capped by --max-spend-usd (model cost only); "
+         "set a Google Cloud budget and quota")
     if serve is None:
         import uvicorn  # noqa: PLC0415
 

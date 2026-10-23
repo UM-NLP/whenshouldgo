@@ -15,6 +15,13 @@ class Usage:
     reserved_keys: set[str] = field(default_factory=set)
 
 
+# Upper bound on ledger records held in this in-memory development service. When it is exceeded the
+# OLDEST EMPTY records (no committed turns, no trips, no keys) are dropped; a record with real usage
+# is never evicted (that would hand back allowance). Durable, shared ledgers and identity-creation
+# limits are tracked under ACCESS-02 (#35).
+MAX_LEDGER_RECORDS = 100_000
+
+
 class ReservationConflict(Exception):
     """The same idempotency key already has an in-flight reservation."""
 
@@ -45,6 +52,18 @@ class QuotaService:
         self._usage: dict[str, Usage] = {}
         self._lock = Lock()
 
+    def _record(self, uid: str) -> Usage:
+        """Get or create the record (caller holds the lock); bounded, see MAX_LEDGER_RECORDS."""
+        usage = self._usage.get(uid)
+        if usage is None:
+            usage = self._usage[uid] = Usage()
+            if len(self._usage) > MAX_LEDGER_RECORDS:
+                empty = [k for k, u in self._usage.items() if k != uid and not (
+                    u.successful_turns or u.activated_trips or u.committed_keys or u.reserved_keys)]
+                for key in empty[: len(self._usage) - MAX_LEDGER_RECORDS]:
+                    del self._usage[key]
+        return usage
+
     def usage_for(self, uid: str) -> Usage:
         """Return a snapshot; callers cannot mutate the ledger through it."""
         with self._lock:
@@ -58,7 +77,7 @@ class QuotaService:
     def ensure_record(self, uid: str) -> None:
         """Idempotently create the principal's ledger record (session bootstrap)."""
         with self._lock:
-            self._usage.setdefault(uid, Usage())
+            self._record(uid)
 
     def _allowance(self, principal: Principal) -> Allowance | None:
         return self.policies.for_kind(principal.kind, principal.policy_version)
@@ -75,13 +94,13 @@ class QuotaService:
     def allowed(self, principal: Principal) -> bool:
         """Advisory check for UX gating. Enforcement happens in ``reserve``."""
         with self._lock:
-            usage = self._usage.setdefault(principal.uid, Usage())
+            usage = self._record(principal.uid)
             return self._has_room(usage, self._allowance(principal))
 
     def reserve(self, principal: Principal, idempotency_key: str) -> TurnReservation:
         """Atomically check and hold one turn. Raises PermissionError when exhausted."""
         with self._lock:
-            usage = self._usage.setdefault(principal.uid, Usage())
+            usage = self._record(principal.uid)
             if idempotency_key in usage.committed_keys:
                 return TurnReservation(principal.uid, idempotency_key, duplicate=True)
             if idempotency_key in usage.reserved_keys:
@@ -93,7 +112,7 @@ class QuotaService:
 
     def commit(self, reservation: TurnReservation) -> Usage:
         with self._lock:
-            usage = self._usage.setdefault(reservation.uid, Usage())
+            usage = self._record(reservation.uid)
             if reservation.duplicate or reservation.idempotency_key in usage.committed_keys:
                 usage.reserved_keys.discard(reservation.idempotency_key)
                 return usage
@@ -113,7 +132,7 @@ class QuotaService:
     def commit_turn(self, principal: Principal, idempotency_key: str) -> Usage:
         """Check and count one turn atomically (for callers with no work in between)."""
         with self._lock:
-            usage = self._usage.setdefault(principal.uid, Usage())
+            usage = self._record(principal.uid)
             if idempotency_key in usage.committed_keys:
                 return usage
             if not self._has_room(usage, self._allowance(principal)):

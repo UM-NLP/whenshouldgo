@@ -301,7 +301,7 @@ def test_persisted_contracts_carry_schema_version_and_kind() -> None:
 def test_turn_endpoint_is_typed_in_openapi_and_errors_use_codes() -> None:
     verifier = StaticTokenVerifier({"t": VerifiedIdentity("u1", "anonymous")})
     client = TestClient(create_app(verifier=verifier, dev_scaffold=True))
-    schema = client.get("/openapi.json").json()
+    schema = client.app.openapi()
     ok = schema["paths"]["/v1/agent/turns"]["post"]["responses"]["200"]
     assert ok["content"]["application/json"]["schema"]["$ref"].endswith("/TurnResponse")
     headers = {"Authorization": "Bearer t", "Idempotency-Key": "k1"}

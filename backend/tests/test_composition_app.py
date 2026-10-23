@@ -44,7 +44,7 @@ def test_identity_is_never_accepted_from_the_body() -> None:
     client = TestClient(build().app)
     body = {**MESSAGE, "uid": "someone-else", "kind": "REGISTERED_FREE"}
     assert client.post("/v1/agent/turns", json=body, headers=HEADERS).status_code == 422
-    assert TOKEN not in client.get("/openapi.json").text
+    assert TOKEN not in str(client.app.openapi())
 
 
 def test_module_level_main_app_is_unchanged() -> None:

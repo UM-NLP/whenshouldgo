@@ -64,6 +64,6 @@ def test_a_replay_shows_the_original_retrieval_time() -> None:
 
 def test_openapi_lists_retrieved_at_on_the_block() -> None:
     env, _, _ = happy_env()
-    props = env.client.get("/openapi.json").json()["components"]["schemas"]["DiscoveryBlock"]
+    props = env.client.app.openapi()["components"]["schemas"]["DiscoveryBlock"]
     assert "retrieved_at" in props["properties"]
     assert "retrieved_at" in props["required"]

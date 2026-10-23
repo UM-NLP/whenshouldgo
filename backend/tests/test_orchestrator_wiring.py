@@ -633,7 +633,7 @@ def test_the_flag_is_rechecked_when_the_pipeline_runs() -> None:
 # --- OpenAPI contract -----------------------------------------------------------------------------------------
 def test_openapi_describes_the_discovery_block_and_error_reasons() -> None:
     env = Env()
-    schema = env.client.get("/openapi.json").json()
+    schema = env.client.app.openapi()
     schemas = schema["components"]["schemas"]
     turn = schemas["TurnResponse"]["properties"]
     assert {"discovery", "warnings", "reply", "allowed_tools", "workspace_id"} <= set(turn)

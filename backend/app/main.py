@@ -32,11 +32,14 @@ from .domain import (
     ErrorBody,
     ErrorCode,
     ErrorReason,
+    GateReason,
+    MeterState,
     Principal,
     PrincipalKind,
     RuntimeConfig,
     SessionBootstrap,
     TurnResponse,
+    UsagePeriod,
     UsageView,
 )
 from .failures import TurnFailure
@@ -244,6 +247,7 @@ def create_app(
     cost_ledger: CostLedger | None = None,
     dev_scaffold: bool = False,
     consent_store: ConsentStore | None = None,
+    enable_docs: bool = False,
 ) -> FastAPI:
     """Build the API. With no verifier, every authenticated route fails closed (401).
 
@@ -259,7 +263,10 @@ def create_app(
              dev_scaffold or None)
     if orchestrator is not None and any(part is not None for part in parts):
         raise ValueError("pass either an orchestrator or the parts to build one, not both")
-    application = FastAPI(title="WhenShouldGo API", version="0.1.0")
+    # /docs, /redoc and /openapi.json are off unless explicitly enabled; ``app.openapi()`` (used by
+    # scripts/export_openapi.py) still works.
+    docs = {} if enable_docs else {"docs_url": None, "redoc_url": None, "openapi_url": None}
+    application = FastAPI(title="WhenShouldGo API", version="0.1.0", **docs)
     application.state.orchestrator = orchestrator or TurnOrchestrator(
         quotas, trace_sink, gateway=gateway, discovery_client=discovery_client,
         display_cache=display_cache, runtime_config=runtime_config, cost_ledger=cost_ledger,
@@ -340,14 +347,23 @@ def create_app(
             raise _error(failure.status, failure.code, failure.message, failure.reason,
                          failure.retry_after) from None
         try:
+            try:
+                usage = usage_view(turn_orchestrator.quotas, principal)
+            except AccountUnavailable:
+                # The turn is already counted: never a 500. Fail closed with a gated, empty view
+                # (the client re-reads /v1/me/usage).
+                usage = UsageView(
+                    period=UsagePeriod.LIFETIME, user_turns_used=0, user_turns_limit=0,
+                    activated_trips_used=0, activated_trips_limit=0, meter_state=MeterState.GATED,
+                    gate_reason=GateReason.TURNS_LIMIT)
             return TurnResponse(
                 reply=result.reply,
                 domain=result.domain,
                 allowed_tools=result.tools,
                 workspace_id=result.workspace.id if result.workspace else None,
                 allowance_exhausted=result.allowance_exhausted,
-                policy_version=principal.policy_version,
-                usage=usage_view(turn_orchestrator.quotas, principal),
+                policy_version=turn_orchestrator.quotas.policies.get(principal.policy_version).version,
+                usage=usage,
                 discovery=result.discovery,
                 warnings=result.warnings,
             )

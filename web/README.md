@@ -30,3 +30,15 @@ contract change and commit both generated files.
 
 The dev auth provider and the dev server are NON-PRODUCTION. A production build gets a
 `NoAuthProvider` and sends no token.
+
+
+## Hosting headers (production)
+
+Set these at the hosting layer (a `<meta>` CSP cannot set `frame-ancestors`, and a strict meta CSP
+would break the Vite dev server's HMR, so none is baked into `index.html`):
+
+    Content-Security-Policy: default-src 'self'; connect-src 'self'; frame-ancestors 'none'
+    Permissions-Policy: geolocation=(self)
+
+`connect-src 'self'` assumes the API is served from the same origin (or add its origin
+explicitly). Google text is rendered as plain text and Google links are plain `https` anchors.

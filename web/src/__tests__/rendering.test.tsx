@@ -19,16 +19,12 @@ describe("VerbatimText", () => {
     expect(container.textContent).toContain("<script>alert(1)</script>");
   });
 
-  it("bolds a balanced span on one line without removing its asterisks", () => {
-    const { container } = render(<VerbatimText text="Go to **Noodle Bar** now" />);
-    expect(container.querySelector("strong")?.textContent).toBe("Noodle Bar");
-    expect(container.textContent).toBe("Go to **Noodle Bar** now");
-  });
-
-  it("does not bold unbalanced or multi-line asterisks", () => {
-    const text = "a **b\nc d ** e";
+  it("renders Google text plain: no emphasis, textContent equals the server string", () => {
+    const text = "Go to **Noodle Bar** now\nand **b\nc d ** e";
     const { container } = render(<VerbatimText text={text} />);
-    expect(container.querySelector("strong")).toBeNull();
+    expect(container.querySelector("strong, b, em")).toBeNull();
+    expect(container.querySelector(".md-mark")).toBeNull();
+    expect(container.querySelector("p")?.childNodes).toHaveLength(1);
     expect(container.textContent).toBe(text);
   });
 
@@ -60,7 +56,7 @@ describe("DiscoveryBlockView", () => {
     }
   });
 
-  it("adds a second link only when place_url differs from attribution_url", () => {
+  it("renders only the title link to attribution_url, never a client-authored second link", () => {
     const base = discoveryBlock();
     const first = base.places[0]!;
     const other = base.places[1]!.place_url;
@@ -69,8 +65,9 @@ describe("DiscoveryBlockView", () => {
         block={{ ...base, places: [first, { ...first, title: "Other", place_url: other }] }}
       />,
     );
-    expect(screen.getAllByRole("link", { name: "Open in Google Maps" })).toHaveLength(1);
-    expect(screen.getByRole("link", { name: "Open in Google Maps" })).toHaveAttribute("href", other);
+    expect(screen.queryByRole("link", { name: "Open in Google Maps" })).toBeNull();
+    expect(screen.getAllByRole("link")).toHaveLength(2);
+    expect(screen.getByRole("link", { name: "Other" })).toHaveAttribute("href", first.attribution_url);
   });
 
   it("shows the Google Maps branding with translation turned off", () => {

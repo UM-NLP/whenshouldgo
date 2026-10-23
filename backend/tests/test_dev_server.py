@@ -17,6 +17,7 @@ dev = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(dev)  # type: ignore[union-attr]
 
 FLAG = "--i-understand-this-is-dev"
+LOCAL = "http://127.0.0.1:8787"
 
 
 def run(argv: list[str], env: dict[str, str] | None = None) -> tuple[int, list[str], list[Any]]:
@@ -68,7 +69,7 @@ def test_dry_run_starts_on_loopback_with_logging_off() -> None:
 
 def test_dry_run_app_accepts_only_the_dev_token_and_serves_a_turn() -> None:
     app, _ = dev.build_dev_app(dev.build_parser().parse_args([FLAG, "--dry-run"]), {})
-    client = TestClient(app)
+    client = TestClient(app, base_url=LOCAL)
     key = {"Idempotency-Key": "dev-test-0001"}
     assert client.post("/v1/agent/turns", json={"message": "dinner in Paris"}, headers=key).status_code == 401
     bad = {**key, "Authorization": "Bearer nope"}
@@ -85,7 +86,7 @@ def test_dry_run_app_accepts_only_the_dev_token_and_serves_a_turn() -> None:
 def test_dry_run_without_a_place_is_the_needs_area_clarification() -> None:
     app, _ = dev.build_dev_app(dev.build_parser().parse_args([FLAG, "--dry-run"]), {})
     headers = {"Authorization": f"Bearer {dev.DEV_TOKEN}", "Idempotency-Key": "dev-test-0003"}
-    body = TestClient(app).post("/v1/agent/turns", json={"message": "dinner tonight"},
+    body = TestClient(app, base_url=LOCAL).post("/v1/agent/turns", json={"message": "dinner tonight"},
                                 headers=headers).json()
     assert body["discovery"] is None and "NEEDS_AREA" in body["warnings"]
 
@@ -115,3 +116,21 @@ def test_production_app_stays_fail_closed_and_never_imports_the_dev_server() -> 
     assert response.status_code == 401
     sources = "".join(p.read_text(encoding="utf-8") for p in (_SCRIPTS.parent / "app").rglob("*.py"))
     assert "dev_server" not in sources and dev.DEV_TOKEN not in sources
+
+
+@pytest.mark.parametrize("host", ["evil.example", "127.0.0.1:9999", "localhost.evil.example", "10.0.0.5:8787"])
+def test_a_foreign_host_header_is_rejected_with_400(host: str) -> None:
+    app, _ = dev.build_dev_app(dev.build_parser().parse_args([FLAG, "--dry-run"]), {})
+    response = TestClient(app, base_url=LOCAL).get("/healthz", headers={"Host": host})
+    assert response.status_code == 400
+
+
+@pytest.mark.parametrize("host", ["127.0.0.1:8787", "localhost:8787", "[::1]:8787"])
+def test_loopback_host_headers_are_accepted(host: str) -> None:
+    app, _ = dev.build_dev_app(dev.build_parser().parse_args([FLAG, "--dry-run"]), {})
+    assert TestClient(app, base_url=LOCAL).get("/healthz", headers={"Host": host}).status_code == 200
+
+
+def test_startup_notice_says_grounding_lite_spend_is_not_capped() -> None:
+    _, lines, _ = run([FLAG, "--dry-run"])
+    assert any("Grounding Lite" in line and "not capped" in line for line in lines)

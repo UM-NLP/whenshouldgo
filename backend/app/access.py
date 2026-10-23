@@ -86,8 +86,10 @@ def capabilities_for(principal: Principal, usage: UsageView) -> Capabilities:
         can_start_turn=usage.meter_state != MeterState.GATED,
         can_use_location=True,
         can_read=True,
-        can_export=True,
-        can_delete=True,
+        # False until POST /v1/me:export and /v1/me:delete exist (docs/access-tiers.md); clients must
+        # not depend on them.
+        can_export=False,
+        can_delete=False,
         can_link_account=tier == Tier.GUEST,
     )
 

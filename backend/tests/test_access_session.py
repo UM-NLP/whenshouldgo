@@ -159,11 +159,12 @@ def test_capabilities_by_state() -> None:
     client, quotas = make()
     caps = client.get("/v1/me/capabilities", headers=auth()).json()
     assert caps["kind"] == "capabilities" and caps["can_start_turn"] is True
-    assert caps["can_use_location"] and caps["can_read"] and caps["can_export"] and caps["can_delete"]
+    assert caps["can_use_location"] and caps["can_read"]
+    assert caps["can_export"] is False and caps["can_delete"] is False
     set_usage(quotas, "guest-a", turns=50)
     gated = client.get("/v1/me/capabilities", headers=auth()).json()
     assert gated["can_start_turn"] is False
-    assert gated["can_read"] and gated["can_export"] and gated["can_delete"]
+    assert gated["can_read"] and not gated["can_export"] and not gated["can_delete"]
 
 
 @pytest.mark.parametrize("path,method", [("/v1/me/usage", "get"), ("/v1/me/capabilities", "get"),
@@ -198,7 +199,7 @@ def test_no_cost_or_token_fields_anywhere() -> None:
     for body in responses:
         for key in _keys(body):
             assert not any(word in key.lower() for word in FORBIDDEN), key
-    schemas = client.get("/openapi.json").json()["components"]["schemas"]
+    schemas = client.app.openapi()["components"]["schemas"]
     for name in ("UsageView", "Capabilities", "SessionBootstrap"):
         assert schemas[name]["additionalProperties"] is False
         assert not any(w in json.dumps(list(schemas[name]["properties"])).lower() for w in FORBIDDEN)
@@ -218,7 +219,7 @@ def test_rate_limited_bootstrap_declares_retry_after() -> None:
 
 def test_openapi_declares_headers_and_responses() -> None:
     client, _ = make()
-    schema = client.get("/openapi.json").json()
+    schema = client.app.openapi()
     for path, method in (("/v1/session:bootstrap", "post"), ("/v1/me/usage", "get"),
                          ("/v1/me/capabilities", "get"), ("/v1/agent/turns", "post")):
         op = schema["paths"][path][method]

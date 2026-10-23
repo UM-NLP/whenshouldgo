@@ -137,6 +137,6 @@ def test_the_public_enum_lost_the_fine_validation_reasons() -> None:
 
 def test_openapi_lists_the_collapsed_reasons() -> None:
     env = Env()
-    enum = env.client.get("/openapi.json").json()["components"]["schemas"]["ErrorReason"]["enum"]
+    enum = env.client.app.openapi()["components"]["schemas"]["ErrorReason"]["enum"]
     assert "OUTPUT_REJECTED" in enum and "RATE_LIMITED" in enum
     assert "PATCH_REJECTED" not in enum and "TOOL_RESULT_INVALID" not in enum
