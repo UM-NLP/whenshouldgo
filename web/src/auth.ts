@@ -17,7 +17,7 @@ export class AuthUnavailable extends Error {
 /** The fixed public token that backend/scripts/dev_server.py accepts. Not a credential. */
 export const DEV_TOKEN = "dev-only-public-token";
 
-/** NON-PRODUCTION. Sends the dev token. There is no guest bootstrap route in the backend yet. */
+/** NON-PRODUCTION. Sends the dev token. The backend bootstrap route (POST /v1/session:bootstrap) reports usage only; it issues no token. */
 export class DevAuthProvider implements AuthProvider {
   async getToken(): Promise<string> {
     return DEV_TOKEN;

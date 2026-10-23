@@ -811,6 +811,71 @@ class TurnWarning(StrEnum):
     NEEDS_AREA = "NEEDS_AREA"  # no usable place in the request: asked where to look, no lookup
 
 
+# --- Access: usage meter, capabilities, bootstrap (docs/access-tiers.md) -----------
+# The server computes every value here; a client displays them and never grants access from them.
+# No field carries provider cost, token counts, internal ceilings or another tenant's data.
+
+
+class Tier(StrEnum):
+    GUEST = "guest"
+    REGISTERED = "registered"
+
+
+class MeterState(StrEnum):
+    NONE = "NONE"
+    QUIET_70 = "QUIET_70"
+    NOTICE_90 = "NOTICE_90"
+    GATED = "GATED"
+
+
+class GateReason(StrEnum):
+    TURNS_LIMIT = "TURNS_LIMIT"
+    TRIPS_LIMIT = "TRIPS_LIMIT"
+
+
+class UsagePeriod(StrEnum):
+    LIFETIME = "LIFETIME"
+    ROLLING_30_DAYS = "ROLLING_30_DAYS"
+
+
+class UsageView(Frozen):
+    schema_version: int = Field(default=SCHEMA_VERSION, ge=1)
+    kind: Literal["usage"] = "usage"
+    period: UsagePeriod
+    user_turns_used: int = Field(ge=0)
+    user_turns_limit: int = Field(ge=0)
+    activated_trips_used: int = Field(ge=0)
+    activated_trips_limit: int = Field(ge=0)
+    # Null for guests (lifetime allowance) and until the rolling window is enforced (issue #22).
+    resets_at: AwareDatetime | None = None
+    meter_state: MeterState
+    gate_reason: GateReason | None = None  # present only when GATED
+    # What a guest receives on registering (public product numbers); null for registered users.
+    registered_turn_limit: int | None = Field(default=None, ge=0)
+    registered_trip_limit: int | None = Field(default=None, ge=0)
+
+
+class Capabilities(Frozen):
+    schema_version: int = Field(default=SCHEMA_VERSION, ge=1)
+    kind: Literal["capabilities"] = "capabilities"
+    can_start_turn: bool
+    can_use_location: bool  # also needs the user's LOCATION_FOREGROUND consent
+    can_read: bool
+    can_export: bool
+    can_delete: bool
+    can_link_account: bool  # guests only; the linking flow itself is a later issue
+
+
+class SessionBootstrap(Frozen):
+    schema_version: int = Field(default=SCHEMA_VERSION, ge=1)
+    kind: Literal["session_bootstrap"] = "session_bootstrap"
+    tier: Tier
+    policy_version: str = Field(max_length=100)
+    capabilities: Capabilities
+    usage: UsageView
+    server_time: AwareDatetime
+
+
 class TurnResponse(Frozen):
     schema_version: int = Field(default=SCHEMA_VERSION, ge=1)
     kind: Literal["turn_response"] = "turn_response"
@@ -820,6 +885,7 @@ class TurnResponse(Frozen):
     workspace_id: Ident | None
     allowance_exhausted: bool
     policy_version: str = Field(max_length=100)
+    usage: UsageView  # the server-computed meter after this turn (no extra call needed)
     # Additive (schema_version stays 1): present only for a turn that ran discovery.
     discovery: DiscoveryBlock | None = None
     warnings: tuple[TurnWarning, ...] = Field(default=(), max_length=10)

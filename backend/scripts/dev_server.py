@@ -11,7 +11,7 @@ Live (real model and Maps calls; reads ONLY the two key variables, like live_smo
 DEV ONLY. It accepts one fixed, public dev token as an identity (a guest), keeps every ledger in
 process memory, binds to loopback only, and refuses to start without the explicit flag. It is not
 imported by ``app`` and is never wired into ``create_production_app``: production stays fail-closed
-with no verifier. There is no guest bootstrap route in ``app/main.py`` yet, so the web client's dev
+with no verifier. ``POST /v1/session:bootstrap`` returns usage only and issues no token, so the web client's dev
 auth provider simply sends the dev token.
 
 Safety: keys go into a dict handed to ``build_runtime`` and are never printed, logged or put into

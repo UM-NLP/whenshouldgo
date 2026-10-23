@@ -26,7 +26,10 @@ from .domain import (
     ErrorCode,
     ErrorReason,
     TripWorkspace,
+    MeterState,
     TurnResponse,
+    UsagePeriod,
+    UsageView,
     TurnWarning,
     WorkspaceStatus,
     evolve,
@@ -455,6 +458,11 @@ class TurnOrchestrator:
                 allowance_exhausted=result.allowance_exhausted,
                 policy_version=principal.policy_version, discovery=result.discovery,
                 warnings=result.warnings,
+                # Shape check only: the real, post-commit meter is attached by the route.
+                usage=UsageView(
+                    period=UsagePeriod.LIFETIME, user_turns_used=0, user_turns_limit=0,
+                    activated_trips_used=0, activated_trips_limit=0, meter_state=MeterState.NONE,
+                ),
             )
         except ValidationError:
             raise TurnFailure(500, ErrorCode.PROVIDER, None) from None

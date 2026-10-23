@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from datetime import datetime
+from datetime import UTC, datetime
 
 import anyio
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
@@ -12,6 +12,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.requests import ClientDisconnect
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
+from .access import AccountUnavailable, capabilities_for, session_bootstrap, usage_view
 from .auth import IdentityVerifier, PrincipalResolver, current_principal
 from .consent import (
     NOTICE_VERSIONS,
@@ -26,6 +27,7 @@ from .discovery import DisplayCache, GroundingLiteClient
 from .domain import (
     ConsentPurpose,
     ConsentRecord,
+    Capabilities,
     ConsentProcessor,
     ErrorBody,
     ErrorCode,
@@ -33,7 +35,9 @@ from .domain import (
     Principal,
     PrincipalKind,
     RuntimeConfig,
+    SessionBootstrap,
     TurnResponse,
+    UsageView,
 )
 from .failures import TurnFailure
 from .gateway import ModelGateway
@@ -104,13 +108,20 @@ _STATUS_CODES = {
     422: ErrorCode.VALIDATION,
     429: ErrorCode.QUOTA,
 }
-_ERROR_RESPONSES = {
+_RETRY_AFTER_HEADER = {
+    "Retry-After": {
+        "description": "Seconds to wait before retrying.",
+        "schema": {"type": "integer", "minimum": 1},
+    }
+}
+_ERROR_RESPONSES: dict[int | str, dict[str, object]] = {
     status: {"model": ErrorBody, "description": str(code)}
     for status, code in (
         (401, "POLICY"), (403, "POLICY"), (409, "CONFLICT"), (422, "VALIDATION"), (429, "QUOTA"),
         (502, "VALIDATION"), (503, "PROVIDER"), (504, "PROVIDER"),
     )
 }
+_ERROR_RESPONSES[429]["headers"] = _RETRY_AFTER_HEADER
 
 
 def _error(
@@ -261,6 +272,10 @@ def create_app(
     application.state.verifier = verifier
     application.state.consents = consent_store or InMemoryConsentStore(clock)
     application.state.consent_limiter = OperationLimiter(clock)
+    application.state.clock = clock or (lambda: datetime.now(UTC))
+    # Bootstrap is the tightest (once per page load); reads of the meter and capabilities are cheap.
+    application.state.bootstrap_limiter = OperationLimiter(clock, max_operations=30)
+    application.state.access_limiter = OperationLimiter(clock, max_operations=120)
     application.state.resolver = resolver or PrincipalResolver(
         policies=application.state.orchestrator.quotas.policies
     )
@@ -332,6 +347,7 @@ def create_app(
                 workspace_id=result.workspace.id if result.workspace else None,
                 allowance_exhausted=result.allowance_exhausted,
                 policy_version=principal.policy_version,
+                usage=usage_view(turn_orchestrator.quotas, principal),
                 discovery=result.discovery,
                 warnings=result.warnings,
             )
@@ -380,6 +396,52 @@ def create_app(
             raise _error(404, ErrorCode.VALIDATION, "no such consent")
         return Response(status_code=204)
 
+    def _access_principal(request: Request, principal: Principal, limiter: OperationLimiter) -> QuotaService:
+        if principal.kind == PrincipalKind.DISABLED:
+            raise _error(403, ErrorCode.POLICY, "account unavailable")
+        wait = limiter.check(principal.uid)
+        if wait is not None:
+            raise _error(429, ErrorCode.QUOTA, "too many requests", ErrorReason.RATE_LIMITED, wait)
+        return request.app.state.orchestrator.quotas
+
+    @application.post("/v1/session:bootstrap", response_model=SessionBootstrap, responses=_ERROR_RESPONSES)
+    def bootstrap(request: Request, principal: Principal = Depends(current_principal)) -> SessionBootstrap:
+        quotas = _access_principal(request, principal, request.app.state.bootstrap_limiter)
+        try:
+            return session_bootstrap(quotas, principal, request.app.state.clock())
+        except AccountUnavailable:
+            raise _error(403, ErrorCode.POLICY, "account unavailable") from None
+
+    @application.get("/v1/me/usage", response_model=UsageView, responses=_ERROR_RESPONSES)
+    def my_usage(request: Request, principal: Principal = Depends(current_principal)) -> UsageView:
+        quotas = _access_principal(request, principal, request.app.state.access_limiter)
+        try:
+            return usage_view(quotas, principal)
+        except AccountUnavailable:
+            raise _error(403, ErrorCode.POLICY, "account unavailable") from None
+
+    @application.get("/v1/me/capabilities", response_model=Capabilities, responses=_ERROR_RESPONSES)
+    def my_capabilities(request: Request, principal: Principal = Depends(current_principal)) -> Capabilities:
+        quotas = _access_principal(request, principal, request.app.state.access_limiter)
+        try:
+            return capabilities_for(principal, usage_view(quotas, principal))
+        except AccountUnavailable:
+            raise _error(403, ErrorCode.POLICY, "account unavailable") from None
+
+    def _openapi() -> dict:
+        if application.openapi_schema:
+            return application.openapi_schema
+        schema = FastAPI.openapi(application)
+        # The server answers 401 without an Authorization header, so the schema says it is required
+        # (a typed client must send it). The dependency keeps it optional to keep the 401 contract.
+        for path in schema["paths"].values():
+            for operation in path.values():
+                for parameter in operation.get("parameters", []):
+                    if parameter["in"] == "header" and parameter["name"] == "authorization":
+                        parameter["required"] = True
+        return schema
+
+    application.openapi = _openapi  # type: ignore[method-assign]
     return application
 
 

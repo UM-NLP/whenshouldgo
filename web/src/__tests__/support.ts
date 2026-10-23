@@ -1,6 +1,12 @@
 import { vi } from "vitest";
 
-import { createApi, type DiscoveryBlock, type TurnResponse } from "../api/client";
+import {
+  createApi,
+  type DiscoveryBlock,
+  type SessionBootstrap,
+  type TurnResponse,
+  type UsageView,
+} from "../api/client";
 import { DevAuthProvider } from "../auth";
 
 export interface Recorded {
@@ -79,6 +85,44 @@ export function discoveryBlock(overrides: Partial<DiscoveryBlock> = {}): Discove
   };
 }
 
+export function usageView(overrides: Partial<UsageView> = {}): UsageView {
+  return {
+    schema_version: 1,
+    kind: "usage",
+    period: "LIFETIME",
+    user_turns_used: 0,
+    user_turns_limit: 50,
+    activated_trips_used: 0,
+    activated_trips_limit: 10,
+    resets_at: null,
+    meter_state: "NONE",
+    registered_turn_limit: 100,
+    registered_trip_limit: 10,
+    ...overrides,
+  };
+}
+
+export function bootstrapBody(usage: UsageView = usageView()): SessionBootstrap {
+  return {
+    schema_version: 1,
+    kind: "session_bootstrap",
+    tier: "guest",
+    policy_version: "p1",
+    capabilities: {
+      schema_version: 1,
+      kind: "capabilities",
+      can_start_turn: usage.meter_state !== "GATED",
+      can_use_location: true,
+      can_read: true,
+      can_export: true,
+      can_delete: true,
+      can_link_account: true,
+    },
+    usage,
+    server_time: "2026-10-22T12:00:00Z",
+  };
+}
+
 export function turnResponse(overrides: Partial<TurnResponse> = {}): TurnResponse {
   return {
     schema_version: 1,
@@ -89,6 +133,7 @@ export function turnResponse(overrides: Partial<TurnResponse> = {}): TurnRespons
     workspace_id: null,
     allowance_exhausted: false,
     policy_version: "p1",
+    usage: usageView(),
     discovery: discoveryBlock(),
     warnings: [],
     ...overrides,

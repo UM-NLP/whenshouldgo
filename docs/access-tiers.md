@@ -85,6 +85,13 @@ POST /v1/me:export
 POST /v1/me:delete
 ```
 
+Response shapes implemented in Phase 0 (all strict, in the OpenAPI contract; tenant comes only from the verified token):
+
+- `POST /v1/session:bootstrap` is idempotent and rate-limited. It returns `SessionBootstrap {schema_version, kind, tier (guest|registered), policy_version, capabilities, usage, server_time}`. It issues no token and links nothing.
+- `GET /v1/me/usage` returns `UsageView {period, user_turns_used, user_turns_limit, activated_trips_used, activated_trips_limit, resets_at, meter_state, gate_reason?, registered_turn_limit?, registered_trip_limit?}`. The server computes `meter_state` from the larger of the turn and trip ratios against the policy thresholds (NONE, QUIET_70, NOTICE_90, GATED at the limit). Free turns are never counted. `resets_at` is null for guests and until the rolling window is enforced (#22). The registered limits are the public numbers a guest receives on registering, so the client can show the gate wording without hard-coding them. No cost, token or internal-ceiling field exists in any of these.
+- `GET /v1/me/capabilities` returns `Capabilities {can_start_turn, can_use_location, can_read, can_export, can_delete, can_link_account}` derived from tier and allowance only (read, export and delete stay true after the gate).
+- `TurnResponse.usage` carries the same `UsageView` after every turn, so the client updates the meter without another call; `allowance_exhausted` is unchanged.
+
 For a new Google or email identity, Firebase `linkWithCredential` preserves the anonymous UID. The backend uses a one-time link intent, verifies that the refreshed token still has the same UID and now has a permanent provider, then changes the principal atomically.
 
 If the credential already belongs to an account, use an explicit merge flow. Authenticate both identities, show a manifest of guest trips, copy selected trips with idempotency keys, preserve registered preferences unless the user chooses otherwise, and delete guest server data only after completion. Do not add the guest allowance to the registered allowance, silently merge by email or overwrite saved places.

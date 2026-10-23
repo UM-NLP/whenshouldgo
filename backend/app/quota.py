@@ -55,6 +55,11 @@ class QuotaService:
                 reserved_keys=set(usage.reserved_keys),
             )
 
+    def ensure_record(self, uid: str) -> None:
+        """Idempotently create the principal's ledger record (session bootstrap)."""
+        with self._lock:
+            self._usage.setdefault(uid, Usage())
+
     def _allowance(self, principal: Principal) -> Allowance | None:
         return self.policies.for_kind(principal.kind, principal.policy_version)
 

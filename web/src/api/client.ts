@@ -10,6 +10,8 @@ export type TurnResponse = components["schemas"]["TurnResponse"];
 export type DiscoveryBlock = components["schemas"]["DiscoveryBlock"];
 export type DiscoveryPlace = components["schemas"]["DiscoveryPlace"];
 export type TurnWarning = components["schemas"]["TurnWarning"];
+export type UsageView = components["schemas"]["UsageView"];
+export type SessionBootstrap = components["schemas"]["SessionBootstrap"];
 
 export type Outcome<T> = { ok: true; data: T } | { ok: false; failure: Failure };
 
@@ -22,6 +24,8 @@ export interface TurnInput {
 /** Everything the UI may ask of the backend. Types come from the generated OpenAPI schema. */
 export interface Api {
   sendTurn(input: TurnInput): Promise<Outcome<TurnResponse>>;
+  /** Idempotent session start; returns the server-computed usage view. */
+  bootstrap(): Promise<Outcome<SessionBootstrap>>;
   grantLocationConsent(): Promise<Outcome<null>>;
   withdrawLocationConsent(): Promise<Outcome<null>>;
   hasLocationConsent(): Promise<Outcome<boolean>>;
@@ -83,6 +87,11 @@ export function createApi({ auth, fetchImpl, baseUrl }: ApiOptions): Api {
   const nothing = (): null | "" => "";
 
   return {
+    bootstrap: () =>
+      call(
+        (authorization) => client.POST("/v1/session:bootstrap", { params: { header: { authorization } } }),
+        (data) => data ?? null,
+      ),
     sendTurn: ({ message, idempotencyKey, location }) =>
       call(
         (authorization) =>

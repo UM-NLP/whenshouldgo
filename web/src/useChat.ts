@@ -1,6 +1,6 @@
 import { useCallback, useRef, useState } from "react";
 
-import type { Api, TurnResponse } from "./api/client";
+import type { Api, TurnResponse, UsageView } from "./api/client";
 import { retryFor, type Failure, type Retry } from "./api/failures";
 import { GeoError, type Coordinates, type GeoErrorKind } from "./lib/geo";
 import { newIdempotencyKey } from "./lib/idempotency";
@@ -30,7 +30,11 @@ export interface Chat {
   retry(): void;
 }
 
-export function useChat(api: Api, location: LocationConsent): Chat {
+export function useChat(
+  api: Api,
+  location: LocationConsent,
+  onUsage: (usage: UsageView) => void = () => undefined,
+): Chat {
   const [items, setItems] = useState<ChatItem[]>([]);
   const [sending, setSending] = useState(false);
   const [problem, setProblem] = useState<PendingProblem | null>(null);
@@ -61,6 +65,7 @@ export function useChat(api: Api, location: LocationConsent): Chat {
       setSending(false);
       if (outcome.ok) {
         pending.current = null;
+        onUsage(outcome.data.usage);
         setItems((current) => [...current, { id: nextId(), role: "assistant", response: outcome.data }]);
         return;
       }
@@ -70,7 +75,7 @@ export function useChat(api: Api, location: LocationConsent): Chat {
       }
       setProblem({ type: "api", failure: outcome.failure, retry: retryFor(outcome.failure) });
     },
-    [api, location],
+    [api, location, onUsage],
   );
 
   const send = useCallback(

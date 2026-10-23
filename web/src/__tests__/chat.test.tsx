@@ -35,7 +35,7 @@ describe("sending and rendering", () => {
     const backend = fakeBackend();
     render(<Chat api={backend.api} />);
     expect(screen.getByText(/Ask about a place or an outing/)).toBeInTheDocument();
-    await waitFor(() => expect(backend.requests.map((r) => r.url)).toEqual(["/v1/me/consents"]));
+    await waitFor(() => expect(backend.requests.map((r) => r.url).sort()).toEqual(["/v1/me/consents", "/v1/session:bootstrap"]));
     expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
   });
 
@@ -193,11 +193,11 @@ describe("location consent flow", () => {
     await user.click(await screen.findByRole("button", { name: "Use my location" }));
     expect(screen.getByText(/PLACEHOLDER NOTICE \(location-notice-1\), pending counsel review \(issue #27\)/)).toBeInTheDocument();
     expect(screen.getByText(LOCATION_NOTICE_TEXT)).toBeInTheDocument();
-    expect(backend.requests.some((r) => r.method === "POST")).toBe(false);
+    expect(backend.requests.some((r) => r.method === "POST" && r.url !== "/v1/session:bootstrap")).toBe(false);
     expect(geo.getCurrentPosition).not.toHaveBeenCalled();
     await user.click(screen.getByRole("button", { name: "Cancel" }));
     expect(screen.getByRole("button", { name: "Use my location" })).toBeInTheDocument();
-    expect(backend.requests.some((r) => r.method === "POST")).toBe(false);
+    expect(backend.requests.some((r) => r.method === "POST" && r.url !== "/v1/session:bootstrap")).toBe(false);
   });
 
   it("records consent, then asks the browser, then sends the position with the turn", async () => {

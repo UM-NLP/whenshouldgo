@@ -1,6 +1,6 @@
 # WhenShouldGo web (slice 1)
 
-Mobile-first chat screen: reply, Google's grounded block verbatim with its sources, and the
+Mobile-first chat screen with a server-driven usage meter (bootstrap on load, updated from each turn; the client never computes entitlements): reply, Google's grounded block verbatim with its sources, and the
 foreground location consent flow. Phase 0 only. Nothing is persisted client-side.
 
 ## Run (dev, dry run: no keys, no network)

@@ -38,6 +38,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/me/capabilities": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** My Capabilities */
+        get: operations["my_capabilities_v1_me_capabilities_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/me/consents": {
         parameters: {
             query?: never;
@@ -73,10 +90,70 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/me/usage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** My Usage */
+        get: operations["my_usage_v1_me_usage_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/session:bootstrap": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Bootstrap */
+        post: operations["bootstrap_v1_session_bootstrap_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** Capabilities */
+        Capabilities: {
+            /** Can Delete */
+            can_delete: boolean;
+            /** Can Export */
+            can_export: boolean;
+            /** Can Link Account */
+            can_link_account: boolean;
+            /** Can Read */
+            can_read: boolean;
+            /** Can Start Turn */
+            can_start_turn: boolean;
+            /** Can Use Location */
+            can_use_location: boolean;
+            /**
+             * Kind
+             * @default capabilities
+             * @constant
+             */
+            kind: "capabilities";
+            /**
+             * Schema Version
+             * @default 1
+             */
+            schema_version: number;
+        };
         /** ConsentGrantRequest */
         ConsentGrantRequest: {
             /** Notice Version */
@@ -215,6 +292,11 @@ export interface components {
          */
         FramingKind: "RESULTS_INTRO" | "NO_RESULTS";
         /**
+         * GateReason
+         * @enum {string}
+         */
+        GateReason: "TURNS_LIMIT" | "TRIPS_LIMIT";
+        /**
          * LocationInput
          * @description ``{latitude, longitude}`` and nothing else (no accuracy, altitude or timestamp).
          */
@@ -224,6 +306,40 @@ export interface components {
             /** Longitude */
             longitude: number;
         };
+        /**
+         * MeterState
+         * @enum {string}
+         */
+        MeterState: "NONE" | "QUIET_70" | "NOTICE_90" | "GATED";
+        /** SessionBootstrap */
+        SessionBootstrap: {
+            capabilities: components["schemas"]["Capabilities"];
+            /**
+             * Kind
+             * @default session_bootstrap
+             * @constant
+             */
+            kind: "session_bootstrap";
+            /** Policy Version */
+            policy_version: string;
+            /**
+             * Schema Version
+             * @default 1
+             */
+            schema_version: number;
+            /**
+             * Server Time
+             * Format: date-time
+             */
+            server_time: string;
+            tier: components["schemas"]["Tier"];
+            usage: components["schemas"]["UsageView"];
+        };
+        /**
+         * Tier
+         * @enum {string}
+         */
+        Tier: "guest" | "registered";
         /** TurnRequest */
         TurnRequest: {
             location?: components["schemas"]["LocationInput"] | null;
@@ -253,6 +369,7 @@ export interface components {
              * @default 1
              */
             schema_version: number;
+            usage: components["schemas"]["UsageView"];
             /**
              * Warnings
              * @default []
@@ -267,6 +384,42 @@ export interface components {
          * @enum {string}
          */
         TurnWarning: "TOOL_BUDGET_EXHAUSTED" | "FACT_DROPPED" | "AREA_DROPPED" | "QUERY_REJECTED" | "NEEDS_AREA";
+        /**
+         * UsagePeriod
+         * @enum {string}
+         */
+        UsagePeriod: "LIFETIME" | "ROLLING_30_DAYS";
+        /** UsageView */
+        UsageView: {
+            /** Activated Trips Limit */
+            activated_trips_limit: number;
+            /** Activated Trips Used */
+            activated_trips_used: number;
+            gate_reason?: components["schemas"]["GateReason"] | null;
+            /**
+             * Kind
+             * @default usage
+             * @constant
+             */
+            kind: "usage";
+            meter_state: components["schemas"]["MeterState"];
+            period: components["schemas"]["UsagePeriod"];
+            /** Registered Trip Limit */
+            registered_trip_limit?: number | null;
+            /** Registered Turn Limit */
+            registered_turn_limit?: number | null;
+            /** Resets At */
+            resets_at?: string | null;
+            /**
+             * Schema Version
+             * @default 1
+             */
+            schema_version: number;
+            /** User Turns Limit */
+            user_turns_limit: number;
+            /** User Turns Used */
+            user_turns_used: number;
+        };
     };
     responses: never;
     parameters: never;
@@ -303,7 +456,7 @@ export interface operations {
             query?: never;
             header: {
                 "idempotency-key": string;
-                authorization?: string | null;
+                authorization: string | null;
             };
             path?: never;
             cookie?: never;
@@ -362,6 +515,104 @@ export interface operations {
             /** @description QUOTA */
             429: {
                 headers: {
+                    /** @description Seconds to wait before retrying. */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description VALIDATION */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description PROVIDER */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description PROVIDER */
+            504: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    my_capabilities_v1_me_capabilities_get: {
+        parameters: {
+            query?: never;
+            header: {
+                authorization: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Capabilities"];
+                };
+            };
+            /** @description POLICY */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description POLICY */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description CONFLICT */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description VALIDATION */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description QUOTA */
+            429: {
+                headers: {
+                    /** @description Seconds to wait before retrying. */
+                    "Retry-After"?: number;
                     [name: string]: unknown;
                 };
                 content: {
@@ -400,8 +651,8 @@ export interface operations {
     list_consents_v1_me_consents_get: {
         parameters: {
             query?: never;
-            header?: {
-                authorization?: string | null;
+            header: {
+                authorization: string | null;
             };
             path?: never;
             cookie?: never;
@@ -456,6 +707,8 @@ export interface operations {
             /** @description QUOTA */
             429: {
                 headers: {
+                    /** @description Seconds to wait before retrying. */
+                    "Retry-After"?: number;
                     [name: string]: unknown;
                 };
                 content: {
@@ -494,8 +747,8 @@ export interface operations {
     grant_consent_v1_me_consents_post: {
         parameters: {
             query?: never;
-            header?: {
-                authorization?: string | null;
+            header: {
+                authorization: string | null;
             };
             path?: never;
             cookie?: never;
@@ -554,6 +807,8 @@ export interface operations {
             /** @description QUOTA */
             429: {
                 headers: {
+                    /** @description Seconds to wait before retrying. */
+                    "Retry-After"?: number;
                     [name: string]: unknown;
                 };
                 content: {
@@ -592,8 +847,8 @@ export interface operations {
     withdraw_consent_v1_me_consents__purpose__delete: {
         parameters: {
             query?: never;
-            header?: {
-                authorization?: string | null;
+            header: {
+                authorization: string | null;
             };
             path: {
                 purpose: string;
@@ -648,6 +903,200 @@ export interface operations {
             /** @description QUOTA */
             429: {
                 headers: {
+                    /** @description Seconds to wait before retrying. */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description VALIDATION */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description PROVIDER */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description PROVIDER */
+            504: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    my_usage_v1_me_usage_get: {
+        parameters: {
+            query?: never;
+            header: {
+                authorization: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UsageView"];
+                };
+            };
+            /** @description POLICY */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description POLICY */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description CONFLICT */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description VALIDATION */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description QUOTA */
+            429: {
+                headers: {
+                    /** @description Seconds to wait before retrying. */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description VALIDATION */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description PROVIDER */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description PROVIDER */
+            504: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    bootstrap_v1_session_bootstrap_post: {
+        parameters: {
+            query?: never;
+            header: {
+                authorization: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SessionBootstrap"];
+                };
+            };
+            /** @description POLICY */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description POLICY */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description CONFLICT */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description VALIDATION */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description QUOTA */
+            429: {
+                headers: {
+                    /** @description Seconds to wait before retrying. */
+                    "Retry-After"?: number;
                     [name: string]: unknown;
                 };
                 content: {

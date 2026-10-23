@@ -3,13 +3,18 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import type { Api } from "../api/client";
 import { useChat } from "../useChat";
 import { useLocationConsent } from "../useLocationConsent";
+import { useUsage } from "../useUsage";
 import { AssistantMessage } from "./AssistantMessage";
 import { LocationControl } from "./LocationControl";
 import { ProblemNotice } from "./ProblemNotice";
+import { UsageMeter } from "./UsageMeter";
 
 export function Chat({ api }: { api: Api }) {
   const location = useLocationConsent(api);
-  const chat = useChat(api, location);
+  const usage = useUsage(api);
+  const chat = useChat(api, location, usage.update);
+  // The server's meter_state decides; the client computes nothing from the counters.
+  const gated = usage.view?.meter_state === "GATED";
   const [draft, setDraft] = useState("");
   const endRef = useRef<HTMLDivElement>(null);
 
@@ -30,7 +35,7 @@ export function Chat({ api }: { api: Api }) {
 
   function submit(event: FormEvent) {
     event.preventDefault();
-    if (!draft.trim() || chat.sending) return;
+    if (!draft.trim() || chat.sending || gated) return;
     chat.send(draft);
     setDraft("");
   }
@@ -74,6 +79,8 @@ export function Chat({ api }: { api: Api }) {
         <div ref={endRef} />
       </div>
 
+      {usage.view ? <UsageMeter usage={usage.view} /> : null}
+
       <LocationControl location={location} />
 
       <form className="composer" onSubmit={submit}>
@@ -85,6 +92,7 @@ export function Chat({ api }: { api: Api }) {
           value={draft}
           rows={2}
           maxLength={20000}
+          disabled={gated}
           placeholder="What are you looking for?"
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={(e) => {
@@ -94,7 +102,7 @@ export function Chat({ api }: { api: Api }) {
             }
           }}
         />
-        <button type="submit" disabled={chat.sending || !draft.trim()}>
+        <button type="submit" disabled={chat.sending || gated || !draft.trim()}>
           Send
         </button>
       </form>
