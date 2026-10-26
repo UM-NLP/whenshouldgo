@@ -1,0 +1,93 @@
+# CI only (decision 26): no deploy job, no secrets, no cloud access.
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/pyproject.toml
+      - run: python -m pip install -e ".[dev,auth]"
+      - run: ruff check .
+      - run: python -m pytest -q
+
+  web:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+      - run: npm test
+      - run: npm run build
+
+  openapi-drift:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/pyproject.toml
+      - run: python -m pip install -e backend
+      - name: Export OpenAPI and compare with the committed contract
+        run: |
+          python backend/scripts/export_openapi.py "$RUNNER_TEMP/openapi.json"
+          diff -u web/src/api/openapi.json "$RUNNER_TEMP/openapi.json" \
+            || { echo "OpenAPI drift: run 'npm run api:generate' in web/ and commit."; exit 1; }
+
+  repo-hygiene:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: No tracked env files other than examples
+        run: |
+          bad=$(git ls-files | grep -E '(^|/)\.env' | grep -Ev '\.(example|sample|template)$' || true)
+          if [ -n "$bad" ]; then echo "Tracked env file(s):"; echo "$bad"; exit 1; fi
+      - name: No key-shaped strings in tracked files
+        run: |
+          # This workflow is excluded so its own patterns do not match.
+          if git grep -nIE 'sk-or-v1-|ghp_[A-Za-z0-9]{20,}' -- . ':(exclude).github/workflows/ci.yml'; then
+            echo "Key-shaped string found"; exit 1
+          fi
+          if git grep -nIE 'AIza[0-9A-Za-z_-]{30,}' -- . ':(exclude).github/workflows/ci.yml' ':(exclude)**/tests/**'; then
+            echo "Google API key-shaped string found outside tests/"; exit 1
+          fi

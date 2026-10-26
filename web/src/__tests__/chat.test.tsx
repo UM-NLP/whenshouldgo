@@ -347,7 +347,11 @@ describe("privacy of coordinates and text", () => {
     expect(files.length).toBeGreaterThan(5);
     for (const file of files) {
       const source = readFileSync(file, "utf8");
-      expect(source, file).not.toMatch(/console\.|localStorage|sessionStorage|indexedDB|watchPosition|history\.(push|replace)State|document\.cookie|dangerouslySetInnerHTML|innerHTML/);
+      // IndexedDB is allowed only inside the guarded storage module (src/storage/).
+      const idb = file.replaceAll("\\", "/").includes("/src/storage/") ? "" : "indexedDB|";
+      expect(source, file).not.toMatch(
+        new RegExp(String.raw`console\.|localStorage|sessionStorage|${idb}watchPosition|history\.(push|replace)State|document\.cookie|dangerouslySetInnerHTML|innerHTML`),
+      );
     }
   });
 });

@@ -8,6 +8,10 @@ export type Retry = "same_key" | "new_key" | "none";
 
 export type Failure =
   | { kind: "location_consent_required" }
+  /** 403 GUEST_NOT_ALLOWED: the feature needs a registered account (guests keep this on the device). */
+  | { kind: "guest_not_allowed" }
+  /** 403 CONSENT_REQUIRED: a HISTORY_STORE or SAVED_PLACE consent is not held. Recovery is the consent prompt. */
+  | { kind: "history_consent_required" }
   | { kind: "rate_limited"; retryAfterSeconds: number | null }
   | { kind: "over_budget" }
   | { kind: "quota" }
@@ -16,6 +20,7 @@ export type Failure =
   | { kind: "result_expired" }
   | { kind: "discovery_unavailable" }
   | { kind: "not_configured" }
+  | { kind: "unavailable" }
   | { kind: "provider" }
   | { kind: "invalid" }
   | { kind: "network" }
@@ -35,6 +40,10 @@ export function classifyFailure(
 ): Failure {
   const reason = body?.reason ?? undefined;
   if (reason === "LOCATION_CONSENT_REQUIRED") return { kind: "location_consent_required" };
+  if (reason === "GUEST_NOT_ALLOWED") return { kind: "guest_not_allowed" };
+  if (reason === "CONSENT_REQUIRED") return { kind: "history_consent_required" };
+  // A planned route (501) or a feature the server switched off: "not available yet", not an error.
+  if (status === 501 || reason === "NOT_IMPLEMENTED" || reason === "DISABLED") return { kind: "unavailable" };
   if (status === 401 || status === 403) return { kind: "auth" };
   if (status === 429) {
     if (reason === "OVER_BUDGET") return { kind: "over_budget" };
@@ -48,6 +57,9 @@ export function classifyFailure(
   if (reason === "RESULT_EXPIRED") return { kind: "result_expired" };
   if (reason === "SERVER_NOT_CONFIGURED") return { kind: "not_configured" };
   if (reason === "DISCOVERY_UNAVAILABLE") return { kind: "discovery_unavailable" };
+  // A provider-side 503 is transient (retry); any other 503 means the service is not available.
+  if (reason?.startsWith("PROVIDER_")) return { kind: "provider" };
+  if (status === 503) return { kind: "unavailable" };
   if (status >= 500) return { kind: "provider" };
   return { kind: "unknown" };
 }
@@ -69,10 +81,19 @@ export function retryFor(failure: Failure): Retry {
 }
 
 /** Plain, static copy per failure. Server messages are not shown: the codes are enough. */
+export const GUEST_NOT_ALLOWED_TEXT =
+  "Sign in with a free account to use this. Until then, history and saved places stay on this device only.";
+export const HISTORY_CONSENT_TEXT =
+  "This needs your OK to save it to your account first. Agree in the history section, then try again.";
+
 export function failureText(failure: Failure): string {
   switch (failure.kind) {
     case "location_consent_required":
       return "Using your location needs your OK first. Turn it on to continue, or name an area in your message.";
+    case "guest_not_allowed":
+      return GUEST_NOT_ALLOWED_TEXT;
+    case "history_consent_required":
+      return HISTORY_CONSENT_TEXT;
     case "rate_limited":
       return failure.retryAfterSeconds === null
         ? "You are sending requests too quickly. Wait a moment and try again."
@@ -91,6 +112,8 @@ export function failureText(failure: Failure): string {
       return "Place search is unavailable right now. Try again shortly.";
     case "not_configured":
       return "The service is not set up yet, so it cannot answer right now.";
+    case "unavailable":
+      return "This is not available yet. You can keep using the rest of the app.";
     case "provider":
       return "Something went wrong on our side while answering. Your message was not lost; you can try again.";
     case "invalid":

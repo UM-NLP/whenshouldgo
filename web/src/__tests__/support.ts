@@ -69,8 +69,9 @@ export function discoveryBlock(overrides: Partial<DiscoveryBlock> = {}): Discove
     render_mode: "text",
     text: GROUNDED_TEXT,
     places: [
-      { title: "Noodle Bar", attribution_url: place, place_url: place },
+      { place_id: "ChIJplaceAAAA", title: "Noodle Bar", attribution_url: place, place_url: place },
       {
+        place_id: "ChIJplaceBBBB",
         title: "Tea House",
         attribution_url: `https://www.google.com/maps/place//data=!4m2!3m1!1sZyXwVuTs98:0xaabbccdd1122`,
         place_url: `https://www.google.com/maps/place//data=!4m2!3m1!1sZyXwVuTs98:0xaabbccdd1122`,
@@ -117,6 +118,7 @@ export function bootstrapBody(usage: UsageView = usageView()): SessionBootstrap 
       can_export: false,
       can_delete: false,
       can_link_account: true,
+      history_enabled: false,
     },
     usage,
     server_time: "2026-10-22T12:00:00Z",

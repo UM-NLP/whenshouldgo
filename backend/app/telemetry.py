@@ -63,7 +63,17 @@ from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
-from .domain import DomainClass, ErrorCode, PrincipalKind
+from .domain import (
+    DomainClass,
+    ErrorCode,
+    OutcomeValue,
+    OutingStrength,
+    PendingActionEffect,
+    PrincipalKind,
+    RouteMode,
+    SavedPlaceKind,
+)
+from .domain import LinkProvider
 from .gateway import policy as _gateway_policy  # one-way: gateway must never import telemetry
 
 SCHEMA_VERSION = 1
@@ -107,6 +117,24 @@ class EventType(StrEnum):
     QUOTA = "QUOTA"
     POLICY = "POLICY"
     ERROR = "ERROR"
+    # Phase 1 features built dark (decisions 24-27). Enums and counts only: no place name, label,
+    # note, coordinate or place id ever has a field here.
+    PLACE_DETAILS = "PLACE_DETAILS"
+    ROUTE_CHECK = "ROUTE_CHECK"
+    ACTION_PROPOSED = "ACTION_PROPOSED"
+    ACTION_CONFIRMED = "ACTION_CONFIRMED"
+    ACTION_REJECTED = "ACTION_REJECTED"
+    TRIP_ACTIVATED = "TRIP_ACTIVATED"
+    WORKSPACE_EDIT = "WORKSPACE_EDIT"
+    OUTCOME_CHECKIN = "OUTCOME_CHECKIN"
+    ACCOUNT_LINK_STARTED = "ACCOUNT_LINK_STARTED"
+    ACCOUNT_LINK_COMPLETED = "ACCOUNT_LINK_COMPLETED"
+    EXPORT_REQUESTED = "EXPORT_REQUESTED"
+    DELETE_REQUESTED = "DELETE_REQUESTED"
+    HISTORY_RECORD_WRITTEN = "HISTORY_RECORD_WRITTEN"
+    HISTORY_RECORD_DELETED = "HISTORY_RECORD_DELETED"
+    SAVED_PLACE_SAVED = "SAVED_PLACE_SAVED"
+    SAVED_PLACE_DELETED = "SAVED_PLACE_DELETED"
 
 
 class Phase(StrEnum):
@@ -274,6 +302,122 @@ class ErrorEvent(TraceEvent):
     exception_type: ExceptionType | None = None
     # Code locations only ("app/main.py:123"), innermost last, at most 8. Never messages or locals.
     frames: tuple[FrameRef, ...] = Field(default=(), max_length=8)
+
+
+class ActionRejectReason(StrEnum):
+    EXPIRED = "EXPIRED"
+    NONCE_MISMATCH = "NONCE_MISMATCH"
+    ALREADY_CONFIRMED = "ALREADY_CONFIRMED"
+    NOT_FOUND = "NOT_FOUND"
+    EFFECT_NOT_ALLOWED = "EFFECT_NOT_ALLOWED"
+    CONSENT_REQUIRED = "CONSENT_REQUIRED"
+    CANCELLED = "CANCELLED"
+
+
+class EditOutcome(StrEnum):
+    APPLIED = "APPLIED"
+    REJECTED = "REJECTED"
+    CONFLICT = "CONFLICT"
+
+
+class LinkOutcome(StrEnum):
+    LINKED = "LINKED"
+    EXPIRED = "EXPIRED"
+    REJECTED = "REJECTED"
+    ALREADY_LINKED = "ALREADY_LINKED"
+
+
+class PlaceDetailsEvent(TraceEvent):
+    event: Literal[EventType.PLACE_DETAILS] = EventType.PLACE_DETAILS
+    place_count: int = Field(ge=0, le=10)
+    cache_hits: int = Field(ge=0, le=10)
+    outcome: ToolOutcome
+    latency_ms: int = Field(ge=0, le=86_400_000)
+    billable_units: int = Field(ge=0, le=1_000_000)
+
+
+class RouteCheckEvent(TraceEvent):
+    event: Literal[EventType.ROUTE_CHECK] = EventType.ROUTE_CHECK
+    mode: RouteMode
+    outcome: ToolOutcome
+    latency_ms: int = Field(ge=0, le=86_400_000)
+    billable_units: int = Field(ge=0, le=1_000_000)
+
+
+class ActionProposed(TraceEvent):
+    event: Literal[EventType.ACTION_PROPOSED] = EventType.ACTION_PROPOSED
+    effect: PendingActionEffect
+
+
+class ActionConfirmed(TraceEvent):
+    event: Literal[EventType.ACTION_CONFIRMED] = EventType.ACTION_CONFIRMED
+    effect: PendingActionEffect
+    replay: bool
+
+
+class ActionRejected(TraceEvent):
+    event: Literal[EventType.ACTION_REJECTED] = EventType.ACTION_REJECTED
+    effect: PendingActionEffect | None = None
+    reason: ActionRejectReason
+
+
+class TripActivated(TraceEvent):
+    event: Literal[EventType.TRIP_ACTIVATED] = EventType.TRIP_ACTIVATED
+    principal_kind: PrincipalKind
+
+
+class WorkspaceEdit(TraceEvent):
+    event: Literal[EventType.WORKSPACE_EDIT] = EventType.WORKSPACE_EDIT
+    upserts: int = Field(ge=0, le=1_000)
+    removals: int = Field(ge=0, le=1_000)
+    outcome: EditOutcome
+
+
+class OutcomeCheckinEvent(TraceEvent):
+    event: Literal[EventType.OUTCOME_CHECKIN] = EventType.OUTCOME_CHECKIN
+    outcome: OutcomeValue
+    has_note: bool  # never the note itself
+
+
+class AccountLinkStarted(TraceEvent):
+    event: Literal[EventType.ACCOUNT_LINK_STARTED] = EventType.ACCOUNT_LINK_STARTED
+    provider: LinkProvider
+
+
+class AccountLinkCompleted(TraceEvent):
+    event: Literal[EventType.ACCOUNT_LINK_COMPLETED] = EventType.ACCOUNT_LINK_COMPLETED
+    provider: LinkProvider
+    outcome: LinkOutcome
+
+
+class ExportRequested(TraceEvent):
+    event: Literal[EventType.EXPORT_REQUESTED] = EventType.EXPORT_REQUESTED
+    principal_kind: PrincipalKind
+
+
+class DeleteRequested(TraceEvent):
+    event: Literal[EventType.DELETE_REQUESTED] = EventType.DELETE_REQUESTED
+    principal_kind: PrincipalKind
+
+
+class HistoryRecordWritten(TraceEvent):
+    event: Literal[EventType.HISTORY_RECORD_WRITTEN] = EventType.HISTORY_RECORD_WRITTEN
+    strength: OutingStrength
+
+
+class HistoryRecordDeleted(TraceEvent):
+    event: Literal[EventType.HISTORY_RECORD_DELETED] = EventType.HISTORY_RECORD_DELETED
+    deleted_count: int = Field(ge=0, le=100_000)
+
+
+class SavedPlaceSaved(TraceEvent):
+    event: Literal[EventType.SAVED_PLACE_SAVED] = EventType.SAVED_PLACE_SAVED
+    label_kind: SavedPlaceKind
+
+
+class SavedPlaceDeleted(TraceEvent):
+    event: Literal[EventType.SAVED_PLACE_DELETED] = EventType.SAVED_PLACE_DELETED
+    deleted_count: int = Field(ge=0, le=100_000)
 
 
 # --- sinks ---------------------------------------------------------------------------

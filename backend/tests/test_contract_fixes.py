@@ -123,7 +123,8 @@ def test_f2_no_model_construct_or_model_copy_update_in_app() -> None:
 # --- 3. PendingAction bounds --------------------------------------------------------
 def test_f3_phase_2_3_effects_are_not_in_the_enum_yet() -> None:
     effects = {e.value for e in domain_module.PendingActionEffect}
-    assert effects == {"SET_REMINDER", "LAUNCH_HANDOFF"}
+    # SAVE_PLACE added deliberately by decision 25 (saved places, dark); nothing else.
+    assert effects == {"SET_REMINDER", "LAUNCH_HANDOFF", "SAVE_PLACE"}
     for effect in ("CREATE_ROUTINE", "ENABLE_NOTIFICATIONS"):
         with pytest.raises(ValidationError):
             pending(effect=effect)

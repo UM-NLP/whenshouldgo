@@ -87,6 +87,9 @@ Start with `architect` for new or cross-cutting work.
   - `gateway/`: provider-neutral `ModelGateway`, OpenRouter adapter and resilience.
     Fails closed without a pinned provider, zero retention, no fallbacks and a
     reviewed price table. Test doubles live in `backend/tests/gateway_fakes.py`.
+  - `stores/`: durable-state protocols (quota, consent ledger, workspace, idempotency, display
+    cache, whole-pilot spend and kill switch), in-memory implementations, lazy Firestore
+    adapters and an in-process Firestore fake for tests (decision 26).
   - `telemetry.py`: typed trace-event allowlist (no free-text fields), emit API and the
     log guard that blocks free-text logging from app code.
   - `orchestrator.py`: turn pipeline with idempotent replay.

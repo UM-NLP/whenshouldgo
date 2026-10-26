@@ -4,7 +4,7 @@ import re
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from threading import Lock
 from time import perf_counter
@@ -15,11 +15,8 @@ from .discovery import DisplayCache, GroundingLiteClient, render_grounded_block
 from pydantic import ValidationError
 
 from .domain import (
-    Confirmation,
     DiscoveryBlock,
     DomainClass,
-    Fact,
-    FactSource,
     Principal,
     PrincipalKind,
     RuntimeConfig,
@@ -39,7 +36,10 @@ from .gateway import ModelGateway
 from .guard import OUT_OF_SCOPE_REPLY, SAFETY_REPLY, classify, estimate_tokens, tools_for
 from .location import RoundedLocation
 from .pipeline import DiscoveryRef, TurnPipeline, to_api_block
+from .entitlements import workspace_ttl
 from .quota import QuotaService
+from .stores.memory import MemoryIdempotencyStore, MemoryWorkspaceStore
+from .stores.protocols import IdempotencyStore, WorkspaceStore
 from .telemetry import (
     AllowanceOutcome,
     PolicyEvent,
@@ -116,7 +116,28 @@ def discovery_cache_key(idempotency_key: str) -> str:
 
 
 class TurnOrchestrator:
-    """In-memory development orchestrator; workspace and replay stores move to Firestore."""
+    """The turn orchestrator. Workspace state and idempotent replay records live in injected
+    ``WorkspaceStore`` / ``IdempotencyStore`` objects: in memory by default (development, tests),
+    Firestore adapters in production (``app/stores``). The in-flight cap and the per-tenant turn
+    lock are per process by design (one running turn per tenant per instance)."""
+
+    @property
+    def workspaces(self):  # noqa: ANN201 - the in-memory store's dict, for tests and dev tools
+        items = getattr(self._workspace_store, "items", None)
+        if items is None:
+            raise AttributeError("this workspace store keeps no in-memory view")
+        return items
+
+    @property
+    def _committed(self):  # noqa: ANN202 - the in-memory replay dict, for tests
+        items = getattr(self._idempotency, "items", None)
+        if items is None:
+            raise AttributeError("this idempotency store keeps no in-memory view")
+        return items
+
+    @property
+    def runtime_config(self) -> RuntimeConfig | None:
+        return self._runtime_config
 
     def __init__(
         self,
@@ -132,7 +153,13 @@ class TurnOrchestrator:
         clock: Callable[[], datetime] | None = None,
         dev_scaffold: bool = False,
         max_inflight_turns: int = MAX_INFLIGHT_TURNS,
+        workspace_store: WorkspaceStore | None = None,
+        idempotency_store: IdempotencyStore | None = None,
+        account_guard: Callable[[str], None] | None = None,
     ) -> None:
+        # ``account_guard(uid)`` raises when the account was deleted (``AccountService.assert_active``).
+        # A turn already in flight when the account is deleted must not write anything back.
+        self._account_guard = account_guard
         self.quotas = quotas or QuotaService()
         self.sink: TraceSink = sink or get_default_sink()
         self._runtime_config = runtime_config
@@ -160,15 +187,14 @@ class TurnOrchestrator:
             self._pipeline = TurnPipeline(
                 gateway=gateway, discovery=discovery_client, cache=self.display_cache,
                 config=runtime_config, costs=self.costs, sink=self.sink, clock=self._clock)
-        self.workspaces: dict[tuple[str, str], TripWorkspace] = {}
-        # (uid, idempotency key) -> (request fingerprint, replay record) for replays.
-        self._committed: dict[tuple[str, str], tuple[str, ReplayRecord]] = {}
+        self._workspace_store: WorkspaceStore = workspace_store or MemoryWorkspaceStore()
+        # (uid, idempotency key) -> (request fingerprint, replay record) for replays; a record is
+        # pending (invisible to replay) until its turn commits.
+        self._idempotency: IdempotencyStore = idempotency_store or MemoryIdempotencyStore()
         # key -> [lock, users]. An entry exists only while a turn holds or waits for it, so the
         # dict cannot grow without bound as tenants come and go.
         self._workspace_locks: dict[tuple[str, str], list] = {}
         self._locks_guard = Lock()
-        # Record keys of turns that are stored but not yet committed: invisible to replay.
-        self._pending: set[tuple[str, str]] = set()
         self._max_inflight = max_inflight_turns
         self._inflight = 0
 
@@ -212,16 +238,27 @@ class TurnOrchestrator:
                 if entry[1] == 0:
                     self._workspace_locks.pop(key, None)
 
+    def workspace_lock(self, key: tuple[str, str]):  # noqa: ANN201 - a context manager
+        """The per-tenant workspace lock, public so a user edit and a turn never interleave."""
+        return self._workspace_lock(key)
+
+    def _account_inactive(self, uid: str) -> bool:
+        """True when the account was deleted (or its tombstone cannot be read: fail closed)."""
+        if self._account_guard is None:
+            return False
+        try:
+            self._account_guard(uid)
+        except Exception:  # noqa: BLE001 - any refusal means: write nothing for this uid
+            return True
+        return False
+
     def _replay(self, principal: Principal, idempotency_key: str, message: str) -> TurnResult | None:
-        if (principal.uid, idempotency_key) in self._pending:
+        stored = self._idempotency.get(principal.uid, idempotency_key, self._clock())
+        if stored is None or stored.pending:
             return None  # stored but not committed yet: the reservation still answers 409
-        stored = self._committed.get((principal.uid, idempotency_key))
-        if stored is None:
-            return None
-        fingerprint, record = stored
-        if fingerprint != _fingerprint(message):
+        if stored.fingerprint != _fingerprint(message):
             raise IdempotencyKeyReused("idempotency key reused with a different request")
-        return self._rehydrate(principal, record)
+        return self._rehydrate(principal, stored.record)
 
     def _rehydrate(self, principal: Principal, record: ReplayRecord) -> TurnResult:
         """Put a stored discovery block back from the display cache, owner-scoped, and verify the
@@ -372,7 +409,7 @@ class TurnOrchestrator:
                 replayed.append(True)
                 return replay
             with self._inflight_slot(), self._workspace_lock(key):
-                current = self.workspaces.get(key)
+                current = self._workspace_store.get(principal.uid, "default", self._clock())
                 base = current or self._new_workspace(principal)
                 tools = tools_for(domain, principal.kind)
                 if self._pipeline is not None and domain == DomainClass.TRAVEL:
@@ -402,11 +439,38 @@ class TurnOrchestrator:
                 # commit fails without counting, the state is rolled back and the reservation is
                 # released; if it counted before faulting, the turn IS committed (never
                 # released): the state stays and the fault is not turned into a failure.
-                record_key = (principal.uid, idempotency_key)
                 stored = replace(result, discovery=None)  # never keep Maps content in a record
-                self._pending.add(record_key)
-                self.workspaces[key] = workspace
-                self._committed[record_key] = (_fingerprint(message), ReplayRecord(stored, ref))
+                ttl = self._workspace_ttl(principal)
+                now = self._clock()
+                if self._account_inactive(principal.uid):  # deleted while this turn ran
+                    raise TurnFailure(403, ErrorCode.POLICY, None)
+                lost_race = False
+                try:
+                    self._idempotency.begin(
+                        principal.uid, idempotency_key, _fingerprint(message),
+                        ReplayRecord(stored, ref), now)
+                    # Compare-and-set against the version this turn read: another instance (the
+                    # turn lock is per process) that wrote meanwhile wins, and this turn stores
+                    # nothing and is not counted. Never restore ``current`` over its write.
+                    if not self._workspace_store.put_if_version(
+                            principal.uid, "default", workspace, now, ttl,
+                            expected_version=current.version if current is not None else None):
+                        lost_race = True
+                        self._idempotency.rollback(principal.uid, idempotency_key)
+                except BaseException:
+                    self._undo(principal, idempotency_key, current, workspace)
+                    raise
+                if lost_race:
+                    raise TurnFailure(409, ErrorCode.CONFLICT, ErrorReason.TURN_IN_PROGRESS)
+                if self._account_inactive(principal.uid):
+                    # The deletion landed between the check and the write: take both writes back
+                    # (the tombstone was written first, so the check above now sees it).
+                    try:
+                        self._idempotency.rollback(principal.uid, idempotency_key)
+                        self._workspace_store.delete(principal.uid, "default")
+                    except Exception:  # noqa: BLE001 - best effort; the uid stays tombstoned
+                        pass
+                    raise TurnFailure(403, ErrorCode.POLICY, None)
                 try:
                     if free:
                         self.quotas.release(reservation)  # served, but not counted
@@ -415,19 +479,14 @@ class TurnOrchestrator:
                 except BaseException as fault:
                     counted = idempotency_key in self.quotas.usage_for(principal.uid).committed_keys
                     if not counted:
-                        if current is None:
-                            self.workspaces.pop(key, None)
-                        else:
-                            self.workspaces[key] = current
-                        self._committed.pop(record_key, None)
-                        self._pending.discard(record_key)
+                        self._undo(principal, idempotency_key, current, workspace)
                         raise
                     committed = True
                     if not isinstance(fault, Exception):
-                        self._pending.discard(record_key)
+                        self._commit_replay(principal, idempotency_key)
                         raise
                 committed = True
-                self._pending.discard(record_key)
+                self._commit_replay(principal, idempotency_key)
         except BaseException:
             if not committed:
                 self.quotas.release(reservation)
@@ -437,6 +496,41 @@ class TurnOrchestrator:
         # committed unit or lose the replay record.
         quota_event(QuotaOutcome.RELEASED if free else QuotaOutcome.COMMITTED)
         return result
+
+    def _workspace_ttl(self, principal: Principal) -> timedelta | None:
+        """A server workspace expires after N inactive days (decisions 27 and 28: 7 for a guest,
+        90 for a registered user); every write refreshes it."""
+        return workspace_ttl(self.quotas.policies.get(principal.policy_version), principal.kind)
+
+    def _undo(
+        self, principal: Principal, idempotency_key: str, previous: TripWorkspace | None,
+        written: TripWorkspace,
+    ) -> None:
+        """Roll back an uncommitted turn's stored state (best effort: a store fault here must not
+        mask the original failure; a leftover pending record or newer workspace is harmless, it
+        expires or is overwritten, and the key stays uncounted). The workspace is restored or
+        removed ONLY while the stored version is still the one this turn wrote: a writer on
+        another instance that got in afterwards is never overwritten or deleted."""
+        try:
+            self._idempotency.rollback(principal.uid, idempotency_key)
+            if previous is None:
+                self._workspace_store.delete_if_version(
+                    principal.uid, "default", expected_version=written.version)
+            else:
+                self._workspace_store.put_if_version(
+                    principal.uid, "default", previous, self._clock(),
+                    self._workspace_ttl(principal), expected_version=written.version)
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _commit_replay(self, principal: Principal, idempotency_key: str) -> None:
+        """Make the stored record a replay source. The turn is already COUNTED, so a store fault
+        here is not turned into a failure: the record stays pending, expires, and a later replay
+        gets the typed RESULT_EXPIRED (never a second charge)."""
+        try:
+            self._idempotency.commit(principal.uid, idempotency_key, self._clock())
+        except Exception:  # noqa: BLE001
+            pass
 
     @staticmethod
     def _new_workspace(principal: Principal) -> TripWorkspace:

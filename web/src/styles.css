@@ -111,3 +111,42 @@ textarea {
   color: var(--fg);
   resize: none;
 }
+
+.queued { color: var(--muted, #666); font-size: 0.85em; }
+.data-controls { margin-top: 12px; font-size: 0.9em; }
+
+/* Trip Board */
+.turn { display: flex; flex-direction: column; gap: 8px; }
+.picks { display: flex; flex-wrap: wrap; gap: 8px; }
+.board { margin: 16px 0; padding: 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--card); display: flex; flex-direction: column; gap: 12px; }
+.board h2 { font-size: 1.1rem; margin: 0; }
+.board h3 { font-size: 0.95rem; margin: 0 0 4px; }
+.board h4 { margin: 0 0 4px; }
+.board p { margin: 0; }
+.board input[type="text"], .board input:not([type]), .board select { font: inherit; padding: 6px 8px; max-width: 100%; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--fg); }
+.muted, .fresh { color: var(--muted); font-size: 0.875rem; }
+.stale { color: #b45309; }
+.chips { list-style: none; padding: 0; margin: 0; display: flex; flex-wrap: wrap; gap: 8px; }
+.chip { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 4px 8px; border: 1px solid var(--line); border-radius: 16px; }
+.chip-tag { font-size: 0.75rem; color: var(--muted); }
+.add-fact { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.candidates { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 12px; }
+.candidate { display: flex; flex-direction: column; gap: 8px; padding-bottom: 12px; border-bottom: 1px solid var(--line); }
+.place-card, .route-card { display: flex; flex-direction: column; gap: 2px; }
+.place-name { font-weight: 600; overflow-wrap: anywhere; }
+.place-line, .place-attribution-extra { overflow-wrap: anywhere; }
+.place-attribution { font-size: 0.8rem; font-weight: 600; color: var(--muted); }
+.action-preview { overflow-wrap: anywhere; }
+.reminder-banner { margin-top: 8px; }
+.board button { min-height: 44px; }
+
+/* Account, history and saved places */
+.account-panel { display: flex; flex-direction: column; gap: 8px; margin: 8px 0; }
+.account-panel h2, .account-merge h3 { font-size: 1.05rem; margin: 0; }
+.account-panel fieldset { border: 1px solid var(--line); border-radius: 6px; margin: 0; padding: 8px 12px; }
+.account-panel input[type="email"], .phase1 select { font: inherit; padding: 6px 8px; max-width: 100%; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--fg); }
+.phase1 { display: flex; flex-direction: column; gap: 12px; }
+.phase1 h3 { font-size: 0.95rem; margin: 0 0 4px; }
+.history-entry, .saved-place { display: flex; flex-direction: column; gap: 4px; padding-bottom: 12px; border-bottom: 1px solid var(--line); }
+.history-entry p, .saved-place p { margin: 0; }
+.starting-area, .save-flow { margin: 8px 0; }

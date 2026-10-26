@@ -5,7 +5,6 @@ from __future__ import annotations
 import math
 
 import pytest
-from pydantic import ValidationError
 from wiring_support import fact
 
 from app.domain import (

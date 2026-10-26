@@ -15,7 +15,6 @@ from maps_simulator import (
     PRINCIPAL,
     SYNTH_TEXT,
     FakeMcpTransport,
-    SyntheticMapsClient,
     directions_link,
     mcp_ok,
     new_run,
@@ -34,7 +33,7 @@ from maps_simulator import (
     weather_link,
     write_review_link,
 )
-from test_discovery_contracts import TTLS, make_answer
+from test_discovery_contracts import make_answer
 from test_discovery_results import get, route, weather
 from test_discovery_validator import run_and_answer, validator
 from test_gateway_support import SECRET, Clock, make_config

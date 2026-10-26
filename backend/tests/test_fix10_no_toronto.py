@@ -10,14 +10,13 @@ from pathlib import Path
 import pytest
 from maps_simulator import SyntheticMapsClient
 from test_gateway_support import make_config
-from wiring_support import Env, RecordingClient, ScriptedGateway, canary_payload, fact, frame_turn
+from wiring_support import Env, RecordingClient, ScriptedGateway, canary_payload, frame_turn
 
 import app
 import app.frame as frame
 from app import pipeline
 from app.domain import TripWorkspace
 from app.frame import FrameIntent
-from app.orchestrator import TurnOrchestrator
 from app.frame import FrameProposal, ProposedFact, build_patch
 from app.patching import PatchRejected, apply_patch_checked
 

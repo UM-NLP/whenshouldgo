@@ -50,6 +50,8 @@ MAX_PENDING_ACTION_TTL = timedelta(minutes=15)
 MAX_OUTING_RETENTION_DAYS = 180
 MAX_OUTING_RETENTION = timedelta(days=MAX_OUTING_RETENTION_DAYS)
 
+from .location import LOCATION_DECIMALS, LocationInput  # noqa: E402  (leaf module)
+
 _T = TypeVar("_T", bound=BaseModel)
 
 # --- Bounded identifier and text types ----------------------------------------------
@@ -78,7 +80,20 @@ def _reject_location_text(value: str | None) -> str | None:
     return value
 
 
-UserLabel = Annotated[str, StringConstraints(max_length=80), AfterValidator(_reject_location_text)]
+def _reject_unsafe_label(value: str | None) -> str | None:
+    """The shared plain-text policy (hidden or bidi characters, markup, links, emails, phone
+    numbers, addresses, coordinates) for the text the user typed. Imported lazily: textsafety
+    imports the discovery package, which imports this module."""
+    if value is not None:
+        from .textsafety import label_problem
+
+        if label_problem(value):
+            raise ValueError("label must be plain text")
+    return value
+
+
+UserLabel = Annotated[str, StringConstraints(max_length=80), AfterValidator(_reject_location_text),
+                      AfterValidator(_reject_unsafe_label)]
 
 
 class Strict(BaseModel):
@@ -322,10 +337,13 @@ class WorkspacePatch(Strict):
 
 
 class PendingActionEffect(StrEnum):
-    # CREATE_ROUTINE is added in Phase 2 (decision 20) and ENABLE_NOTIFICATIONS in
-    # Phase 3 (decision 21), together with their handlers. Not before.
+    # SAVE_PLACE was added deliberately for saved places and Home/Work (decision 24) under the
+    # owner's build-ahead override, behind history_enabled (decision 25). CREATE_ROUTINE is added
+    # in Phase 2 (decision 20) and ENABLE_NOTIFICATIONS in Phase 3 (decision 21), together with
+    # their handlers. Not before: no other effect may be added here.
     SET_REMINDER = "SET_REMINDER"
     LAUNCH_HANDOFF = "LAUNCH_HANDOFF"
+    SAVE_PLACE = "SAVE_PLACE"
 
 
 class PendingAction(Frozen):
@@ -559,6 +577,7 @@ class ConsentPurpose(StrEnum):
     PROACTIVE_NOTIFY = "PROACTIVE_NOTIFY"
     CLOUD_SYNC = "CLOUD_SYNC"
     CALENDAR_READ = "CALENDAR_READ"  # later phase
+    SAVED_PLACE = "SAVED_PLACE"  # decisions 24 and 25: stored Home, Work and custom places
 
 
 class ConsentProcessor(StrEnum):
@@ -693,6 +712,10 @@ class RuntimeConfig(Frozen):
     # path is deliberately NOT implemented: the orchestrator raises a typed not-implemented
     # error when this is True. Flip it only with Google's written answer to question 2.
     maps_content_to_model: bool = False
+    # Decision 25: server-side history, saved places and Home/Work are built dark. They are usable
+    # only when this flag is on AND an approved notice version is configured (history_active).
+    history_enabled: bool = False
+    history_notice_version: VersionText | None = None
 
     @model_validator(mode="after")
     def _unique_names(self) -> RuntimeConfig:
@@ -705,6 +728,21 @@ class RuntimeConfig(Frozen):
             if len(names) != len(set(names)):
                 raise ValueError("duplicate name in runtime config")
         return self
+
+
+# Notice versions the owner has approved after the signed legal checklist (decision 25). Empty
+# until then, so history cannot become active by configuration alone.
+APPROVED_HISTORY_NOTICE_VERSIONS: frozenset[str] = frozenset()
+
+
+def history_active(config: RuntimeConfig | None) -> bool:
+    """True only when the flag is on and an approved notice version is configured (fail closed)."""
+    return (
+        config is not None
+        and config.history_enabled
+        and config.history_notice_version is not None
+        and config.history_notice_version in APPROVED_HISTORY_NOTICE_VERSIONS
+    )
 
 
 # --- API payloads -------------------------------------------------------------------
@@ -739,6 +777,20 @@ class ErrorReason(StrEnum):
     # The request carried a location but the principal holds no active LOCATION_FOREGROUND
     # consent: refused before any model or tool work, nothing consumed.
     LOCATION_CONSENT_REQUIRED = "LOCATION_CONSENT_REQUIRED"
+    NOT_IMPLEMENTED = "NOT_IMPLEMENTED"  # a planned route whose handler is not built yet (501)
+    DISABLED = "DISABLED"  # the feature is switched off on the server (history_enabled, 404)
+    # Account linking and the explicit merge (docs/access-tiers.md). The text of such an error is
+    # static and says nothing more: a client switches on the reason.
+    LINK_INTENT_EXPIRED = "LINK_INTENT_EXPIRED"  # the 15-minute link intent ran out
+    LINK_INTENT_CONSUMED = "LINK_INTENT_CONSUMED"  # the link intent was already used
+    ACCOUNT_COLLISION = "ACCOUNT_COLLISION"  # the credential already owns an account: merge flow
+    WRONG_UID = "WRONG_UID"  # the token is not the identity the intent was issued to
+    ANONYMOUS_PROVIDER = "ANONYMOUS_PROVIDER"  # still anonymous: sign in with a permanent provider
+    MIGRATION_INTERRUPTED = "MIGRATION_INTERRUPTED"  # the merge is saved; call again to resume
+    # Phase 1, built dark (decisions 19, 24, 25): server history and saved places are for registered
+    # accounts only, and only while the matching consent is held.
+    GUEST_NOT_ALLOWED = "GUEST_NOT_ALLOWED"  # guests keep history and saved places on the device
+    CONSENT_REQUIRED = "CONSENT_REQUIRED"  # HISTORY_STORE or SAVED_PLACE consent is not held
 
 
 class ErrorBody(Frozen):
@@ -747,6 +799,9 @@ class ErrorBody(Frozen):
     code: ErrorCode
     message: str = Field(max_length=500)  # server-authored, never provider or user content
     reason: ErrorReason | None = None  # omitted from the JSON when absent
+    # Set on a 409 workspace version conflict: the version the client must reload (the message
+    # text stays fixed, so it never carries data).
+    current_version: int | None = Field(default=None, ge=0)
 
 
 class FramingKind(StrEnum):
@@ -767,6 +822,9 @@ class _ApiFrozen(Frozen):
 class DiscoveryPlace(_ApiFrozen):
     """One source, exactly as Google provided it (shown as text, linked to its urls)."""
 
+    # Google's place ID (display-safe, validated by the discovery contract and bound into the
+    # display hash). A client may pass it to POST /v1/places/details; it never parses a URL.
+    place_id: PlaceId = Field(repr=False)
     title: str = Field(max_length=MAX_TITLE_CHARS, repr=False)
     attribution_url: str = Field(max_length=MAX_URI_CHARS, repr=False)
     place_url: str = Field(max_length=MAX_URI_CHARS, repr=False)
@@ -864,6 +922,8 @@ class Capabilities(Frozen):
     can_export: bool
     can_delete: bool
     can_link_account: bool  # guests only; the linking flow itself is a later issue
+    # Server-owned (history_active): false until history_enabled and an approved notice exist.
+    history_enabled: bool = False
 
 
 class SessionBootstrap(Frozen):
@@ -889,3 +949,513 @@ class TurnResponse(Frozen):
     # Additive (schema_version stays 1): present only for a turn that ran discovery.
     discovery: DiscoveryBlock | None = None
     warnings: tuple[TurnWarning, ...] = Field(default=(), max_length=10)
+    # Additive (decision 24): present only when the server wants the client to show its fixed
+    # "save as Home/Work?" question. Server-authored text, never model-generated.
+    saved_place_prompt: SavedPlacePrompt | None = None
+
+
+# --- Phase 1 contracts, built dark (decisions 24, 25, 27) --------------------------
+# Nothing below is reachable until ``history_active`` is true, except the typed 501 stubs that
+# freeze the API shape. Maps-derived fields are display-only: rendered by the server from Places
+# Details or Routes at request time, never persisted, never given to the model (decisions 17, 18,
+# 23). They carry ``x-display-only`` in the OpenAPI schema so a generated client can tell.
+
+_DISPLAY_ONLY: dict[str, object] = {"x-display-only": True}
+Attribution = Annotated[str, StringConstraints(min_length=1, max_length=200)]
+_Nonce = Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9_-]{16,128}$")]
+_LabelText = Annotated[UserLabel, StringConstraints(min_length=1)]
+
+
+class RoundedPosition(Frozen):
+    """A user-confirmed position rounded to ~100 m on parse; redacted from repr and errors."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, hide_input_in_errors=True)
+
+    latitude: float = Field(ge=-90, le=90, allow_inf_nan=False)
+    longitude: float = Field(ge=-180, le=180, allow_inf_nan=False)
+
+    @field_validator("latitude", "longitude")
+    @classmethod
+    def _round(cls, value: float) -> float:
+        return round(value, LOCATION_DECIMALS) + 0.0
+
+    def __repr__(self) -> str:
+        return "RoundedPosition(<redacted>)"
+
+    __str__ = __repr__
+
+
+class SavedPlaceKind(StrEnum):
+    HOME = "HOME"
+    WORK = "WORK"
+    CUSTOM = "CUSTOM"
+
+
+class SavedPlace(Frozen):
+    """User data only (decision 24): a place ID, the label the user typed and a rounded position.
+
+    ``kind`` is the schema discriminator, so HOME/WORK/CUSTOM is ``label_kind``."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, hide_input_in_errors=True)
+
+    schema_version: int = Field(default=SCHEMA_VERSION, ge=1)
+    kind: Literal["saved_place"] = "saved_place"
+    place_id: PlaceId
+    user_label: _LabelText
+    label_kind: SavedPlaceKind
+    position: RoundedPosition = Field(repr=False)
+    created_at: AwareDatetime
+
+
+class RouteMode(StrEnum):
+    DRIVE = "DRIVE"
+    WALK = "WALK"  # beta: always shown with the warning (decision 27)
+
+
+class PlaceCard(Frozen):
+    """Server-rendered Places Details view model (minimal field mask). Display-only, never stored."""
+
+    schema_version: int = Field(default=SCHEMA_VERSION, ge=1)
+    kind: Literal["place_card"] = "place_card"
+    place_id: PlaceId
+    display_only: Literal[True] = True
+    display_name: Annotated[str, StringConstraints(max_length=MAX_TITLE_CHARS)] = Field(
+        json_schema_extra=_DISPLAY_ONLY)
+    formatted_address: Annotated[str, StringConstraints(max_length=300)] | None = Field(
+        default=None, json_schema_extra=_DISPLAY_ONLY)
+    open_now: bool | None = Field(default=None, json_schema_extra=_DISPLAY_ONLY)
+    rating: float | None = Field(default=None, ge=0, le=5, json_schema_extra=_DISPLAY_ONLY)
+    attributions: tuple[Attribution, ...] = Field(
+        max_length=10, json_schema_extra=_DISPLAY_ONLY)  # required provider attribution
+    fetched_at: AwareDatetime
+
+
+class RouteCheck(Frozen):
+    """Server-rendered Routes view model: duration and distance only. No geometry, no origin."""
+
+    schema_version: int = Field(default=SCHEMA_VERSION, ge=1)
+    kind: Literal["route_check"] = "route_check"
+    place_id: PlaceId
+    display_only: Literal[True] = True
+    mode: RouteMode
+    duration_minutes: int = Field(ge=0, le=100_000, json_schema_extra=_DISPLAY_ONLY)
+    distance_meters: int = Field(ge=0, le=100_000_000, json_schema_extra=_DISPLAY_ONLY)
+    beta_warning: bool  # server-set: true exactly for WALK
+    attributions: tuple[Attribution, ...] = Field(max_length=10, json_schema_extra=_DISPLAY_ONLY)
+    fetched_at: AwareDatetime
+
+    @model_validator(mode="after")
+    def _walk_is_beta(self) -> RouteCheck:
+        if self.beta_warning != (self.mode == RouteMode.WALK):
+            raise ValueError("beta_warning must be set exactly for WALK")
+        return self
+
+
+class OutcomeValue(StrEnum):
+    WENT = "WENT"
+    DID_NOT_GO = "DID_NOT_GO"
+    CHANGED_PLAN = "CHANGED_PLAN"
+
+
+class OutcomeCheckin(Frozen):
+    """The user's own report after an outing. The note is free text: excluded from telemetry."""
+
+    schema_version: int = Field(default=SCHEMA_VERSION, ge=1)
+    kind: Literal["outcome_checkin"] = "outcome_checkin"
+    place_id: PlaceId
+    outcome: OutcomeValue
+    note: Annotated[str, StringConstraints(max_length=280)] | None = Field(default=None, repr=False)
+    # Additive, optional (decision 19): what the user chose at check-in. Used only for the
+    # opt-in server history record; never a Maps name.
+    user_label: _LabelText | None = Field(default=None, repr=False)
+    intent_tag: IntentTag | None = None
+
+
+class LinkProvider(StrEnum):
+    GOOGLE = "GOOGLE"
+    EMAIL_LINK = "EMAIL_LINK"
+
+
+MAX_LINK_INTENT_TTL = timedelta(minutes=15)
+
+
+class AccountLinkIntent(Frozen):
+    """A short-lived server-issued intent to link a guest to a registered identity."""
+
+    schema_version: int = Field(default=SCHEMA_VERSION, ge=1)
+    kind: Literal["account_link_intent"] = "account_link_intent"
+    id: Ident
+    provider: LinkProvider
+    nonce: _Nonce
+    created_at: AwareDatetime
+    expires_at: AwareDatetime
+
+    @model_validator(mode="after")
+    def _lifetime(self) -> AccountLinkIntent:
+        if not self.created_at < self.expires_at <= self.created_at + MAX_LINK_INTENT_TTL:
+            raise ValueError("link intent lifetime is out of bounds")
+        return self
+
+
+class ExportWorkspace(Frozen):
+    kind: Literal["export_workspace"] = "export_workspace"
+    id: Ident
+    status: WorkspaceStatus
+    timezone: str = Field(max_length=64)
+    goal: str | None = Field(default=None, max_length=20_000)
+    facts: tuple[Fact, ...] = Field(default=(), max_length=1_000)  # no TOOL facts, no evidence ids
+    active_plan_version: int | None = None
+
+
+class ExportUsage(Frozen):
+    kind: Literal["export_usage"] = "export_usage"
+    successful_turns: int = Field(ge=0)
+    activated_trips: int = Field(ge=0)
+    window_started_at: AwareDatetime | None = None
+
+
+class ExportBundle(Frozen):
+    """Everything the server holds about the caller: user data and place IDs only. Never Maps
+    content, a token, an idempotency key or a coordinate other than a saved place's rounded one."""
+
+    schema_version: int = Field(default=SCHEMA_VERSION, ge=1)
+    kind: Literal["export_bundle"] = "export_bundle"
+    generated_at: AwareDatetime
+    tier: Tier
+    history_active: bool
+    consents: tuple[ConsentRecord, ...] = Field(max_length=1_000)
+    saved_places: tuple[SavedPlace, ...] = Field(max_length=1_000)
+    outings: tuple[OutingRecord, ...] = Field(max_length=10_000)
+    workspaces: tuple[ExportWorkspace, ...] = Field(default=(), max_length=100)
+    plan_versions: tuple[PlanVersion, ...] = Field(default=(), max_length=10_000)
+    outcomes: tuple[OutcomeCheckin, ...] = Field(default=(), max_length=10_000)
+    usage: ExportUsage
+
+
+# --- Request and response shapes of the planned routes (typed 501 stubs for now) -----
+
+
+class PlaceDetailsRequest(Frozen):
+    schema_version: int = Field(default=SCHEMA_VERSION, ge=1)
+    place_ids: tuple[PlaceId, ...] = Field(min_length=1, max_length=3)  # decision 27
+
+
+class PlaceDetailsResponse(Frozen):
+    schema_version: int = Field(default=SCHEMA_VERSION, ge=1)
+    kind: Literal["place_details"] = "place_details"
+    places: tuple[PlaceCard, ...] = Field(max_length=3)
+
+
+class RouteCheckRequest(Frozen):
+    model_config = ConfigDict(extra="forbid", frozen=True, hide_input_in_errors=True)
+
+    schema_version: int = Field(default=SCHEMA_VERSION, ge=1)
+    place_id: PlaceId
+    mode: RouteMode = RouteMode.DRIVE
+    # The only origin is the consented, rounded foreground location (decision 27).
+    location: LocationInput | None = Field(default=None, repr=False)
+
+
+class RouteCheckResponse(Frozen):
+    schema_version: int = Field(default=SCHEMA_VERSION, ge=1)
+    kind: Literal["route_check_response"] = "route_check_response"
+    route: RouteCheck
+
+
+class ProposeActionRequest(Frozen):
+    model_config = ConfigDict(extra="forbid", frozen=True, hide_input_in_errors=True)
+
+    schema_version: int = Field(default=SCHEMA_VERSION, ge=1)
+    workspace_id: Ident
+    plan_version: int = Field(ge=1)
+    effect: PendingActionEffect
+    target: Ident
+    user_label: _LabelText | None = None
+    label_kind: SavedPlaceKind | None = None
+    # SAVE_PLACE only (decision 24): the user's consented foreground position, rounded on parse.
+    # Held only in the pending-action record until confirm (then in the saved place); never
+    # logged, never sent to a model.
+    position: RoundedPosition | None = Field(default=None, repr=False)
+    # SET_REMINDER only: when the in-app reminder is due (within a day of the proposal).
+    due_at: AwareDatetime | None = None
+
+
+class ConfirmActionRequest(Frozen):
+    schema_version: int = Field(default=SCHEMA_VERSION, ge=1)
+    nonce: _Nonce
+
+
+class ReminderItem(Frozen):
+    """A confirmed in-app reminder: stored LOCALLY by the client, shown on next open."""
+
+    schema_version: int = Field(default=SCHEMA_VERSION, ge=1)
+    kind: Literal["reminder_item"] = "reminder_item"
+    action_id: Ident
+    place_id: PlaceId = Field(repr=False)
+    user_label: str | None = Field(default=None, max_length=80, repr=False)
+    due_at: AwareDatetime
+
+
+class ConfirmActionResponse(Frozen):
+    schema_version: int = Field(default=SCHEMA_VERSION, ge=1)
+    kind: Literal["confirm_action_response"] = "confirm_action_response"
+    action: PendingAction
+    reminder: ReminderItem | None = None  # SET_REMINDER: the item the client stores locally
+    # LAUNCH_HANDOFF: a Maps URL built at confirm time from the place ID only; never stored.
+    handoff_url: str | None = Field(default=None, max_length=2_048, repr=False)
+
+
+class CancelActionResponse(Frozen):
+    schema_version: int = Field(default=SCHEMA_VERSION, ge=1)
+    kind: Literal["cancel_action_response"] = "cancel_action_response"
+    action_id: Ident
+    cancelled: bool
+
+
+class ActivateTripRequest(Frozen):
+    schema_version: int = Field(default=SCHEMA_VERSION, ge=1)
+    plan_version: int = Field(ge=1)
+
+
+class TripActivation(Frozen):
+    schema_version: int = Field(default=SCHEMA_VERSION, ge=1)
+    kind: Literal["trip_activation"] = "trip_activation"
+    workspace_id: Ident
+    status: WorkspaceStatus
+    usage: UsageView
+
+
+class WorkspaceView(Frozen):
+    """The caller's workspace as the client may see it: no owner, no evidence."""
+
+    schema_version: int = Field(default=SCHEMA_VERSION, ge=1)
+    kind: Literal["workspace_view"] = "workspace_view"
+    id: Ident
+    status: WorkspaceStatus
+    version: int = Field(ge=0)
+    goal: Annotated[str, StringConstraints(max_length=20_000)] | None = None
+    facts: tuple[Fact, ...] = Field(default=(), max_length=200)
+    pending_actions: tuple[PendingAction, ...] = Field(default=(), max_length=20)
+    latest_plan: PlanVersion | None = None
+    warnings: tuple[PlanWarning, ...] = Field(default=(), max_length=20)
+    plan_versions: tuple[int, ...] = Field(default=(), max_length=1_000)  # version numbers only
+
+
+class FactEdit(Frozen):
+    """A user edit. The server stamps source USER_EXPLICIT and CONFIRMED; the client cannot."""
+
+    key: Ident
+    value: Annotated[str, StringConstraints(max_length=500)] | float | int | bool | None = None
+    hard: bool = False
+    scope: Annotated[str, StringConstraints(min_length=1, max_length=64)] = "trip"
+
+
+class WorkspaceEditRequest(Frozen):
+    schema_version: int = Field(default=SCHEMA_VERSION, ge=1)
+    base_version: int = Field(ge=0)
+    upsert_facts: tuple[FactEdit, ...] = Field(default=(), max_length=50)
+    remove_fact_ids: tuple[Ident, ...] = Field(default=(), max_length=50)
+
+
+class OutcomeAck(Frozen):
+    schema_version: int = Field(default=SCHEMA_VERSION, ge=1)
+    kind: Literal["outcome_ack"] = "outcome_ack"
+    recorded: bool
+
+
+class AccountLinkStartRequest(Frozen):
+    schema_version: int = Field(default=SCHEMA_VERSION, ge=1)
+    provider: LinkProvider
+
+
+class AccountLinkCompleteRequest(Frozen):
+    schema_version: int = Field(default=SCHEMA_VERSION, ge=1)
+    nonce: _Nonce
+
+
+class AccountLinkResult(Frozen):
+    schema_version: int = Field(default=SCHEMA_VERSION, ge=1)
+    kind: Literal["account_link_result"] = "account_link_result"
+    linked: bool
+    tier: Tier
+
+
+class MigrationState(StrEnum):
+    PREVIEW = "PREVIEW"  # manifest shown, nothing copied
+    RUNNING = "RUNNING"  # selected items are being copied (resumable)
+    CLEANING = "CLEANING"  # every selected item copied; the guest's server data is being deleted
+    COMPLETED = "COMPLETED"
+
+
+class PreferenceChoice(StrEnum):
+    KEEP_REGISTERED = "KEEP_REGISTERED"  # the registered account's own data wins (default)
+    USE_GUEST = "USE_GUEST"  # the user chose to replace it with the guest's copy
+
+
+_MigrationNonce = Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9_-]{8,128}$")]
+MIGRATION_TITLE_MAX = 100
+
+
+class MigrationStartRequest(Frozen):
+    schema_version: int = Field(default=SCHEMA_VERSION, ge=1)
+    intent_id: Ident
+    nonce: _MigrationNonce
+
+
+class MigrationRunRequest(Frozen):
+    schema_version: int = Field(default=SCHEMA_VERSION, ge=1)
+    item_ids: tuple[Ident, ...] = Field(default=(), max_length=50)
+    preference: PreferenceChoice = PreferenceChoice.KEEP_REGISTERED
+
+
+class MigrationItemView(Frozen):
+    id: Ident
+    kind: str = Field(max_length=40)
+    title: str = Field(max_length=MIGRATION_TITLE_MAX)  # the user's own text; empty once completed
+    selected: bool
+    copied: bool
+
+
+class MigrationView(Frozen):
+    schema_version: int = Field(default=SCHEMA_VERSION, ge=1)
+    kind: Literal["account_migration"] = "account_migration"
+    id: Ident
+    state: MigrationState
+    items: tuple[MigrationItemView, ...] = Field(max_length=100)
+    preference: PreferenceChoice | None = None
+    completed: bool
+
+
+class DeleteReceipt(Frozen):
+    schema_version: int = Field(default=SCHEMA_VERSION, ge=1)
+    kind: Literal["delete_receipt"] = "delete_receipt"
+    requested_at: AwareDatetime
+    completed: bool
+    # Additive (decision 28). True when the server data is deleted but the sign-in account (the
+    # Firebase login) could NOT be removed because no admin credential is configured: ``completed``
+    # is then false and the request can be repeated once one exists.
+    login_not_removed: bool = False
+
+
+class HistoryRecordCreate(Frozen):
+    """Only user-chosen references; the server derives owner, time, daypart, retention, consent."""
+
+    schema_version: int = Field(default=SCHEMA_VERSION, ge=1)
+    workspace_id: Ident
+    plan_version: int = Field(ge=1)
+    place_id: PlaceId
+    user_label: _LabelText | None = None
+    intent_tag: IntentTag
+
+
+class HistoryRecordList(Frozen):
+    schema_version: int = Field(default=SCHEMA_VERSION, ge=1)
+    kind: Literal["history_record_list"] = "history_record_list"
+    records: tuple[OutingRecord, ...] = Field(max_length=10_000)
+
+
+class HistoryDeleteResult(Frozen):
+    schema_version: int = Field(default=SCHEMA_VERSION, ge=1)
+    kind: Literal["history_delete_result"] = "history_delete_result"
+    deleted: int = Field(ge=0)
+
+
+class SavedPlaceUpsert(Frozen):
+    model_config = ConfigDict(extra="forbid", frozen=True, hide_input_in_errors=True)
+
+    schema_version: int = Field(default=SCHEMA_VERSION, ge=1)
+    place_id: PlaceId
+    user_label: _LabelText
+    label_kind: SavedPlaceKind
+    position: RoundedPosition = Field(repr=False)
+
+
+class SavedPlaceList(Frozen):
+    schema_version: int = Field(default=SCHEMA_VERSION, ge=1)
+    kind: Literal["saved_place_list"] = "saved_place_list"
+    places: tuple[SavedPlace, ...] = Field(max_length=100)
+
+
+class SavedPlaceDeleteResult(Frozen):
+    schema_version: int = Field(default=SCHEMA_VERSION, ge=1)
+    kind: Literal["saved_place_delete_result"] = "saved_place_delete_result"
+    deleted: int = Field(ge=0)
+
+
+# --- Phase 1: history settings and edits, saved-place ask policy (built dark) ---------------
+
+HISTORY_DEFAULT_RETENTION_DAYS = 90  # decision 27
+HISTORY_MIN_RETENTION_DAYS = 30  # decision 27: the user may pick 30 to 180
+HISTORY_MAX_RETENTION_DAYS = MAX_OUTING_RETENTION_DAYS  # decision 19: the 180-day ceiling
+
+
+class HistorySettings(Frozen):
+    schema_version: int = Field(default=SCHEMA_VERSION, ge=1)
+    kind: Literal["history_settings"] = "history_settings"
+    retention_days: int = Field(ge=HISTORY_MIN_RETENTION_DAYS, le=HISTORY_MAX_RETENTION_DAYS)
+    default_retention_days: int = HISTORY_DEFAULT_RETENTION_DAYS
+    min_retention_days: int = HISTORY_MIN_RETENTION_DAYS
+    max_retention_days: int = HISTORY_MAX_RETENTION_DAYS
+
+
+class HistorySettingsUpdate(Frozen):
+    """Shortening purges what is already past the new period, immediately."""
+
+    schema_version: int = Field(default=SCHEMA_VERSION, ge=1)
+    retention_days: int = Field(ge=HISTORY_MIN_RETENTION_DAYS, le=HISTORY_MAX_RETENTION_DAYS)
+
+
+class HistoryRecordEdit(Frozen):
+    """The user's edit of their own record: label, activity tag and feedback only."""
+
+    schema_version: int = Field(default=SCHEMA_VERSION, ge=1)
+    user_label: _LabelText | None = None
+    clear_label: bool = False
+    intent_tag: IntentTag | None = None
+    feedback: OutingFeedback | None = None
+
+
+class AskDecision(StrEnum):
+    DECLINED = "DECLINED"  # starts the 30-day cooldown for this label
+    DONT_ASK_AGAIN = "DONT_ASK_AGAIN"  # one-tap: never ask for this label
+    ASK_AGAIN = "ASK_AGAIN"  # clears the above
+
+
+class AskCheckRequest(Frozen):
+    """The user's message, read once for a home/work reference. Never stored or logged."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, hide_input_in_errors=True)
+
+    schema_version: int = Field(default=SCHEMA_VERSION, ge=1)
+    message: str = Field(min_length=1, max_length=2_000, repr=False)
+
+
+class SavedPlacePrompt(Frozen):
+    """Tells the client to show a FIXED question. ``question`` is server text, never model text."""
+
+    schema_version: int = Field(default=SCHEMA_VERSION, ge=1)
+    kind: Literal["saved_place_prompt"] = "saved_place_prompt"
+    ask: bool
+    label_kind: SavedPlaceKind | None = None  # HOME or WORK when ``ask``
+    question: str | None = Field(default=None, max_length=200)
+
+
+class AskStateUpdate(Frozen):
+    schema_version: int = Field(default=SCHEMA_VERSION, ge=1)
+    label_kind: SavedPlaceKind
+    decision: AskDecision
+
+
+class AskStateView(Frozen):
+    """``recorded`` is False when the server stored nothing (no SAVED_PLACE consent): the client
+    keeps the ask-state on the device, as a guest does."""
+
+    schema_version: int = Field(default=SCHEMA_VERSION, ge=1)
+    kind: Literal["saved_place_ask_state"] = "saved_place_ask_state"
+    label_kind: SavedPlaceKind
+    recorded: bool
+    dont_ask_again: bool = False
+    cooldown_until: AwareDatetime | None = None
+
+
+TurnResponse.model_rebuild()

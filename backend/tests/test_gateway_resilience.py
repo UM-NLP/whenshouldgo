@@ -34,7 +34,6 @@ from app.gateway import (
     ProviderTimeoutError,
     ProviderUnavailableError,
     ResiliencePolicy,
-    ResilientGateway,
     RunBudget,
     TransportRequest,
     TransportResponse,

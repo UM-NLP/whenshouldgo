@@ -263,8 +263,8 @@ def to_api_block(
     return DiscoveryBlock(
         text=text_part.text,
         places=tuple(
-            DiscoveryPlace(title=p.attribution_title, attribution_url=p.attribution_url,
-                           place_url=p.place_url)
+            DiscoveryPlace(place_id=p.place_id, title=p.attribution_title,
+                           attribution_url=p.attribution_url, place_url=p.place_url)
             for p in sources if isinstance(p, SourcePart)
         ),
         framing=rendered.framing,
@@ -358,7 +358,7 @@ class TurnPipeline:
     ) -> None:
         """The cost ledger is the abuse boundary: the daily token ceiling (including the worst
         case of the coming FRAME call) and the paid-failed-turn limiter, both before FRAME. A
-        denial is 429 RATE_LIMITED with a bounded Retry-After."""
+        denial is 429 RATE_LIMITED with a bounded Retry-After. """
         if daily is None:  # no entitlement for this tier: no paid calls
             raise TurnFailure(429, ErrorCode.QUOTA, ErrorReason.RATE_LIMITED,
                               retry_after=MAX_RETRY_AFTER_SECONDS)
@@ -397,6 +397,9 @@ class TurnPipeline:
         run_id = f"run-{uuid.uuid4().hex[:16]}"
         tool_run = self._make_run(principal, run_id, cache_key)
         allowed = tools_for_grants(tools)
+        if self._costs.spend_blocked():  # whole-pilot cap (shared store); before the kill switch
+            raise TurnFailure(503, ErrorCode.PROVIDER, ErrorReason.PROVIDER_UNAVAILABLE,
+                              retry_after=MAX_RETRY_AFTER_SECONDS)
         self._check_available(allowed)
         budget = RunBudget.from_ceilings(self._config.token_ceilings)
         request = build_frame_request(message, base, self._config, budget)

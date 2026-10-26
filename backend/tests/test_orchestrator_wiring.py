@@ -640,7 +640,8 @@ def test_openapi_describes_the_discovery_block_and_error_reasons() -> None:
     block = schemas["DiscoveryBlock"]["properties"]
     assert list(block) == ["render_mode", "text", "places", "branding", "translate_no",
                            "framing", "retrieved_at", "cache_expires_at"]
-    assert set(schemas["DiscoveryPlace"]["properties"]) == {"title", "attribution_url", "place_url"}
+    assert set(schemas["DiscoveryPlace"]["properties"]) == {
+        "place_id", "title", "attribution_url", "place_url"}
     assert block["render_mode"].get("const") == "text" or block["render_mode"].get("enum") == ["text"]
     assert block["branding"].get("const") == "Google Maps"
     assert "reason" in schemas["ErrorBody"]["properties"]

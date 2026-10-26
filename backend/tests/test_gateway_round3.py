@@ -18,10 +18,8 @@ from test_gateway_support import (
     SEARCH_TOOL,
     SECRET,
     Clock,
-    Reply,
     make_config,
     make_gateway,
-    make_policy,
     make_request,
 )
 
@@ -37,7 +35,6 @@ from app.gateway import (
     HttpxTransport,
     MalformedOutputError,
     ModelPrice,
-    OpenRouterGateway,
     OutputSchema,
     PriceTable,
     PrivacyViolationError,

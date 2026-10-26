@@ -8,7 +8,7 @@ handlers or QuotaService.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from types import MappingProxyType
 from typing import Mapping
@@ -59,6 +59,9 @@ DEFAULT_DAILY_TOKENS: Mapping[PrincipalKind, DailyTokenCeiling] = MappingProxyTy
 )
 
 
+REGISTERED_WORKSPACE_INACTIVITY_DAYS = 90
+
+
 @dataclass(frozen=True)
 class EntitlementPolicy:
     version: str
@@ -68,6 +71,9 @@ class EntitlementPolicy:
     tokens: TokenPolicy = TokenPolicy()
     daily_tokens: Mapping[PrincipalKind, DailyTokenCeiling] = DEFAULT_DAILY_TOKENS
     guest_workspace_retention_days: int = 7
+    # Decision 28: a registered user's server workspace and plan versions also expire after this
+    # many INACTIVE days (every write refreshes it). Longer retention is a later CLOUD_SYNC consent.
+    registered_workspace_retention_days: int = REGISTERED_WORKSPACE_INACTIVITY_DAYS
     notice_quiet_meter_ratio: float = 0.7
     notice_benefit_ratio: float = 0.9
 
@@ -118,3 +124,13 @@ class PolicyRegistry:
 
 def default_registry() -> PolicyRegistry:
     return PolicyRegistry((PILOT_POLICY,), PILOT_POLICY.version)
+
+
+def workspace_ttl(policy: EntitlementPolicy, kind: PrincipalKind) -> timedelta | None:
+    """Inactivity expiry of a server workspace and its plan versions (decisions 27 and 28): guests
+    keep the policy's guest days, registered users 90 days. Every write refreshes it."""
+    if kind == PrincipalKind.GUEST:
+        return timedelta(days=policy.guest_workspace_retention_days)
+    if kind == PrincipalKind.REGISTERED_FREE:
+        return timedelta(days=policy.registered_workspace_retention_days)
+    return None

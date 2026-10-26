@@ -1,22 +1,89 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 
+import { AccountSection } from "../account/AccountSection";
+import { UNAVAILABLE_ACCOUNT_API, type AccountApi } from "../account/accountApi";
+import { NOT_CONFIGURED_TEXT } from "../account/copy";
+import { DataRights } from "../account/DataRights";
+import { useAccount } from "../account/useAccount";
 import type { Api } from "../api/client";
+import { UNAVAILABLE_BOARD_API, type BoardApi } from "../board/boardApi";
+import { NotConfiguredAuthService, type AuthService } from "../firebase";
+import { Phase1Panel } from "../history/Phase1Panel";
+import { usePhase1, type Phase1Deps } from "../history/usePhase1";
+import { SavedHomeQuestion } from "../places/SavedHomeQuestion";
+import { StartingAreaChip } from "../places/SavedStartingArea";
+import { useBoard } from "../useBoard";
 import { useChat } from "../useChat";
+import { useLocalSession } from "../useLocalSession";
+import { useServiceWorkerUpdate } from "../sw-register";
+import type { LocalStore } from "../storage";
 import { useLocationConsent } from "../useLocationConsent";
 import { useUsage } from "../useUsage";
 import { AssistantMessage } from "./AssistantMessage";
+import { DataControls, LocalNoticeCard, OfflineBanner, OutboxStatus, UpdateBanner } from "./LocalFirst";
 import { LocationControl } from "./LocationControl";
 import { ProblemNotice } from "./ProblemNotice";
 import { UsageMeter } from "./UsageMeter";
+import { PickList } from "./board/PickList";
+import { ReminderBanner } from "./board/ReminderBanner";
+import { TripBoard } from "./board/TripBoard";
 
-export function Chat({ api }: { api: Api }) {
+export interface AccountDeps {
+  api: AccountApi;
+  auth: AuthService;
+}
+
+const NO_AUTH_SERVICE: AuthService = new NotConfiguredAuthService();
+
+/**
+ * `local` is the on-device store; null (the default) keeps everything in memory only. `account` wires
+ * sign-in, merge, export and delete; `phase1` wires history and saved places, which render only when
+ * the server's history_enabled capability is true.
+ */
+export function Chat({
+  api,
+  local = null,
+  boardApi = null,
+  account = null,
+  phase1 = null,
+}: {
+  api: Api;
+  local?: LocalStore | null;
+  boardApi?: BoardApi | null;
+  account?: AccountDeps | null;
+  phase1?: Phase1Deps | null;
+}) {
   const location = useLocationConsent(api);
   const usage = useUsage(api);
-  const chat = useChat(api, location, usage.update);
+  const session = useLocalSession(local, api);
+  const chat = useChat(api, location, usage.update, session);
+  // Without a board API the board stays off (and makes no requests).
+  const board = useBoard(boardApi ?? UNAVAILABLE_BOARD_API, location, session);
+  const updateApply = useServiceWorkerUpdate();
+  const registration = useAccount(account?.api ?? UNAVAILABLE_ACCOUNT_API, account?.auth ?? NO_AUTH_SERVICE, usage.refresh);
+  // The server decides whether a guest may create an account and whether Phase 1 is on.
+  const canCreateAccount = !!account && usage.tier === "guest" && usage.capabilities?.can_link_account !== false;
+  const p1 = usePhase1({
+    enabled: !!phase1 && usage.capabilities?.history_enabled === true,
+    tier: usage.tier,
+    deps: phase1,
+    session,
+    boardApi: boardApi ?? UNAVAILABLE_BOARD_API,
+    location,
+  });
   // The server's meter_state decides; the client computes nothing from the counters.
   const gated = usage.view?.meter_state === "GATED";
   const [draft, setDraft] = useState("");
   const endRef = useRef<HTMLDivElement>(null);
+
+  // Restore the unsent draft once.
+  const draftRestored = useRef(false);
+  useEffect(() => {
+    if (session?.restoredDraft && !draftRestored.current) {
+      draftRestored.current = true;
+      setDraft((current) => current || session.restoredDraft || "");
+    }
+  }, [session?.restoredDraft]);
 
   // After the user grants consent following LOCATION_CONSENT_REQUIRED, send the held message again.
   const waitingForConsent = chat.problem?.type === "api" && chat.problem.failure.kind === "location_consent_required";
@@ -29,6 +96,16 @@ export function Chat({ api }: { api: Api }) {
     if (!waitingForConsent) retried.current = false;
   }, [location.phase, waitingForConsent, chat]);
 
+  // A server-provided ask signal (registered users) arrives with a turn.
+  const lastObserved = useRef<string | null>(null);
+  useEffect(() => {
+    const last = chat.items[chat.items.length - 1];
+    if (last?.role === "assistant" && lastObserved.current !== last.id) {
+      lastObserved.current = last.id;
+      p1?.observeTurn(last.response);
+    }
+  }, [chat.items, p1]);
+
   useEffect(() => {
     endRef.current?.scrollIntoView?.({ block: "end" });
   }, [chat.items.length, chat.problem, chat.sending]);
@@ -36,8 +113,10 @@ export function Chat({ api }: { api: Api }) {
   function submit(event: FormEvent) {
     event.preventDefault();
     if (!draft.trim() || chat.sending || gated) return;
-    chat.send(draft);
+    p1?.observeMessage(draft);
+    chat.send(draft, { startingArea: p1?.consumeStartingArea() ?? null });
     setDraft("");
+    session?.saveDraft("");
   }
 
   return (
@@ -47,6 +126,17 @@ export function Chat({ api }: { api: Api }) {
         <p className="tagline">Same-day outings near you.</p>
       </header>
 
+      <UpdateBanner apply={updateApply} />
+      {account?.auth.mode === "not_configured" ? (
+        <p className="notice notice-warning" role="status">
+          {NOT_CONFIGURED_TEXT}
+        </p>
+      ) : null}
+      {account ? <AccountSection account={registration} api={account.api} /> : null}
+      {session ? <OfflineBanner online={session.online} /> : null}
+      {session ? <LocalNoticeCard session={session} /> : null}
+      {boardApi ? <ReminderBanner store={local} token={board.reminderToken} onCheckIn={board.addFollowUp} /> : null}
+
       <div className="log" aria-live="polite" aria-label="Conversation">
         {chat.items.length === 0 && !chat.sending ? (
           <p className="empty">
@@ -54,15 +144,35 @@ export function Chat({ api }: { api: Api }) {
             neighbourhood you name.
           </p>
         ) : null}
-        {chat.items.map((item) =>
-          item.role === "user" ? (
-            <p key={item.id} className="user">
-              {item.text}
-            </p>
-          ) : (
-            <AssistantMessage key={item.id} response={item.response} />
-          ),
-        )}
+        {chat.items.map((item) => {
+          if (item.role === "user") {
+            const waiting = !!item.key && !!session?.outboxItems.some((q) => q.key === item.key && q.state === "queued");
+            return (
+              <p key={item.id} className="user">
+                {item.text}
+                {waiting ? <span className="queued"> (waiting to send)</span> : null}
+              </p>
+            );
+          }
+          if (item.role === "restored") {
+            return (
+              <div key={item.id} className="assistant">
+                <p className="reply">{item.text}</p>
+                {item.hadDiscovery ? (
+                  <p className="notice" role="status">
+                    Results are not stored; ask again. Place details are unavailable offline.
+                  </p>
+                ) : null}
+              </div>
+            );
+          }
+          return (
+            <div key={item.id} className="turn">
+              <AssistantMessage response={item.response} />
+              {boardApi && item.response.discovery ? <PickList block={item.response.discovery} board={board} /> : null}
+            </div>
+          );
+        })}
         {chat.sending ? (
           <p className="loading" role="status">
             Looking that up...
@@ -79,7 +189,20 @@ export function Chat({ api }: { api: Api }) {
         <div ref={endRef} />
       </div>
 
-      {usage.view ? <UsageMeter usage={usage.view} /> : null}
+      {session ? <OutboxStatus session={session} onResume={chat.resumeQueued} onDiscard={chat.discardQueued} /> : null}
+
+      {usage.view ? <UsageMeter usage={usage.view} onCreateAccount={canCreateAccount ? registration.open : undefined} /> : null}
+
+      {p1?.question ? (
+        <SavedHomeQuestion
+          kind={p1.question.kind}
+          text={p1.question.text}
+          onYes={() => p1.answer("yes")}
+          onLater={() => p1.answer("later")}
+          onNever={() => p1.answer("never")}
+        />
+      ) : null}
+      {p1?.startingArea ? <StartingAreaChip entry={p1.startingArea} onRemove={p1.clearStartingArea} /> : null}
 
       <LocationControl location={location} />
 
@@ -94,7 +217,10 @@ export function Chat({ api }: { api: Api }) {
           maxLength={20000}
           disabled={gated}
           placeholder="What are you looking for?"
-          onChange={(e) => setDraft(e.target.value)}
+          onChange={(e) => {
+            setDraft(e.target.value);
+            session?.saveDraft(e.target.value);
+          }}
           onKeyDown={(e) => {
             if (e.key === "Enter" && !e.shiftKey) {
               e.preventDefault();
@@ -106,6 +232,22 @@ export function Chat({ api }: { api: Api }) {
           Send
         </button>
       </form>
+
+      {boardApi ? <TripBoard api={boardApi} board={board} location={location} /> : null}
+
+      {p1 && phase1 ? <Phase1Panel p1={p1} api={phase1.api} boardApi={boardApi ?? UNAVAILABLE_BOARD_API} store={local} /> : null}
+
+      {session ? <DataControls session={session} /> : null}
+      {account ? (
+        <DataRights
+          api={account.api}
+          auth={account.auth}
+          onDeleted={async () => {
+            if (session) await session.deleteData();
+            else await local?.deleteAll();
+          }}
+        />
+      ) : null}
     </main>
   );
 }

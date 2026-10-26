@@ -1,52 +1,29 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import anyio
-from fastapi import Depends, FastAPI, Header, HTTPException, Request
+from fastapi import Depends, FastAPI, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse, Response
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.requests import ClientDisconnect
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
-from .access import AccountUnavailable, capabilities_for, session_bootstrap, usage_view
-from .auth import IdentityVerifier, PrincipalResolver, current_principal
-from .consent import (
-    NOTICE_VERSIONS,
-    SUPPORTED_PURPOSES,
-    ConsentStore,
-    InMemoryConsentStore,
-    OperationLimiter,
-    WrongNoticeVersion,
-)
+from .auth import IdentityVerifier, PrincipalResolver
+from .consent import ConsentStore, InMemoryConsentStore, OperationLimiter
+from .stores.protocols import IdempotencyStore, WorkspaceStore
 from .costs import CostLedger
 from .discovery import DisplayCache, GroundingLiteClient
-from .domain import (
-    ConsentPurpose,
-    ConsentRecord,
-    Capabilities,
-    ConsentProcessor,
-    ErrorBody,
-    ErrorCode,
-    ErrorReason,
-    GateReason,
-    MeterState,
-    Principal,
-    PrincipalKind,
-    RuntimeConfig,
-    SessionBootstrap,
-    TurnResponse,
-    UsagePeriod,
-    UsageView,
-)
-from .failures import TurnFailure
+from .domain import ErrorCode, ErrorReason, RuntimeConfig
 from .gateway import ModelGateway
-from .location import LocationInput
-from .orchestrator import IdempotencyKeyReused, TurnOrchestrator
-from .quota import QuotaService, ReservationConflict
+from .orchestrator import TurnOrchestrator
+from .quota import QuotaService
+from .routes import ROUTERS
+from .routes.common import app_check_gate
+from .routes.common import error_response as _error_response
+from .routes.turns import TurnRequest  # noqa: F401  (kept importable from here)
 from .telemetry import (
     ErrorEvent,
     Phase,
@@ -60,47 +37,9 @@ from .telemetry import (
     trace,
 )
 
-
-class TurnRequest(BaseModel):
-    # Identity is never accepted from the body; extra fields are rejected (422). Rejected input is
-    # never echoed in an error (it can be a location).
-    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
-
-    message: str = Field(min_length=1, max_length=20_000)
-    # Optional, foreground, consented: see app/location.py. Rounded on parse; hidden from repr and
-    # from validation errors; never part of the idempotency fingerprint.
-    location: LocationInput | None = Field(default=None, repr=False)
-
-
-class ConsentGrantRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    purpose: ConsentPurpose
-    notice_version: str = Field(min_length=1, max_length=40)
-
-
-class ConsentView(BaseModel):
-    """An active consent as the client sees it (never a coordinate; withdrawn ones are not listed)."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    id: str
-    purpose: ConsentPurpose
-    notice_version: str
-    processors: tuple[ConsentProcessor, ...]
-    granted_at: datetime
-
-    @classmethod
-    def of(cls, record: ConsentRecord) -> "ConsentView":
-        return cls(id=record.id, purpose=record.purpose, notice_version=record.notice_version,
-                   processors=record.processors, granted_at=record.granted_at)
-
-
-class ConsentList(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    consents: tuple[ConsentView, ...]
-
+# OWNER-TUNABLE PLACEHOLDERS. Per principal per minute, per process.
+PAID_ROUTE_PER_MINUTE = 30
+UNVERIFIED_PAID_PER_MINUTE = 6
 
 _STATUS_CODES = {
     401: ErrorCode.POLICY,
@@ -111,40 +50,6 @@ _STATUS_CODES = {
     422: ErrorCode.VALIDATION,
     429: ErrorCode.QUOTA,
 }
-_RETRY_AFTER_HEADER = {
-    "Retry-After": {
-        "description": "Seconds to wait before retrying.",
-        "schema": {"type": "integer", "minimum": 1},
-    }
-}
-_ERROR_RESPONSES: dict[int | str, dict[str, object]] = {
-    status: {"model": ErrorBody, "description": str(code)}
-    for status, code in (
-        (401, "POLICY"), (403, "POLICY"), (409, "CONFLICT"), (422, "VALIDATION"), (429, "QUOTA"),
-        (502, "VALIDATION"), (503, "PROVIDER"), (504, "PROVIDER"),
-    )
-}
-_ERROR_RESPONSES[429]["headers"] = _RETRY_AFTER_HEADER
-
-
-def _error(
-    status: int, code: ErrorCode, message: str, reason: ErrorReason | None = None,
-    retry_after: int | None = None,
-) -> HTTPException:
-    body = ErrorBody(code=code, message=message, reason=reason)
-    headers = {"Retry-After": str(retry_after)} if retry_after is not None else None
-    return HTTPException(status_code=status, detail=body.model_dump(mode="json", exclude_none=True),
-                         headers=headers)
-
-
-def _error_response(
-    status: int, code: ErrorCode, message: str, headers: dict[str, str] | None = None,
-    reason: ErrorReason | None = None,
-) -> JSONResponse:
-    body = ErrorBody(code=code, message=message[:500], reason=reason)
-    return JSONResponse(
-        status_code=status, content=body.model_dump(mode="json", exclude_none=True), headers=headers
-    )
 
 
 def _trace_error(
@@ -248,6 +153,9 @@ def create_app(
     dev_scaffold: bool = False,
     consent_store: ConsentStore | None = None,
     enable_docs: bool = False,
+    workspace_store: WorkspaceStore | None = None,
+    idempotency_store: IdempotencyStore | None = None,
+    account_guard: Callable[[str], None] | None = None,
 ) -> FastAPI:
     """Build the API. With no verifier, every authenticated route fails closed (401).
 
@@ -260,7 +168,7 @@ def create_app(
     ``orchestrator`` cannot be combined with injected parts."""
     ensure_log_guard()
     parts = (gateway, discovery_client, display_cache, runtime_config, quotas, clock, cost_ledger,
-             dev_scaffold or None)
+             dev_scaffold or None, workspace_store, idempotency_store, account_guard)
     if orchestrator is not None and any(part is not None for part in parts):
         raise ValueError("pass either an orchestrator or the parts to build one, not both")
     # /docs, /redoc and /openapi.json are off unless explicitly enabled; ``app.openapi()`` (used by
@@ -270,19 +178,34 @@ def create_app(
     application.state.orchestrator = orchestrator or TurnOrchestrator(
         quotas, trace_sink, gateway=gateway, discovery_client=discovery_client,
         display_cache=display_cache, runtime_config=runtime_config, cost_ledger=cost_ledger,
-        clock=clock, dev_scaffold=dev_scaffold,
+        clock=clock, dev_scaffold=dev_scaffold, workspace_store=workspace_store,
+        idempotency_store=idempotency_store, account_guard=account_guard,
     )
     application.state.sink = (
         trace_sink or getattr(application.state.orchestrator, "sink", None) or get_default_sink()
     )
     application.add_middleware(_TraceMiddleware)
     application.state.verifier = verifier
-    application.state.consents = consent_store or InMemoryConsentStore(clock)
+    # The audited runtime config (None when the orchestrator carries none): read-only, server-owned.
+    application.state.runtime_config = runtime_config or getattr(orchestrator, "runtime_config", None)
+    application.state.consents = consent_store or InMemoryConsentStore(
+        clock, config=application.state.runtime_config)
     application.state.consent_limiter = OperationLimiter(clock)
+    # Per history purpose, the data deleters a withdrawal runs (decisions 24 and 25). The
+    # composition root registers them; each takes the verified uid and deletes everything it holds.
+    application.state.consent_withdrawal_hooks = {}
     application.state.clock = clock or (lambda: datetime.now(UTC))
     # Bootstrap is the tightest (once per page load); reads of the meter and capabilities are cheap.
     application.state.bootstrap_limiter = OperationLimiter(clock, max_operations=30)
     application.state.access_limiter = OperationLimiter(clock, max_operations=120)
+    # Paid routes (places, routes, turns): per process and per principal (docs/decisions.md 28).
+    # ``unverified_paid_limiter`` is the TIGHTER window for App Check ABSENT or INVALID requests.
+    application.state.paid_limiter = OperationLimiter(
+        clock, max_operations=PAID_ROUTE_PER_MINUTE, window=timedelta(minutes=1))
+    application.state.unverified_paid_limiter = OperationLimiter(
+        clock, max_operations=UNVERIFIED_PAID_PER_MINUTE, window=timedelta(minutes=1))
+    # Which place IDs the paid Places routes accept; None refuses all (set by the composition root).
+    application.state.place_references = None
     application.state.resolver = resolver or PrincipalResolver(
         policies=application.state.orchestrator.quotas.policies
     )
@@ -299,8 +222,10 @@ def create_app(
             message = detail if isinstance(detail, str) else "request failed"
         headers = dict(exc.headers) if exc.headers else None
         reason = ErrorReason(detail["reason"]) if isinstance(detail, dict) and detail.get("reason") else None
+        version = detail.get("current_version") if isinstance(detail, dict) else None
         _trace_error(request, code, _phase_for(exc.status_code), exc.status_code)
-        return _error_response(exc.status_code, code, message, headers, reason)
+        return _error_response(exc.status_code, code, message, headers, reason,
+                               version if isinstance(version, int) else None)
 
     @application.exception_handler(RequestValidationError)
     async def _invalid_request(request: Request, __: RequestValidationError) -> JSONResponse:
@@ -316,133 +241,8 @@ def create_app(
     def healthz() -> dict[str, str]:
         return {"status": "ok"}
 
-    @application.post("/v1/agent/turns", response_model=TurnResponse, responses=_ERROR_RESPONSES)
-    def agent_turn(
-        body: TurnRequest,
-        request: Request,
-        principal: Principal = Depends(current_principal),
-        idempotency_key: str = Header(min_length=1, max_length=200),
-    ) -> TurnResponse:
-        if principal.kind == PrincipalKind.DISABLED:
-            raise _error(403, ErrorCode.POLICY, "account unavailable")
-        turn_orchestrator: TurnOrchestrator = request.app.state.orchestrator
-        if body.location is not None and not request.app.state.consents.has_active(
-            principal.uid, ConsentPurpose.LOCATION_FOREGROUND
-        ):
-            # Before any quota, model or tool work: nothing is consumed or stored.
-            raise _error(403, ErrorCode.POLICY, "location consent required",
-                         ErrorReason.LOCATION_CONSENT_REQUIRED)
-        try:
-            result = turn_orchestrator.run_turn(
-                principal, body.message, idempotency_key,
-                location=body.location.rounded() if body.location is not None else None)
-        except ReservationConflict as error:
-            raise _error(409, ErrorCode.CONFLICT, "request already in progress") from error
-        except IdempotencyKeyReused as error:
-            raise _error(
-                409, ErrorCode.CONFLICT, "idempotency key reused with a different request"
-            ) from error
-        except TurnFailure as failure:
-            # Typed, static message; the reservation was already released by the orchestrator.
-            raise _error(failure.status, failure.code, failure.message, failure.reason,
-                         failure.retry_after) from None
-        try:
-            try:
-                usage = usage_view(turn_orchestrator.quotas, principal)
-            except AccountUnavailable:
-                # The turn is already counted: never a 500. Fail closed with a gated, empty view
-                # (the client re-reads /v1/me/usage).
-                usage = UsageView(
-                    period=UsagePeriod.LIFETIME, user_turns_used=0, user_turns_limit=0,
-                    activated_trips_used=0, activated_trips_limit=0, meter_state=MeterState.GATED,
-                    gate_reason=GateReason.TURNS_LIMIT)
-            return TurnResponse(
-                reply=result.reply,
-                domain=result.domain,
-                allowed_tools=result.tools,
-                workspace_id=result.workspace.id if result.workspace else None,
-                allowance_exhausted=result.allowance_exhausted,
-                policy_version=turn_orchestrator.quotas.policies.get(principal.policy_version).version,
-                usage=usage,
-                discovery=result.discovery,
-                warnings=result.warnings,
-            )
-        except ValidationError as error:
-            raise _error(500, ErrorCode.VALIDATION, "turn result violated the response contract") from error
-
-    def _consent_principal(request: Request, principal: Principal) -> ConsentStore:
-        if principal.kind == PrincipalKind.DISABLED:
-            raise _error(403, ErrorCode.POLICY, "account unavailable")
-        wait = request.app.state.consent_limiter.check(principal.uid)
-        if wait is not None:
-            raise _error(429, ErrorCode.QUOTA, "too many requests", ErrorReason.RATE_LIMITED, wait)
-        return request.app.state.consents
-
-    @application.post("/v1/me/consents", response_model=ConsentView, responses=_ERROR_RESPONSES)
-    def grant_consent(
-        body: ConsentGrantRequest, request: Request,
-        principal: Principal = Depends(current_principal),
-    ) -> ConsentView:
-        store = _consent_principal(request, principal)
-        if body.purpose not in SUPPORTED_PURPOSES or body.notice_version != NOTICE_VERSIONS[body.purpose]:
-            raise _error(422, ErrorCode.VALIDATION, "unsupported purpose or notice version")
-        try:
-            return ConsentView.of(store.grant(principal.uid, body.purpose, body.notice_version))
-        except WrongNoticeVersion:
-            raise _error(422, ErrorCode.VALIDATION, "unsupported purpose or notice version") from None
-
-    @application.get("/v1/me/consents", response_model=ConsentList, responses=_ERROR_RESPONSES)
-    def list_consents(
-        request: Request, principal: Principal = Depends(current_principal)
-    ) -> ConsentList:
-        store = _consent_principal(request, principal)
-        return ConsentList(consents=tuple(ConsentView.of(r) for r in store.active(principal.uid)))
-
-    @application.delete("/v1/me/consents/{purpose}", status_code=204, response_class=Response,
-                        responses=_ERROR_RESPONSES)
-    def withdraw_consent(
-        purpose: str, request: Request, principal: Principal = Depends(current_principal)
-    ) -> Response:
-        store = _consent_principal(request, principal)
-        try:
-            parsed = ConsentPurpose(purpose)
-        except ValueError:
-            raise _error(404, ErrorCode.VALIDATION, "no such consent") from None
-        if parsed not in SUPPORTED_PURPOSES or not store.withdraw(principal.uid, parsed):
-            raise _error(404, ErrorCode.VALIDATION, "no such consent")
-        return Response(status_code=204)
-
-    def _access_principal(request: Request, principal: Principal, limiter: OperationLimiter) -> QuotaService:
-        if principal.kind == PrincipalKind.DISABLED:
-            raise _error(403, ErrorCode.POLICY, "account unavailable")
-        wait = limiter.check(principal.uid)
-        if wait is not None:
-            raise _error(429, ErrorCode.QUOTA, "too many requests", ErrorReason.RATE_LIMITED, wait)
-        return request.app.state.orchestrator.quotas
-
-    @application.post("/v1/session:bootstrap", response_model=SessionBootstrap, responses=_ERROR_RESPONSES)
-    def bootstrap(request: Request, principal: Principal = Depends(current_principal)) -> SessionBootstrap:
-        quotas = _access_principal(request, principal, request.app.state.bootstrap_limiter)
-        try:
-            return session_bootstrap(quotas, principal, request.app.state.clock())
-        except AccountUnavailable:
-            raise _error(403, ErrorCode.POLICY, "account unavailable") from None
-
-    @application.get("/v1/me/usage", response_model=UsageView, responses=_ERROR_RESPONSES)
-    def my_usage(request: Request, principal: Principal = Depends(current_principal)) -> UsageView:
-        quotas = _access_principal(request, principal, request.app.state.access_limiter)
-        try:
-            return usage_view(quotas, principal)
-        except AccountUnavailable:
-            raise _error(403, ErrorCode.POLICY, "account unavailable") from None
-
-    @application.get("/v1/me/capabilities", response_model=Capabilities, responses=_ERROR_RESPONSES)
-    def my_capabilities(request: Request, principal: Principal = Depends(current_principal)) -> Capabilities:
-        quotas = _access_principal(request, principal, request.app.state.access_limiter)
-        try:
-            return capabilities_for(principal, usage_view(quotas, principal))
-        except AccountUnavailable:
-            raise _error(403, ErrorCode.POLICY, "account unavailable") from None
+    for router in ROUTERS:
+        application.include_router(router, dependencies=[Depends(app_check_gate)])
 
     def _openapi() -> dict:
         if application.openapi_schema:

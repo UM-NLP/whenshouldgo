@@ -1,7 +1,6 @@
 import enum
 import json
 import types
-import typing
 from typing import Annotated, Any, Literal, Union, get_args, get_origin
 
 import pytest

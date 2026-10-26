@@ -6,7 +6,7 @@ from typing import Any
 
 from gateway_fakes import completion_response
 from maps_simulator import FakeMcpTransport, mcp_ok
-from wiring_support import CANARY, canary_payload
+from wiring_support import CANARY, canary_payload  # noqa: F401  (CANARY is re-exported to tests)
 
 from app.auth import StaticTokenVerifier, VerifiedIdentity
 from app.composition import GOOGLE_MAPS_KEY_VAR, OPENROUTER_KEY_VAR, build_runtime
@@ -39,11 +39,24 @@ class ProviderModel:
                                    provider="DeepInfra")
 
 
+class NoopAdmin:
+    """A FirebaseAdmin double: there is no login to remove, so deleting one is a no-op. The real
+    service has none until the owner supplies credentials (decision 28); tests that check that
+    state pass ``firebase_admin=None`` explicitly."""
+
+    def get_account(self, uid: str):  # noqa: ANN201
+        return None
+
+    def delete_user(self, uid: str) -> None:
+        return None
+
+
 def build(env: dict[str, str] | None = None, **overrides: Any):
     kwargs: dict[str, Any] = dict(
         identity_verifier=verifier(), allow_in_memory_state=True,
         model_transport=ProviderModel(),
         discovery_transport=FakeMcpTransport([mcp_ok(canary_payload())]))
+    kwargs.setdefault("firebase_admin", NoopAdmin())
     kwargs.update(overrides)
     return build_runtime(dict(ENV if env is None else env), **kwargs)
 

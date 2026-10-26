@@ -30,7 +30,9 @@ Messages are static; a rejection reason is a telemetry enum, never model text.
 from __future__ import annotations
 
 import math
+import re
 import unicodedata
+from dataclasses import dataclass
 
 from .domain import (
     Confirmation,
@@ -38,6 +40,7 @@ from .domain import (
     FactSource,
     NextAction,
     TripWorkspace,
+    WorkspaceEditRequest,
     WorkspacePatch,
     WorkspaceStatus,
     evolve,
@@ -173,3 +176,129 @@ def apply_patch_checked(workspace: TripWorkspace, patch: WorkspacePatch) -> tupl
 def apply_patch(workspace: TripWorkspace, patch: WorkspacePatch) -> TripWorkspace:
     """The next workspace (facts with unacceptable text silently dropped), or ``PatchRejected``."""
     return apply_patch_checked(workspace, patch)[0]
+
+
+# --- the user-edit path ------------------------------------------------------------------------
+# A USER edit (PATCH /v1/workspace) is a different trust level from a model proposal: the verified
+# user typed it, so the server stamps it USER_EXPLICIT and CONFIRMED (a user may also mark it
+# hard). The model path above never produces such a fact and can never touch one. The checks here
+# are strict anyway: the request is client input, sizes are capped and text is held to the same
+# plain-text rule, and the server-owned keys stay protected from the user too.
+MAX_USER_UPSERTS = 20
+MAX_USER_REMOVALS = 20
+# A user edit that selects a candidate place: the value is a Maps place ID (an identifier, never
+# content) and the optional label is what the user typed. The service turns a change of the
+# selection into a new immutable plan version.
+SELECTED_PLACE_KEY = "selected_place_id"
+SELECTED_LABEL_KEY = "selected_place_label"
+SELECTION_KEYS = frozenset({SELECTED_PLACE_KEY, SELECTED_LABEL_KEY})
+MAX_SELECTED_LABEL_CHARS = 80
+_PLACE_ID = re.compile(r"^[A-Za-z0-9_-]{1,300}$")
+
+
+class StaleEdit(Exception):
+    """The edit was built on an older workspace version. ``current`` is the stored version."""
+
+    def __init__(self, current: int) -> None:
+        super().__init__("workspace edit is stale")
+        self.current = current
+
+
+@dataclass(frozen=True)
+class UserEditResult:
+    workspace: TripWorkspace
+    upserts: int
+    removals: int
+    changed_ids: frozenset[str]  # normalised ids of every fact the edit wrote or removed
+
+
+def _user_may_not_touch(fact: Fact) -> bool:
+    """Server-owned facts (reserved key, tool output) are changed by the server only."""
+    return (
+        _n(fact.id) in SERVER_OWNED_FACT_IDS
+        or _n(fact.key) in SERVER_OWNED_FACT_IDS
+        or fact.source == FactSource.TOOL
+    )
+
+
+def _check_user_value(key: str, value: object, hard: bool, scope: str) -> None:
+    if _n(key) in SERVER_OWNED_FACT_IDS:
+        raise PatchRejected(ValidationReason.HARD_CONSTRAINT)
+    if isinstance(value, float) and not math.isfinite(value):
+        raise PatchRejected(ValidationReason.SCHEMA)
+    if isinstance(value, str):
+        if len(value) > MAX_FACT_VALUE_CHARS:
+            raise PatchRejected(ValidationReason.OVERSIZE)
+        if plain_text_problem(value, allow_joiners=True):
+            raise PatchRejected(ValidationReason.SCHEMA)
+    if plain_text_problem(scope) or plain_text_problem(key):
+        raise PatchRejected(ValidationReason.SCHEMA)
+    if hard and value is None:
+        raise PatchRejected(ValidationReason.SCHEMA)  # a hard constraint needs a value
+    if _n(key) == SELECTED_PLACE_KEY and not (
+        isinstance(value, str) and _PLACE_ID.fullmatch(value) and not hard
+    ):
+        raise PatchRejected(ValidationReason.SCHEMA)
+    if _n(key) == SELECTED_LABEL_KEY and not (
+        isinstance(value, str) and 0 < len(value) <= MAX_SELECTED_LABEL_CHARS and not hard
+    ):
+        raise PatchRejected(ValidationReason.SCHEMA)
+
+
+def apply_user_edit(workspace: TripWorkspace, request: WorkspaceEditRequest) -> UserEditResult:
+    """The workspace after a validated user edit, or ``PatchRejected`` / ``StaleEdit``.
+
+    ``workspace`` is never modified. Every written fact is USER_EXPLICIT, CONFIRMED, never from a
+    model; an existing fact with the same key (a model assumption included) is replaced in place."""
+    if workspace.status in _TERMINAL:
+        raise PatchRejected(ValidationReason.UNKNOWN_FIELD)
+    if request.base_version != workspace.version:
+        raise StaleEdit(workspace.version)
+    if not request.upsert_facts and not request.remove_fact_ids:
+        raise PatchRejected(ValidationReason.SCHEMA)
+    if (len(request.upsert_facts) > MAX_USER_UPSERTS
+            or len(request.remove_fact_ids) > MAX_USER_REMOVALS):
+        raise PatchRejected(ValidationReason.OVERSIZE)
+    upsert_keys = [_n(edit.key) for edit in request.upsert_facts]
+    remove_ids = [_n(fact_id) for fact_id in request.remove_fact_ids]
+    if (
+        len(set(upsert_keys)) != len(upsert_keys)
+        or len(set(remove_ids)) != len(remove_ids)
+        or set(upsert_keys) & set(remove_ids)
+    ):
+        raise PatchRejected(ValidationReason.SCHEMA)
+
+    facts: dict[str, Fact] = {_n(f.id): f for f in workspace.facts}
+    for edit in request.upsert_facts:
+        _check_user_value(edit.key, edit.value, edit.hard, edit.scope)
+    for fact_id in remove_ids:
+        current = facts.get(fact_id)
+        if current is None:
+            raise PatchRejected(ValidationReason.UNKNOWN_FIELD)
+        if _user_may_not_touch(current):
+            raise PatchRejected(ValidationReason.HARD_CONSTRAINT)
+    changed = set(remove_ids)
+    for fact_id in remove_ids:
+        del facts[fact_id]
+    for edit in request.upsert_facts:
+        key = _n(edit.key)
+        matches = [fid for fid, f in facts.items() if fid == key or _n(f.key) == key]
+        if len(matches) > 1:
+            raise PatchRejected(ValidationReason.SCHEMA)
+        if matches:
+            old = facts[matches[0]]
+            if _user_may_not_touch(old):
+                raise PatchRejected(ValidationReason.HARD_CONSTRAINT)
+            fact_id, fact_key = old.id, old.key  # one name per fact: keep the stored one
+            del facts[matches[0]]
+        else:
+            fact_id = fact_key = edit.key
+        facts[_n(fact_id)] = Fact(
+            id=fact_id, key=fact_key, value=edit.value, source=FactSource.USER_EXPLICIT,
+            confirmation=Confirmation.CONFIRMED, hard=edit.hard, scope=edit.scope)
+        changed.add(_n(fact_id))
+    if len(facts) > MAX_FACTS:
+        raise PatchRejected(ValidationReason.OVERSIZE)
+    updated = evolve(workspace, facts=list(facts.values()), version=workspace.version + 1)
+    return UserEditResult(updated, len(request.upsert_facts), len(request.remove_fact_ids),
+                          frozenset(changed))

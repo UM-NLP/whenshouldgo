@@ -134,3 +134,32 @@ def test_loopback_host_headers_are_accepted(host: str) -> None:
 def test_startup_notice_says_grounding_lite_spend_is_not_capped() -> None:
     _, lines, _ = run([FLAG, "--dry-run"])
     assert any("Grounding Lite" in line and "not capped" in line for line in lines)
+
+
+def test_dry_run_app_carries_the_board_actions_and_account_services() -> None:
+    """The dev server composes through ``build_runtime``, so the same services are attached (memory
+    stores, dry run): workspace, a handoff action, export and delete all work offline."""
+    app, runtime = dev.build_dev_app(dev.build_parser().parse_args([FLAG, "--dry-run"]), {})
+    assert runtime.workspace_service and runtime.action_service and runtime.account_service
+    client = TestClient(app, base_url=LOCAL)
+    auth = {"Authorization": f"Bearer {dev.DEV_TOKEN}"}
+    board = client.get("/v1/workspace", headers=auth)
+    assert board.status_code == 200 and board.json()["version"] == 0
+    place = client.post("/v1/agent/turns", json={"message": "dinner in Paris"},
+                        headers={**auth, "Idempotency-Key": "dev-test-0005"})
+    place_id = place.json()["discovery"]["places"][0]["place_id"]  # the pick button's input
+    board = client.get("/v1/workspace", headers=auth).json()
+    body = {"workspace_id": board["id"], "plan_version": 1, "effect": "LAUNCH_HANDOFF",
+            "target": place_id}
+    plan = {"base_version": board["version"], "upsert_facts": [
+        {"key": "selected_place_id", "value": place_id}]}
+    edited = client.patch("/v1/workspace", json=plan, headers={**auth, "Idempotency-Key": "dev-edit-001"})
+    assert edited.status_code == 200 and edited.json()["plan_versions"] == [1]
+    action = client.post("/v1/actions/propose", json=body,
+                         headers={**auth, "Idempotency-Key": "dev-action-01"}).json()
+    done = client.post(f"/v1/actions/{action['id']}/confirm", json={"nonce": action["nonce"]},
+                       headers=auth)
+    assert done.status_code == 200 and done.json()["handoff_url"].startswith(
+        "https://www.google.com/maps")
+    assert client.post("/v1/me:export", headers=auth).status_code == 200
+    assert client.post("/v1/me:delete", headers=auth).json()["completed"] is True

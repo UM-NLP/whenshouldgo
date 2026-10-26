@@ -14,10 +14,12 @@ from .domain import (
     MeterState,
     Principal,
     PrincipalKind,
+    RuntimeConfig,
     SessionBootstrap,
     Tier,
     UsagePeriod,
     UsageView,
+    history_active,
 )
 from .entitlements import Allowance, EntitlementPolicy
 from .quota import QuotaService
@@ -61,8 +63,10 @@ def usage_view(quotas: QuotaService, principal: Principal) -> UsageView:
     allowance = policy.for_kind(principal.kind)
     if allowance is None:
         raise AccountUnavailable()
-    quotas.ensure_record(principal.uid)
-    used = quotas.usage_for(principal.uid)
+    used = quotas.current_usage(principal)  # also starts or rolls the principal's window
+    window = quotas.window_for(principal)
+    resets_at = (used.window_started_at + window
+                 if window is not None and used.window_started_at is not None else None)
     state, reason = meter_state(policy, used.successful_turns, used.activated_trips, allowance)
     registered = policy.for_kind(PrincipalKind.REGISTERED_FREE)
     guest = principal.kind == PrincipalKind.GUEST
@@ -72,7 +76,7 @@ def usage_view(quotas: QuotaService, principal: Principal) -> UsageView:
         user_turns_limit=allowance.user_turn_limit,
         activated_trips_used=used.activated_trips,
         activated_trips_limit=allowance.activated_trip_limit,
-        resets_at=None,
+        resets_at=resets_at,
         meter_state=state,
         gate_reason=reason,
         registered_turn_limit=registered.user_turn_limit if guest and registered else None,
@@ -80,26 +84,37 @@ def usage_view(quotas: QuotaService, principal: Principal) -> UsageView:
     )
 
 
-def capabilities_for(principal: Principal, usage: UsageView) -> Capabilities:
+def capabilities_for(
+    principal: Principal, usage: UsageView, config: RuntimeConfig | None = None,
+    *, account_service: object | None = None,
+) -> Capabilities:
     tier = tier_of(principal)
     return Capabilities(
         can_start_turn=usage.meter_state != MeterState.GATED,
         can_use_location=True,
         can_read=True,
-        # False until POST /v1/me:export and /v1/me:delete exist (docs/access-tiers.md); clients must
-        # not depend on them.
-        can_export=False,
-        can_delete=False,
+        # True only when the account service behind POST /v1/me:export and /v1/me:delete is
+        # configured (``app.state.account_service``); both stay available after the usage gate.
+        can_export=account_service is not None,
+        # Also needs a Firebase admin credential (decision 28): without it the login cannot be
+        # removed, so a delete could never complete.
+        can_delete=account_service is not None and bool(
+            getattr(account_service, "login_deletion_available", True)),
         can_link_account=tier == Tier.GUEST,
+        # Server-owned (decision 25): false unless history_enabled and an approved notice exist.
+        history_enabled=history_active(config),
     )
 
 
-def session_bootstrap(quotas: QuotaService, principal: Principal, now: datetime) -> SessionBootstrap:
+def session_bootstrap(
+    quotas: QuotaService, principal: Principal, now: datetime, config: RuntimeConfig | None = None,
+    *, account_service: object | None = None,
+) -> SessionBootstrap:
     usage = usage_view(quotas, principal)
     return SessionBootstrap(
         tier=tier_of(principal),
         policy_version=quotas.policies.get(principal.policy_version).version,
-        capabilities=capabilities_for(principal, usage),
+        capabilities=capabilities_for(principal, usage, config, account_service=account_service),
         usage=usage,
         server_time=now,
     )

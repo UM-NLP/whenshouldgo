@@ -12,7 +12,13 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+auth = [
+  "PyJWT==2.10.1",  # RS256 verification of Firebase ID and App Check tokens (app/auth_firebase.py)
+  "cryptography==44.0.2",  # x509/JWK public keys for PyJWT RS256
+]
 dev = ["pytest>=8.0,<9.0", "ruff>=0.6"]
+# Optional: the real Firestore adapters (app/stores/firestore.py import it lazily). Tests never need it.
+gcp = ["google-cloud-firestore>=2.16,<3.0"]
 
 [build-system]
 requires = ["setuptools>=69"]
@@ -30,8 +36,12 @@ line-length = 100
 target-version = "py312"
 
 [tool.ruff.lint]
+# Explicit rule set so a newer ruff default cannot change what CI enforces.
 # T20 bans print() in app code; telemetry goes through typed sinks only.
-extend-select = ["T20"]
+select = ["E4", "E7", "E9", "F", "T20"]
 
 [tool.ruff.lint.per-file-ignores]
+"**/__init__.py" = ["F401"]  # package re-exports
+"scripts/*" = ["T20"]  # command-line tools print their results
+"evals/*" = ["T20"]
 "tests/*" = ["T20"]

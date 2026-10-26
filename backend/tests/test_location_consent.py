@@ -71,7 +71,7 @@ def test_a_notice_version_mismatch_is_422_and_grants_nothing() -> None:
 
 
 @pytest.mark.parametrize("body", [
-    {"purpose": "HISTORY_STORE", "notice_version": "location-notice-1"},
+    {"purpose": "NOPE", "notice_version": "location-notice-1"},
     {"purpose": "LOCATION_FOREGROUND"},
     {"purpose": "LOCATION_FOREGROUND", "notice_version": "location-notice-1", "uid": "x"},
     {"purpose": "LOCATION_FOREGROUND", "notice_version": "location-notice-1",
