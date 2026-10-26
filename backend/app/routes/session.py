@@ -15,12 +15,17 @@ def _runtime_config(request: Request):
     return getattr(request.app.state, "runtime_config", None)
 
 
+def _account_service(request: Request):
+    return getattr(request.app.state, "account_service", None)
+
+
 @router.post("/v1/session:bootstrap", response_model=SessionBootstrap, responses=ERROR_RESPONSES)
 def bootstrap(request: Request, principal: Principal = Depends(current_principal)) -> SessionBootstrap:
     quotas = access_principal(request, principal, request.app.state.bootstrap_limiter)
     try:
         return session_bootstrap(quotas, principal, request.app.state.clock(),
-                                 _runtime_config(request))
+                                 _runtime_config(request),
+                                 account_service=_account_service(request))
     except AccountUnavailable:
         raise error(403, ErrorCode.POLICY, "account unavailable") from None
 
@@ -38,6 +43,7 @@ def my_usage(request: Request, principal: Principal = Depends(current_principal)
 def my_capabilities(request: Request, principal: Principal = Depends(current_principal)) -> Capabilities:
     quotas = access_principal(request, principal, request.app.state.access_limiter)
     try:
-        return capabilities_for(principal, usage_view(quotas, principal), _runtime_config(request))
+        return capabilities_for(principal, usage_view(quotas, principal), _runtime_config(request),
+                                account_service=_account_service(request))
     except AccountUnavailable:
         raise error(403, ErrorCode.POLICY, "account unavailable") from None

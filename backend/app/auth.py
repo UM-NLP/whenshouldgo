@@ -91,4 +91,13 @@ def current_principal(
         identity = verifier.verify(token)
     except InvalidToken:
         raise _unauthorized() from None
-    return resolver.resolve(identity)
+    principal = resolver.resolve(identity)
+    # A deleted uid is never served again: its tombstone turns it into a DISABLED principal, so
+    # every route refuses it (403) and a late request cannot recreate its data. The account
+    # service fails closed when the tombstone cannot be read. Only POST /v1/me:delete looks past
+    # it, to let an interrupted deletion be retried.
+    account_service = getattr(request.app.state, "account_service", None)
+    if (account_service is not None and principal.kind != PrincipalKind.DISABLED
+            and account_service.is_deleted(principal.uid)):
+        return Principal(principal.uid, PrincipalKind.DISABLED, principal.policy_version)
+    return principal

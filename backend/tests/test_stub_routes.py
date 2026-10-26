@@ -19,29 +19,13 @@ TOKENS = {
     "tok-off": VerifiedIdentity("off-1", "google.com"),
 }
 H = {"Authorization": "Bearer tok-a"}
-PLACE = {"place_id": "ChIJabc"}
 SAVE = {"place_id": "ChIJabc", "user_label": "Home", "label_kind": "HOME",
         "position": {"latitude": 43.653, "longitude": -79.383}}
 
+# (account link, export and delete are live: test_account_*.py)
 # method, path template, request model | None, success response model, history-gated, body, query
 STUBS = [
-    ("POST", "/v1/actions/propose", "ProposeActionRequest", "PendingAction", False,
-     {"workspace_id": "ws1", "plan_version": 1, "effect": "SAVE_PLACE", "target": "ChIJabc"}),
-    ("POST", "/v1/actions/{id}/confirm", "ConfirmActionRequest", "ConfirmActionResponse", False,
-     {"nonce": "n" * 20}),
-    ("POST", "/v1/actions/{id}/cancel", None, "CancelActionResponse", False, None),
-    ("POST", "/v1/trips/{id}:activate", "ActivateTripRequest", "TripActivation", False,
-     {"plan_version": 1}),
-    ("GET", "/v1/workspace", None, "WorkspaceView", False, None),
-    ("PATCH", "/v1/workspace", "WorkspaceEditRequest", "WorkspaceView", False,
-     {"base_version": 0, "upsert_facts": [], "remove_fact_ids": []}),
-    ("POST", "/v1/outcomes", "OutcomeCheckin", "OutcomeAck", False, PLACE | {"outcome": "WENT"}),
-    ("POST", "/v1/account/link-intents", "AccountLinkStartRequest", "AccountLinkIntent", False,
-     {"provider": "GOOGLE"}),
-    ("POST", "/v1/account/link-intents/{id}:complete", "AccountLinkCompleteRequest",
-     "AccountLinkResult", False, {"nonce": "n" * 20}),
-    ("POST", "/v1/me:export", None, "ExportBundle", False, None),
-    ("POST", "/v1/me:delete", None, "DeleteReceipt", False, None),
+    # actions/propose|confirm|cancel and trips/{id}:activate are live: test_actions_routes.py
     ("GET", "/v1/history/records", None, "HistoryRecordList", True, None),
     ("POST", "/v1/history/records", "HistoryRecordCreate", "OutingRecord", True,
      {"workspace_id": "ws1", "plan_version": 1, "place_id": "ChIJabc", "intent_tag": "OTHER"}),
@@ -136,7 +120,9 @@ def test_history_routes_are_disabled_first_and_write_nothing(method, path, req, 
 
 def test_non_history_stubs_work_while_history_is_off() -> None:
     client, _ = make()
-    assert call(client, "GET", "/v1/workspace", None).status_code == 501
+    for method, path, *_rest, gated, body in STUBS:
+        if not gated:  # never the history flag's typed 404 DISABLED
+            assert call(client, method, path, body).status_code != 404
 
 
 def test_capabilities_history_flag_comes_from_the_server(monkeypatch) -> None:

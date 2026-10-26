@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from typing import NoReturn
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Header, Request
 
 from ..auth import current_principal
 from ..domain import (
@@ -19,18 +19,27 @@ from ..domain import (
     OutingRecord,
     Principal,
 )
-from .common import not_implemented, require_history_active, stub_responses
+from ..workspaces import WorkspaceError
+from .common import access_principal, not_implemented, require_history_active, stub_responses
+from .workspace import service as workspace_service, typed
 
 router = APIRouter()
 
 
-@router.post("/v1/outcomes", response_model=OutcomeAck, responses=stub_responses(False),)
+@router.post("/v1/outcomes", response_model=OutcomeAck, responses=stub_responses(False))
 def record_outcome(
     body: OutcomeCheckin,
     request: Request,
     principal: Principal = Depends(current_principal),
-) -> NoReturn:
-    not_implemented(request, principal)
+    idempotency_key: str | None = Header(default=None, min_length=8, max_length=200),
+) -> OutcomeAck:
+    """Stored server-side only for a REGISTERED principal with history active and consent; for a
+    guest nothing durable is written and ``recorded`` is False (keep it on the device)."""
+    access_principal(request, principal, request.app.state.access_limiter)
+    try:
+        return workspace_service(request).record_outcome(principal, body, idempotency_key)
+    except WorkspaceError as failure:
+        raise typed(failure) from None
 
 
 @router.get("/v1/history/records", response_model=HistoryRecordList, responses=stub_responses(True),
