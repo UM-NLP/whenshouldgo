@@ -30,7 +30,6 @@ from app.stores import (
     CostEntryDelta,
     SpendBasis,
     KillSwitchReason,
-    ReserveOutcome,
     SpendBudget,
     StateStores,
     StoreKillSwitch,

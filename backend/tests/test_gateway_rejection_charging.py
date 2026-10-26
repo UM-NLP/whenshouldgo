@@ -14,7 +14,6 @@ from test_gateway_support import (
     Clock,
     make_config,
     make_gateway,
-    make_ladder,
     make_request,
 )
 

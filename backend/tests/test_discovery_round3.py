@@ -16,7 +16,6 @@ from maps_simulator import (
     PRINCIPAL,
     FakeMcpTransport,
     place_link,
-    SyntheticMapsClient,
     mcp_ok,
     new_run,
     synthetic_payload,

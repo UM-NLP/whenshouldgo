@@ -7,7 +7,7 @@ from datetime import timedelta
 from pathlib import Path
 
 import pytest
-from actions_support import GUEST, LABEL, PLACE, T0, VERSION, Env
+from actions_support import LABEL, PLACE, T0, Env
 from fastapi.testclient import TestClient
 
 from app import telemetry as t

@@ -1,4 +1,4 @@
-from app.domain import Confirmation, DomainClass, Principal, PrincipalKind
+from app.domain import DomainClass, Principal, PrincipalKind
 from app.entitlements import PILOT_POLICY
 from app.orchestrator import TurnOrchestrator
 from app.guard import OUT_OF_SCOPE_REPLY, classify

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import ast
+import re
 import copy
 import json
 import threading
@@ -25,7 +26,6 @@ from test_gateway_support import (
     make_ladder,
     make_policy,
     make_request,
-    tool_message,
 )
 
 from app.domain import (
@@ -58,7 +58,6 @@ from app.gateway import (
     ProviderRateLimitError,
     ProviderUnavailableError,
     ResiliencePolicy,
-    ResilientGateway,
     RunBudget,
     TaintedContextError,
     ToolProvenance,
@@ -710,7 +709,7 @@ def test_contract_planner_ceilings_live_in_token_ceilings() -> None:
 # --- L8 ---------------------------------------------------------------------------------
 def test_l8_ruff_bans_print_and_app_has_none() -> None:
     pyproject = (APP_DIR.parent / "pyproject.toml").read_text(encoding="utf-8")
-    assert 'extend-select = ["T20"]' in pyproject
+    assert re.search(r'^select = \[[^\]]*"T20"', pyproject, re.M), "T20 (print ban) must stay selected"
     offenders = [
         f"{path.name}:{node.lineno}"
         for path in APP_DIR.rglob("*.py")

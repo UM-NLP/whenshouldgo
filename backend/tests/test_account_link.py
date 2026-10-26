@@ -10,7 +10,6 @@ import pytest
 from account_support import H, Env, guest, registered
 
 from app import telemetry as t
-from app.domain import Tier
 
 
 @pytest.fixture(params=["memory", "fake-firestore"])

@@ -12,7 +12,7 @@ from app.domain import (
 )
 from app.entitlements import Allowance, EntitlementPolicy, Period, PolicyRegistry
 from app.quota import QuotaService
-from app.stores import firestore_stores, memory_stores
+from app.stores import memory_stores
 from app.stores.actions_store import FirestorePendingActionStore, MemoryPendingActionStore
 from app.stores.fake_firestore import FakeFirestoreClient, fake_transactional
 

@@ -40,9 +40,6 @@ from app.stores.plans_store import (
 )
 from app.telemetry import InMemorySink
 from app.workspaces import (
-    EditRejected,
-    IdempotencyKeyReused,
-    NoteRejected,
     WorkspaceError,
     build_workspace_service,
 )

@@ -5,7 +5,6 @@ is at most 80 characters. This BOUNDS the model: it is not a proof that the quer
 the user asked (up to 40% of the content words may be free)."""
 from __future__ import annotations
 
-import pytest
 from wiring_support import search
 
 import app.frame as frame

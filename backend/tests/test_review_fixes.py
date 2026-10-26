@@ -4,12 +4,10 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
-import pytest
 from fastapi.testclient import TestClient
 from location_support import HEADERS_A, env_with, grant, no_area_turn, turn
 
 import app.consent as consent_module
-from app import main as main_module
 from app.access import AccountUnavailable, capabilities_for
 from app.auth import StaticTokenVerifier, VerifiedIdentity
 from app.consent import InMemoryConsentStore, OperationLimiter

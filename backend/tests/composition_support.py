@@ -6,7 +6,7 @@ from typing import Any
 
 from gateway_fakes import completion_response
 from maps_simulator import FakeMcpTransport, mcp_ok
-from wiring_support import CANARY, canary_payload
+from wiring_support import CANARY, canary_payload  # noqa: F401  (CANARY is re-exported to tests)
 
 from app.auth import StaticTokenVerifier, VerifiedIdentity
 from app.composition import GOOGLE_MAPS_KEY_VAR, OPENROUTER_KEY_VAR, build_runtime

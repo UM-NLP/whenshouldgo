@@ -36,8 +36,12 @@ line-length = 100
 target-version = "py312"
 
 [tool.ruff.lint]
+# Explicit rule set so a newer ruff default cannot change what CI enforces.
 # T20 bans print() in app code; telemetry goes through typed sinks only.
-extend-select = ["T20"]
+select = ["E4", "E7", "E9", "F", "T20"]
 
 [tool.ruff.lint.per-file-ignores]
+"**/__init__.py" = ["F401"]  # package re-exports
+"scripts/*" = ["T20"]  # command-line tools print their results
+"evals/*" = ["T20"]
 "tests/*" = ["T20"]

@@ -101,7 +101,9 @@ def test_dry_run_is_deterministic_for_a_seed(tmp_path: Path) -> None:
     a, b = tmp_path / "a.jsonl", tmp_path / "b.jsonl"
     for out in (a, b):
         go(["--dry-run", "--limit", "20", "--repeats", "2", "--seed", "7", "--out", str(out)])
-    strip = lambda rs: [{k: v for k, v in r.items() if k != "latency_ms"} for r in rs]
+    def strip(rs):
+        return [{k: v for k, v in r.items() if k != "latency_ms"} for r in rs]
+
     assert strip(read(a)) == strip(read(b))
 
 
