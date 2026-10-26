@@ -53,3 +53,13 @@ def test_dockerfile_copies_no_env_and_sets_no_key_like_env() -> None:
             names = re.findall(r"([A-Za-z_][A-Za-z0-9_]*)=", line) or line.split()[1:2]
             for name in names:
                 assert not key_like.search(name), line
+
+
+def test_image_installs_the_auth_extra_production_needs() -> None:
+    installs = [line for line in INSTRUCTIONS if "pip install" in line and "venv" in line]
+    assert installs and all("auth" in line for line in installs)  # Firebase and App Check verifiers
+
+
+def test_ci_installs_the_auth_extra_so_the_verifier_tests_run() -> None:
+    ci = (BACKEND.parent / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    assert '".[dev,auth]"' in ci

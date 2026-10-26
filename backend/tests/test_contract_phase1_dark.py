@@ -109,10 +109,13 @@ def test_account_export_models_are_strict() -> None:
     with pytest.raises(ValidationError):
         d.AccountLinkIntent(id="i", provider="GOOGLE", nonce="n" * 24, created_at=NOW,
                             expires_at=NOW + timedelta(days=1))
-    bundle = d.ExportBundle(generated_at=NOW, consents=(), saved_places=(), outings=())
+    base = dict(generated_at=NOW, tier="guest", history_active=False, consents=(), saved_places=(),
+                outings=(), usage=d.ExportUsage(successful_turns=0, activated_trips=0))
+    bundle = d.ExportBundle(**base)
     assert bundle.kind == "export_bundle" and bundle.schema_version == 1
+    assert bundle.workspaces == () and bundle.plan_versions == () and bundle.outcomes == ()
     with pytest.raises(ValidationError):
-        d.ExportBundle(generated_at=NOW, consents=(), saved_places=(), outings=(), uid="x")
+        d.ExportBundle(**base, uid="x")
 
 
 def test_runtime_config_history_flags_fail_closed(monkeypatch: pytest.MonkeyPatch) -> None:

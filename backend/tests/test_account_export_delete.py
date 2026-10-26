@@ -283,13 +283,13 @@ def test_every_stored_document_carries_a_schema_version_and_kind() -> None:
         assert data["schema_version"] == 1 and isinstance(data["kind"], str), path
 
 
-def test_the_export_route_declares_its_contract_and_extends_export_bundle() -> None:
+def test_the_export_route_declares_the_promoted_export_bundle() -> None:
     from app.main import create_app
     schema = create_app().openapi()
     ok = schema["paths"]["/v1/me:export"]["post"]["responses"]["200"]["content"][
         "application/json"]["schema"]["$ref"]
-    assert ok.endswith("/AccountExportBundle")
-    props = schema["components"]["schemas"]["AccountExportBundle"]["properties"]
+    assert ok.endswith("/ExportBundle")
+    props = schema["components"]["schemas"]["ExportBundle"]["properties"]
     assert {"consents", "saved_places", "outings", "workspaces", "usage", "outcomes"} <= set(props)
     assert "coordinates" not in json.dumps(props) and user_fact("a", "b") and workspace("x")
     assert ConsentPurpose.LOCATION_FOREGROUND

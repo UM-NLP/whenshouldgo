@@ -22,6 +22,11 @@ def _account_service(request: Request):
 @router.post("/v1/session:bootstrap", response_model=SessionBootstrap, responses=ERROR_RESPONSES)
 def bootstrap(request: Request, principal: Principal = Depends(current_principal)) -> SessionBootstrap:
     quotas = access_principal(request, principal, request.app.state.bootstrap_limiter)
+    account_service = _account_service(request)
+    if account_service is not None:
+        # A token that already shows a permanent provider but has no account record (a link whose
+        # completion was lost) is recorded now. Idempotent; never raises for an unreachable admin.
+        account_service.reconcile(principal)
     try:
         return session_bootstrap(quotas, principal, request.app.state.clock(),
                                  _runtime_config(request),

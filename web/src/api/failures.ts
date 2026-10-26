@@ -16,6 +16,7 @@ export type Failure =
   | { kind: "result_expired" }
   | { kind: "discovery_unavailable" }
   | { kind: "not_configured" }
+  | { kind: "unavailable" }
   | { kind: "provider" }
   | { kind: "invalid" }
   | { kind: "network" }
@@ -35,6 +36,8 @@ export function classifyFailure(
 ): Failure {
   const reason = body?.reason ?? undefined;
   if (reason === "LOCATION_CONSENT_REQUIRED") return { kind: "location_consent_required" };
+  // A planned route (501) or a feature the server switched off: "not available yet", not an error.
+  if (status === 501 || reason === "NOT_IMPLEMENTED" || reason === "DISABLED") return { kind: "unavailable" };
   if (status === 401 || status === 403) return { kind: "auth" };
   if (status === 429) {
     if (reason === "OVER_BUDGET") return { kind: "over_budget" };
@@ -48,6 +51,9 @@ export function classifyFailure(
   if (reason === "RESULT_EXPIRED") return { kind: "result_expired" };
   if (reason === "SERVER_NOT_CONFIGURED") return { kind: "not_configured" };
   if (reason === "DISCOVERY_UNAVAILABLE") return { kind: "discovery_unavailable" };
+  // A provider-side 503 is transient (retry); any other 503 means the service is not available.
+  if (reason?.startsWith("PROVIDER_")) return { kind: "provider" };
+  if (status === 503) return { kind: "unavailable" };
   if (status >= 500) return { kind: "provider" };
   return { kind: "unknown" };
 }
@@ -91,6 +97,8 @@ export function failureText(failure: Failure): string {
       return "Place search is unavailable right now. Try again shortly.";
     case "not_configured":
       return "The service is not set up yet, so it cannot answer right now.";
+    case "unavailable":
+      return "This is not available yet. You can keep using the rest of the app.";
     case "provider":
       return "Something went wrong on our side while answering. Your message was not lost; you can try again.";
     case "invalid":

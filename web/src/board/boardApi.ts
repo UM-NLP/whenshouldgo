@@ -1,5 +1,5 @@
 // The Trip Board's slice of the backend contract. Types come from the generated schema; the
-// failure model is the board's own because a typed 501/503 ("not available yet") and a 409
+// failure model is the board's own because "not available yet" (501, 503, DISABLED) and a 409
 // (conflict) must stay distinguishable from a provider error. Server message text is never kept.
 import createClient from "openapi-fetch";
 
@@ -19,6 +19,7 @@ export type RouteCheck = S["RouteCheck"];
 export type OutcomeValue = S["OutcomeValue"];
 export type OutcomeAck = S["OutcomeAck"];
 export type ConfirmActionResponse = S["ConfirmActionResponse"];
+export type ReminderItem = S["ReminderItem"];
 export type TripActivation = S["TripActivation"];
 
 export type BoardFailure =
@@ -41,11 +42,12 @@ export function classifyBoardFailure(
   retryAfter: string | null,
 ): BoardFailure {
   const reason = body?.reason ?? undefined;
-  if (status === 501 || reason === "NOT_IMPLEMENTED" || reason === "DISABLED") return { kind: "unavailable" };
   if (reason === "LOCATION_CONSENT_REQUIRED") return { kind: "consent_required" };
   if (status === 409) return { kind: "conflict" };
   const base = classifyFailure(status, body, retryAfter);
   switch (base.kind) {
+    case "unavailable":
+      return { kind: "unavailable" };
     case "rate_limited":
       return base;
     case "quota":
@@ -57,9 +59,10 @@ export function classifyBoardFailure(
       return { kind: "invalid" };
     case "network":
       return { kind: "network" };
+    case "not_configured": // a service the server has not switched on (for example Places): not yet
+      return { kind: "unavailable" };
     case "provider":
     case "discovery_unavailable":
-    case "not_configured":
     case "busy":
       return { kind: "provider" };
     default:
@@ -80,6 +83,10 @@ export interface ProposeInput {
   userLabel: string;
   workspaceId: string;
   planVersion: number;
+  /** One key per proposal; a retry of the same proposal repeats it. */
+  idempotencyKey: string;
+  /** SET_REMINDER only: ISO time, within a day of now. The server's copy is the one that counts. */
+  dueAt?: string;
 }
 export interface OutcomeInput {
   placeId: string;
@@ -149,8 +156,7 @@ export function createBoardApi({ auth, fetchImpl, baseUrl }: BoardApiOptions): B
     editWorkspace: ({ baseVersion, upsert, remove, idempotencyKey }) =>
       call((authorization) =>
         client.PATCH("/v1/workspace", {
-          params: { header: { authorization } },
-          headers: { "idempotency-key": idempotencyKey },
+          params: { header: { authorization, "idempotency-key": idempotencyKey } },
           body: { schema_version: 1, base_version: baseVersion, upsert_facts: upsert, remove_fact_ids: remove },
         }),
       ),
@@ -173,19 +179,26 @@ export function createBoardApi({ auth, fetchImpl, baseUrl }: BoardApiOptions): B
       );
       return outcome.ok ? { ok: true, data: outcome.data.route } : outcome;
     },
-    propose: ({ effect, target, userLabel, workspaceId, planVersion }) =>
+    propose: ({ effect, target, userLabel, workspaceId, planVersion, idempotencyKey, dueAt }) =>
       call((authorization) =>
         client.POST("/v1/actions/propose", {
-          params: { header: { authorization } },
-          body: { schema_version: 1, effect, target, user_label: userLabel, workspace_id: workspaceId, plan_version: planVersion },
+          params: { header: { authorization, "idempotency-key": idempotencyKey } },
+          body: {
+            schema_version: 1,
+            effect,
+            target,
+            user_label: userLabel,
+            workspace_id: workspaceId,
+            plan_version: planVersion,
+            ...(dueAt ? { due_at: dueAt } : {}),
+          },
         }),
       ),
     confirm: (action) =>
       call((authorization) =>
         client.POST("/v1/actions/{id}/confirm", {
-          params: { header: { authorization }, path: { id: action.id } },
           // The same key on every retry of this confirmation; the server replays, never repeats.
-          headers: { "idempotency-key": action.idempotency_key },
+          params: { header: { authorization, "idempotency-key": action.idempotency_key }, path: { id: action.id } },
           body: { schema_version: 1, nonce: action.nonce },
         }),
       ),
@@ -198,8 +211,7 @@ export function createBoardApi({ auth, fetchImpl, baseUrl }: BoardApiOptions): B
     recordOutcome: ({ placeId, outcome, note, idempotencyKey }) =>
       call((authorization) =>
         client.POST("/v1/outcomes", {
-          params: { header: { authorization } },
-          headers: { "idempotency-key": idempotencyKey },
+          params: { header: { authorization, "idempotency-key": idempotencyKey } },
           body: { schema_version: 1, kind: "outcome_checkin", place_id: placeId, outcome, ...(note ? { note } : {}) },
         }),
       ),

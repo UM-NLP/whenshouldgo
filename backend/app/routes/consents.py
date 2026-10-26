@@ -8,11 +8,12 @@ from fastapi.responses import Response
 from pydantic import BaseModel, ConfigDict, Field
 
 from ..auth import current_principal
-from ..consent import NOTICE_VERSIONS, SUPPORTED_PURPOSES, ConsentStore, WrongNoticeVersion
+from ..consent import SUPPORTED_PURPOSES, ConsentDisabled, ConsentStore, WrongNoticeVersion
 from ..domain import (
     ConsentProcessor,
     ConsentPurpose,
     ConsentRecord,
+    ErrorBody,
     ErrorCode,
     ErrorReason,
     Principal,
@@ -62,16 +63,19 @@ def _consent_principal(request: Request, principal: Principal) -> ConsentStore:
     return request.app.state.consents
 
 
-@router.post("/v1/me/consents", response_model=ConsentView, responses=ERROR_RESPONSES)
+@router.post("/v1/me/consents", response_model=ConsentView, responses={
+    **ERROR_RESPONSES, 404: {"model": ErrorBody, "description": "DISABLED"}})
 def grant_consent(
     body: ConsentGrantRequest, request: Request,
     principal: Principal = Depends(current_principal),
 ) -> ConsentView:
     store = _consent_principal(request, principal)
-    if body.purpose not in SUPPORTED_PURPOSES or body.notice_version != NOTICE_VERSIONS[body.purpose]:
+    if body.purpose not in SUPPORTED_PURPOSES:
         raise error(422, ErrorCode.VALIDATION, "unsupported purpose or notice version")
     try:
         return ConsentView.of(store.grant(principal.uid, body.purpose, body.notice_version))
+    except ConsentDisabled:  # history purposes while history is not active (decision 25)
+        raise error(404, ErrorCode.VALIDATION, "feature disabled", ErrorReason.DISABLED) from None
     except WrongNoticeVersion:
         raise error(422, ErrorCode.VALIDATION, "unsupported purpose or notice version") from None
 

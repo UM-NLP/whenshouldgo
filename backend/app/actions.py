@@ -28,22 +28,17 @@ from collections.abc import Callable
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
-from typing import Literal, Protocol
-
-from pydantic import AwareDatetime, Field
+from typing import Protocol
 
 from . import telemetry
 from .domain import (
     MAX_PENDING_ACTION_TTL,
-    SCHEMA_VERSION,
     ConfirmActionResponse,
-    Frozen,
-    Ident,
     PendingAction,
     PendingActionEffect,
-    PlaceId,
     Principal,
     ProposeActionRequest,
+    ReminderItem,
     RuntimeConfig,
     SavedPlaceKind,
     WorkspaceStatus,
@@ -70,31 +65,6 @@ _PLACE_ID = re.compile(r"[A-Za-z0-9_-]{1,300}")
 _ACTION_EFFECTS = {PendingActionEffect.SET_REMINDER, PendingActionEffect.LAUNCH_HANDOFF,
                    PendingActionEffect.SAVE_PLACE}
 _ACTIVATING = {PendingActionEffect.SET_REMINDER, PendingActionEffect.LAUNCH_HANDOFF}
-
-
-# --- contracts added on top of domain.py (candidates to move there, see the report) -----------------
-class ProposeActionBody(ProposeActionRequest):
-    """``ProposeActionRequest`` plus the due time a ``SET_REMINDER`` needs."""
-
-    due_at: AwareDatetime | None = None
-
-
-class ReminderItem(Frozen):
-    """A confirmed in-app reminder: stored LOCALLY by the client, shown on next open."""
-
-    schema_version: int = Field(default=SCHEMA_VERSION, ge=1)
-    kind: Literal["reminder_item"] = "reminder_item"
-    action_id: Ident
-    place_id: PlaceId = Field(repr=False)
-    user_label: str | None = Field(default=None, max_length=80, repr=False)
-    due_at: AwareDatetime
-
-
-class ConfirmedActionResult(ConfirmActionResponse):
-    """``ConfirmActionResponse`` plus the effect's typed result."""
-
-    reminder: ReminderItem | None = None
-    handoff_url: str | None = Field(default=None, max_length=2_048, repr=False)
 
 
 # --- errors ---------------------------------------------------------------------------------------
@@ -154,7 +124,7 @@ class ActivationOutcome:
 
 
 # --- helpers --------------------------------------------------------------------------------------
-def _fingerprint(owner: str, body: ProposeActionBody) -> str:
+def _fingerprint(owner: str, body: ProposeActionRequest) -> str:
     due = body.due_at.astimezone(UTC).isoformat() if body.due_at else ""
     parts = (owner, body.effect.value, body.target, body.workspace_id, str(body.plan_version),
              body.user_label or "", body.label_kind.value if body.label_kind else "", due)
@@ -165,7 +135,7 @@ def _action_id(owner: str, key: str) -> str:
     return "act_" + hashlib.sha256(f"{owner}\x1f{key}".encode()).hexdigest()[:32]
 
 
-def _preview(body: ProposeActionBody) -> str:
+def _preview(body: ProposeActionRequest) -> str:
     """Server-authored from typed fields only: the user's own label, the due time, the effect."""
     label = f'"{body.user_label}"' if body.user_label else "this place"
     if body.effect == PendingActionEffect.SET_REMINDER:
@@ -184,7 +154,9 @@ class ActionService:
         workspaces: WorkspaceStore | None = None, clock: Callable[[], datetime] | None = None,
         runtime_config: RuntimeConfig | None = None, saved_place_sink: SavedPlaceSink | None = None,
         trace_sink: TraceSink | None = None, token_factory: Callable[[], str] | None = None,
+        account_guard: Callable[[str], None] | None = None,
     ) -> None:
+        self._account_guard = account_guard  # raises once the account is deleted
         self._store = store
         self.quotas = quotas
         self._workspaces = workspaces
@@ -202,6 +174,19 @@ class ActionService:
         self._trace(telemetry.ActionRejected, effect=effect, reason=_TELEMETRY_REASON[failure])
         return ActionError(failure)
 
+    def _assert_active(self, uid: str, effect: PendingActionEffect | None) -> None:
+        """Before a write: a request in flight when the account is deleted records nothing."""
+        if self._account_guard is None:
+            return
+        try:
+            self._account_guard(uid)
+        except Exception:  # noqa: BLE001 - deleted, or the tombstone is unreadable: fail closed
+            inactive = True
+        else:
+            inactive = False
+        if inactive:
+            raise self._reject(ActionFailure.NOT_FOUND, effect)
+
     # -- workspace ---------------------------------------------------------------------------------
     def _workspace(self, principal: Principal, now: datetime):  # noqa: ANN202
         if self._workspaces is None:
@@ -213,10 +198,12 @@ class ActionService:
         return workspace is None or workspace.active_plan_version in (None, plan_version)
 
     # -- propose -----------------------------------------------------------------------------------
-    def propose(self, principal: Principal, body: ProposeActionBody, idempotency_key: str) -> PendingAction:
+    def propose(self, principal: Principal, body: ProposeActionRequest, idempotency_key: str) -> PendingAction:
         effect = body.effect
         if effect not in _ACTION_EFFECTS:
             raise self._reject(ActionFailure.INVALID, None)
+        if effect == PendingActionEffect.SAVE_PLACE and not history_active(self.runtime_config):
+            raise self._reject(ActionFailure.DISABLED, effect)  # nothing to save into: refuse early
         if not isinstance(idempotency_key, str) or not 8 <= len(idempotency_key) <= 200:
             raise self._reject(ActionFailure.INVALID, effect)
         if _PLACE_ID.fullmatch(body.target) is None:
@@ -248,6 +235,7 @@ class ActionService:
         if not self._plan_ok(workspace, body.plan_version):
             raise self._reject(ActionFailure.STALE_PLAN, effect)
 
+        self._assert_active(principal.uid, effect)
         action = PendingAction(
             id=action_id, workspace_id=body.workspace_id, plan_version=body.plan_version,
             effect=effect, target=body.target, preview=_preview(body), nonce=self._token(),
@@ -267,11 +255,12 @@ class ActionService:
     # -- confirm -----------------------------------------------------------------------------------
     def confirm(
         self, principal: Principal, action_id: str, nonce: str, idempotency_key: str | None = None,
-    ) -> ConfirmedActionResult:
+    ) -> ConfirmActionResponse:
         """Only an authenticated user request carrying the nonce reaches this (route layer)."""
         now = self._clock()
         history = history_active(self.runtime_config)
         workspace = None
+        self._assert_active(principal.uid, None)
         known = self._store.get(principal.uid, action_id)
         if known is not None:
             workspace = self._workspace(principal, now)
@@ -335,7 +324,7 @@ class ActionService:
                        action=evolve(rec.action, confirmed_at=None)), None
 
     @staticmethod
-    def _result(rec: ActionRecord) -> ConfirmedActionResult:
+    def _result(rec: ActionRecord) -> ConfirmActionResponse:
         action = rec.action
         reminder = url = None
         if action.effect == PendingActionEffect.SET_REMINDER and rec.due_at is not None:
@@ -346,7 +335,7 @@ class ActionService:
                 url = build_maps_url(action.target)  # at confirm time; never stored or logged
             except HandoffError:  # a stored target that is no longer a valid place id
                 raise ActionError(ActionFailure.INVALID) from None
-        return ConfirmedActionResult(action=action, reminder=reminder, handoff_url=url)
+        return ConfirmActionResponse(action=action, reminder=reminder, handoff_url=url)
 
     # -- cancel ------------------------------------------------------------------------------------
     def cancel(self, principal: Principal, action_id: str) -> bool:
@@ -395,7 +384,7 @@ def build_action_service(
     firestore_client: object | None = None, transactional: Callable[..., object] | None = None,
     workspaces: WorkspaceStore | None = None, clock: Callable[[], datetime] | None = None,
     runtime_config: RuntimeConfig | None = None, saved_place_sink: SavedPlaceSink | None = None,
-    trace_sink: TraceSink | None = None,
+    trace_sink: TraceSink | None = None, account_guard: Callable[[str], None] | None = None,
 ) -> ActionService:
     """Composition helper. Store: pass ``store``, or a ``firestore_client`` (production), or
     neither (in-memory, development and tests)."""
@@ -404,4 +393,4 @@ def build_action_service(
                  if firestore_client is not None else MemoryPendingActionStore())
     return ActionService(
         store, quotas, workspaces=workspaces, clock=clock, runtime_config=runtime_config,
-        saved_place_sink=saved_place_sink, trace_sink=trace_sink)
+        saved_place_sink=saved_place_sink, trace_sink=trace_sink, account_guard=account_guard)

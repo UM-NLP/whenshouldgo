@@ -31,31 +31,18 @@ Fill in values yourself; none are recorded in the repository.
 - [ ] `FIREBASE_PROJECT_NUMBER` = the project number (App Check `iss` and `aud`).
 - [ ] `APP_CHECK_ENFORCE` = `true` only after the monitor-mode review; default off.
 
-## Composition wiring (owner of `composition.py`)
+## Composition wiring (done in code)
 
-Add to the production branch only, after reading config:
-
-```python
-from .auth_firebase import FirebaseIdentityVerifier
-from .appcheck import AppCheckPolicy, AppCheckVerifier, default_fetcher
-
-disabled_uids: set[str] = set()
-verifier = FirebaseIdentityVerifier.from_environment(
-    os.environ, revocation=revocation_checker_or_None, disabled_uids=disabled_uids
-)
-resolver = PrincipalResolver(policies=..., disabled_uids=disabled_uids)  # same set object
-app_check = AppCheckPolicy(
-    enforce=os.environ.get("APP_CHECK_ENFORCE") == "true",
-    verifier=AppCheckVerifier(os.environ["FIREBASE_PROJECT_NUMBER"], default_fetcher()),
-)
-# per protected router:  APIRouter(dependencies=[Depends(app_check)])
-```
-
-The `RevocationChecker` (`is_revoked(uid, issued_at) -> bool`) needs the Firebase Admin SDK
-(`get_user().disabled` / `tokens_valid_after_timestamp`) and real credentials; it is not
-implemented here.
+`backend/app/composition.py` wires this; there is nothing to paste. `server.create_production_app`
+calls `firebase_identity_from_env` (needs `FIREBASE_PROJECT_ID`; lazy import of the `auth` extra) and
+passes the verifier and its `disabled_uids` set to `build_runtime`, whose `PrincipalResolver` receives
+the SAME set object. App Check is built from `FIREBASE_PROJECT_NUMBER` and `APP_CHECK_ENFORCE` and
+installed as a router-level gate on every route except `/healthz` (`routes/common.app_check_gate`;
+the web client does not send a token yet). The `RevocationChecker` (`is_revoked(uid, issued_at)`) and
+the `account.FirebaseAdmin` adapter need the Firebase Admin SDK and real credentials and are not
+implemented; see [cloud-resources-todo.md](cloud-resources-todo.md).
 
 ## Dependencies
 
-- [ ] Install the `auth` extra in the production image: `pip install ".[auth]"`
+- [x] The `auth` extra is installed in the production image (`backend/Dockerfile`) and in CI
       (PyJWT and cryptography, pinned in `backend/pyproject.toml`).

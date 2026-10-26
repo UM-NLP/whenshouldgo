@@ -157,6 +157,26 @@ class MemoryWorkspaceStore:
             else:
                 self._expires[key] = now + ttl
 
+    def put_if_version(self, owner_id: str, name: str, workspace: TripWorkspace, now: datetime,
+                       ttl: timedelta | None, *, expected_version: int | None) -> bool:
+        if workspace.owner_id != owner_id:
+            raise ValueError("workspace owner does not match the tenant key")
+        key = (owner_id, name)
+        with self._lock:
+            expires = self._expires.get(key)
+            if expires is not None and now >= expires:
+                self.items.pop(key, None)
+                del self._expires[key]
+            current = self.items.get(key)
+            if (current.version if current is not None else None) != expected_version:
+                return False
+            self.items[key] = workspace
+            if ttl is None:
+                self._expires.pop(key, None)
+            else:
+                self._expires[key] = now + ttl
+            return True
+
     def delete(self, owner_id: str, name: str) -> None:
         key = (owner_id, name)
         with self._lock:

@@ -15,7 +15,8 @@ GOOD = place_link(1)
 
 
 def place(**kw) -> DiscoveryPlace:
-    fields = dict(title="Invented - Google Maps", attribution_url=GOOD, place_url=GOOD)
+    fields = dict(place_id="ChIJplaceA_-1", title="Invented - Google Maps",
+                  attribution_url=GOOD, place_url=GOOD)
     fields.update(kw)
     return DiscoveryPlace(**fields)
 

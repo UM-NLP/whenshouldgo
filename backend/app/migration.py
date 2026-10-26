@@ -28,17 +28,18 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from enum import StrEnum
-from typing import Annotated, Literal, Protocol
+from typing import Protocol
 from uuid import uuid4
 
-from pydantic import Field, StringConstraints
-
 from .domain import (
-    SCHEMA_VERSION,
+    MIGRATION_TITLE_MAX as TITLE_MAX,
     FactSource,
-    Frozen,
-    Ident,
-    TripWorkspace,
+    MigrationItemView,
+    MigrationRunRequest,
+    MigrationStartRequest,
+    MigrationState,
+    MigrationView,
+    PreferenceChoice,
     WorkspaceStatus,
     evolve,
 )
@@ -48,52 +49,13 @@ from .stores.account_store import (
     ItemState,
     MigrationItem,
     MigrationRecord,
-    MigrationState,
     key_digest,
     nonce_digest,
     uid_hash,
 )
 from .stores.protocols import WorkspaceStore
 
-_NonceText = Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9_-]{8,128}$")]
-TITLE_MAX = 100
-DEFAULT_WORKSPACE = "default"
-
-
-# --- contract (provisional: promote to domain.py, see the report) ------------------------------
-class PreferenceChoice(StrEnum):
-    KEEP_REGISTERED = "KEEP_REGISTERED"  # the registered account's own data wins (default)
-    USE_GUEST = "USE_GUEST"  # the user chose to replace it with the guest's copy
-
-
-class MigrationStartRequest(Frozen):
-    schema_version: int = Field(default=SCHEMA_VERSION, ge=1)
-    intent_id: Ident
-    nonce: _NonceText
-
-
-class MigrationRunRequest(Frozen):
-    schema_version: int = Field(default=SCHEMA_VERSION, ge=1)
-    item_ids: tuple[Ident, ...] = Field(default=(), max_length=50)
-    preference: PreferenceChoice = PreferenceChoice.KEEP_REGISTERED
-
-
-class MigrationItemView(Frozen):
-    id: Ident
-    kind: str = Field(max_length=40)
-    title: str = Field(max_length=TITLE_MAX)  # the user's own text; empty once completed
-    selected: bool
-    copied: bool
-
-
-class MigrationView(Frozen):
-    schema_version: int = Field(default=SCHEMA_VERSION, ge=1)
-    kind: Literal["account_migration"] = "account_migration"
-    id: Ident
-    state: MigrationState
-    items: tuple[MigrationItemView, ...] = Field(max_length=100)
-    preference: PreferenceChoice | None = None
-    completed: bool
+DEFAULT_WORKSPACE = "default"  # the contract itself (requests, views, MigrationState) is in domain.py
 
 
 def view_of(record: MigrationRecord) -> MigrationView:
@@ -358,5 +320,5 @@ class MigrationService:
 __all__ = [
     "DEFAULT_WORKSPACE", "ManifestEntry", "MigrationError", "MigrationFailure", "MigrationItemView",
     "MigrationRunRequest", "MigrationService", "MigrationSource", "MigrationStartRequest",
-    "MigrationView", "PreferenceChoice", "WorkspaceSource", "view_of",
+    "MigrationState", "MigrationView", "PreferenceChoice", "WorkspaceSource", "view_of",
 ]

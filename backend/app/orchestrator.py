@@ -15,11 +15,8 @@ from .discovery import DisplayCache, GroundingLiteClient, render_grounded_block
 from pydantic import ValidationError
 
 from .domain import (
-    Confirmation,
     DiscoveryBlock,
     DomainClass,
-    Fact,
-    FactSource,
     Principal,
     PrincipalKind,
     RuntimeConfig,
@@ -157,7 +154,11 @@ class TurnOrchestrator:
         max_inflight_turns: int = MAX_INFLIGHT_TURNS,
         workspace_store: WorkspaceStore | None = None,
         idempotency_store: IdempotencyStore | None = None,
+        account_guard: Callable[[str], None] | None = None,
     ) -> None:
+        # ``account_guard(uid)`` raises when the account was deleted (``AccountService.assert_active``).
+        # A turn already in flight when the account is deleted must not write anything back.
+        self._account_guard = account_guard
         self.quotas = quotas or QuotaService()
         self.sink: TraceSink = sink or get_default_sink()
         self._runtime_config = runtime_config
@@ -235,6 +236,20 @@ class TurnOrchestrator:
                 entry[1] -= 1
                 if entry[1] == 0:
                     self._workspace_locks.pop(key, None)
+
+    def workspace_lock(self, key: tuple[str, str]):  # noqa: ANN201 - a context manager
+        """The per-tenant workspace lock, public so a user edit and a turn never interleave."""
+        return self._workspace_lock(key)
+
+    def _account_inactive(self, uid: str) -> bool:
+        """True when the account was deleted (or its tombstone cannot be read: fail closed)."""
+        if self._account_guard is None:
+            return False
+        try:
+            self._account_guard(uid)
+        except Exception:  # noqa: BLE001 - any refusal means: write nothing for this uid
+            return True
+        return False
 
     def _replay(self, principal: Principal, idempotency_key: str, message: str) -> TurnResult | None:
         stored = self._idempotency.get(principal.uid, idempotency_key, self._clock())
@@ -426,14 +441,35 @@ class TurnOrchestrator:
                 stored = replace(result, discovery=None)  # never keep Maps content in a record
                 ttl = self._workspace_ttl(principal)
                 now = self._clock()
+                if self._account_inactive(principal.uid):  # deleted while this turn ran
+                    raise TurnFailure(403, ErrorCode.POLICY, None)
+                lost_race = False
                 try:
                     self._idempotency.begin(
                         principal.uid, idempotency_key, _fingerprint(message),
                         ReplayRecord(stored, ref), now)
-                    self._workspace_store.put(principal.uid, "default", workspace, now, ttl)
+                    # Compare-and-set against the version this turn read: another instance (the
+                    # turn lock is per process) that wrote meanwhile wins, and this turn stores
+                    # nothing and is not counted. Never restore ``current`` over its write.
+                    if not self._workspace_store.put_if_version(
+                            principal.uid, "default", workspace, now, ttl,
+                            expected_version=current.version if current is not None else None):
+                        lost_race = True
+                        self._idempotency.rollback(principal.uid, idempotency_key)
                 except BaseException:
                     self._undo(principal, idempotency_key, current)
                     raise
+                if lost_race:
+                    raise TurnFailure(409, ErrorCode.CONFLICT, ErrorReason.TURN_IN_PROGRESS)
+                if self._account_inactive(principal.uid):
+                    # The deletion landed between the check and the write: take both writes back
+                    # (the tombstone was written first, so the check above now sees it).
+                    try:
+                        self._idempotency.rollback(principal.uid, idempotency_key)
+                        self._workspace_store.delete(principal.uid, "default")
+                    except Exception:  # noqa: BLE001 - best effort; the uid stays tombstoned
+                        pass
+                    raise TurnFailure(403, ErrorCode.POLICY, None)
                 try:
                     if free:
                         self.quotas.release(reservation)  # served, but not counted

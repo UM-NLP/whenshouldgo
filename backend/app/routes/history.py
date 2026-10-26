@@ -20,13 +20,19 @@ from ..domain import (
     Principal,
 )
 from ..workspaces import WorkspaceError
-from .common import access_principal, not_implemented, require_history_active, stub_responses
+from .common import (
+    ERROR_RESPONSES,
+    access_principal,
+    not_implemented,
+    require_history_active,
+    stub_responses,
+)
 from .workspace import service as workspace_service, typed
 
 router = APIRouter()
 
 
-@router.post("/v1/outcomes", response_model=OutcomeAck, responses=stub_responses(False))
+@router.post("/v1/outcomes", response_model=OutcomeAck, responses=ERROR_RESPONSES)
 def record_outcome(
     body: OutcomeCheckin,
     request: Request,

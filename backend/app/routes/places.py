@@ -11,6 +11,7 @@ from fastapi import APIRouter, Depends, Request
 from ..auth import current_principal
 from ..domain import (
     ConsentPurpose,
+    ErrorBody,
     ErrorCode,
     ErrorReason,
     PlaceDetailsRequest,
@@ -21,12 +22,13 @@ from ..domain import (
 )
 from ..places import PlacesError, PlacesService
 from ..places.errors import PlacesNotConfigured
-from .common import access_principal, error, stub_responses
+from .common import ERROR_RESPONSES, access_principal, error
 
 router = APIRouter()
-# The 501 entry is kept in the documented responses so the checked-in OpenAPI document does not
-# change with this implementation (regenerate with ``npm run api:generate`` to drop it).
-_RESPONSES = stub_responses(False)
+_RESPONSES: dict[int | str, dict[str, object]] = {
+    **ERROR_RESPONSES,
+    404: {"model": ErrorBody, "description": "NOT_FOUND"},
+}
 
 
 def _service(request: Request) -> PlacesService:

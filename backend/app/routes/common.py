@@ -43,11 +43,24 @@ def stub_responses(history_gated: bool = False) -> dict[int | str, dict[str, obj
     return responses
 
 
+APP_CHECK_HEADER = "X-Firebase-AppCheck"
+
+
+def app_check_gate(request: Request) -> None:
+    """Router-level App Check (decision 26). ``app.state.app_check_policy`` is None unless the
+    composition root configured one; the policy itself decides: enforced means a missing or
+    invalid token is a 401, monitor mode only records the signal. No import of the verifier here,
+    so the optional ``auth`` extra is not needed to serve."""
+    policy = getattr(request.app.state, "app_check_policy", None)
+    if policy is not None:
+        policy(request, request.headers.get(APP_CHECK_HEADER))
+
+
 def error(
     status: int, code: ErrorCode, message: str, reason: ErrorReason | None = None,
-    retry_after: int | None = None,
+    retry_after: int | None = None, current_version: int | None = None,
 ) -> HTTPException:
-    body = ErrorBody(code=code, message=message, reason=reason)
+    body = ErrorBody(code=code, message=message, reason=reason, current_version=current_version)
     headers = {"Retry-After": str(retry_after)} if retry_after is not None else None
     return HTTPException(status_code=status, detail=body.model_dump(mode="json", exclude_none=True),
                          headers=headers)
@@ -55,9 +68,10 @@ def error(
 
 def error_response(
     status: int, code: ErrorCode, message: str, headers: dict[str, str] | None = None,
-    reason: ErrorReason | None = None,
+    reason: ErrorReason | None = None, current_version: int | None = None,
 ) -> JSONResponse:
-    body = ErrorBody(code=code, message=message[:500], reason=reason)
+    body = ErrorBody(code=code, message=message[:500], reason=reason,
+                     current_version=current_version)
     return JSONResponse(
         status_code=status, content=body.model_dump(mode="json", exclude_none=True), headers=headers
     )

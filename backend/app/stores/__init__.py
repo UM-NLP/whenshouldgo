@@ -7,7 +7,7 @@ reads the environment or creates cloud resources.
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
@@ -51,6 +51,7 @@ class StateStores:
     idempotency: IdempotencyStore
     display_cache: DisplayCacheStore
     costs: CostStore
+    client: Any = field(default=None, repr=False, compare=False)  # Firestore client (None: memory)
 
     def __repr__(self) -> str:
         return f"StateStores(kind={self.kind!r})"
@@ -94,7 +95,7 @@ def firestore_stores(
         idempotency=FirestoreIdempotencyStore(client, replay_codec, **common),
         display_cache=FirestoreDisplayCache(
             client, clock, max_per_owner=cache_max_per_owner, **common),
-        costs=FirestoreCostStore(client, **common))
+        costs=FirestoreCostStore(client, **common), client=client)
 
 
 __all__ = [

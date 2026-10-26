@@ -193,7 +193,7 @@ class Env:
         """Run the collision: g1's intent is presented by the existing account ``who``."""
         intent = self.start_intent("g1" if uid == "g1" else "g2")
         response = self.complete(intent, who=who)
-        assert response.status_code == 409 and response.json()["message"].startswith("COLLISION")
+        assert response.status_code == 409 and response.json().get("reason") == "ACCOUNT_COLLISION"
         return intent
 
     def start_migration(self, intent: dict[str, Any], who: str = "r1", **headers: str):

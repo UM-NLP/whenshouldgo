@@ -172,6 +172,49 @@ describe("reminder through the pending action protocol", () => {
     expect(screen.getByText(/A closed browser tab cannot fire a reminder/)).toBeInTheDocument();
   });
 
+  it("sends a key and a due time, re-proposes on a new time, and saves the server's typed reminder", async () => {
+    const store = freshStore();
+    const serverDue = iso(45 * 60_000);
+    let proposals = 0;
+    const backend = boardBackend({
+      "GET /v1/workspace": json(workspace({ latest_plan: undefined, plan_versions: [] })),
+      "POST /v1/agent/turns": turnWithIds(),
+      "POST /v1/places/details": json({ schema_version: 1, kind: "place_details", places: [placeCard()] }),
+      "POST /v1/actions/propose": () =>
+        json(pendingAction({ id: `act-${++proposals}`, effect: "SET_REMINDER", preview: "Remind you.", idempotency_key: `key-prop-${proposals}` })),
+      "POST /v1/actions/act-2/confirm": json({
+        schema_version: 1,
+        kind: "confirm_action_response",
+        action: pendingAction({ id: "act-2", effect: "SET_REMINDER" }),
+        reminder: { schema_version: 1, kind: "reminder_item", action_id: "act-2", place_id: PLACE_A, user_label: "My pick 1", due_at: serverDue },
+      }),
+      "POST /v1/actions/act-1/cancel": json({ schema_version: 1, kind: "cancel_action_response", action_id: "act-1", cancelled: true }),
+    });
+    const user = await renderWithDiscovery(backend, store); // accepts the first-save notice
+    await user.click(screen.getAllByRole("button", { name: /^Check this place/ })[0]!);
+    await screen.findByText("Canary Cafe <b>Name</b>");
+    await user.click(screen.getByRole("button", { name: "Remind me" }));
+    const card = within(await screen.findByLabelText("Set a reminder", { selector: "section" }));
+    const [first] = backend.calls("POST", "/v1/actions/propose");
+    expect(first!.headers.get("idempotency-key")).toBeTruthy();
+    expect(first!.body).toMatchObject({ effect: "SET_REMINDER", plan_version: 1 }); // no plan yet: version 1
+    expect(Date.parse((first!.body as { due_at: string }).due_at) - Date.now()).toBeGreaterThan(55 * 60_000);
+
+    await user.selectOptions(card.getByRole("combobox"), "30"); // a new time is a new proposal
+    await waitFor(() => expect(backend.calls("POST", "/v1/actions/propose")).toHaveLength(2));
+    const [, second] = backend.calls("POST", "/v1/actions/propose");
+    expect(second!.headers.get("idempotency-key")).not.toBe(first!.headers.get("idempotency-key"));
+    expect(Date.parse((second!.body as { due_at: string }).due_at) - Date.now()).toBeLessThan(31 * 60_000);
+    await waitFor(() => expect(backend.calls("POST", "/v1/actions/act-1/cancel")).toHaveLength(1));
+
+    // the new proposal is a new card (new action id): look it up again
+    const fresh = within(await screen.findByLabelText("Set a reminder", { selector: "section" }));
+    await user.click(fresh.getByRole("button", { name: "Confirm" }));
+    await waitFor(async () => expect(await store.getAll("reminders")).toHaveLength(1));
+    const [saved] = await store.getAll("reminders");
+    expect(Date.parse(saved!.due_at)).toBe(Date.parse(serverDue)); // the server's confirmed time wins
+  });
+
   it("does not save when the user declines the notice, and says so", async () => {
     const store = freshStore();
     const backend = boardBackend({

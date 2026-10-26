@@ -12,10 +12,25 @@ export const PLACE_A = "ChIJplaceAAAA";
 export const PLACE_B = "ChIJplaceBBBB";
 export const MAPS_URL = "https://www.google.com/maps/search/?api=1&query=x&query_place_id=ChIJplaceAAAA";
 
-/** The frozen contract has no place_id on a source yet; the client reads one if the server adds it. */
+/** The default test block already carries typed place IDs (``PLACE_A`` then ``PLACE_B``). */
 export function blockWithIds(): DiscoveryBlock {
-  const block = discoveryBlock();
-  return { ...block, places: block.places.map((p, i) => ({ ...p, place_id: [PLACE_A, PLACE_B][i] })) } as DiscoveryBlock;
+  return discoveryBlock();
+}
+
+export function planVersion(version: number): NonNullable<Workspace["latest_plan"]> {
+  return {
+    schema_version: 1,
+    kind: "plan_version",
+    id: `ws-1.v${version}`,
+    workspace_id: "ws-1",
+    version,
+    destination: { place_id: PLACE_A },
+    origin_ref: "o0123456789abcdef01234",
+    user_constraint_fact_ids: [],
+    assumption_fact_ids: [],
+    warnings: [],
+    created_at: "2026-10-26T12:00:00Z",
+  };
 }
 
 export function workspace(overrides: Partial<Workspace> = {}): Workspace {
@@ -31,6 +46,9 @@ export function workspace(overrides: Partial<Workspace> = {}): Workspace {
       { schema_version: 1, kind: "fact", id: "f2", key: "dietary", value: "vegetarian", scope: "trip", hard: true, confirmation: "CONFIRMED", source: "USER_EXPLICIT", depends_on: [], evidence_ids: [] },
     ],
     pending_actions: [],
+    latest_plan: planVersion(3),
+    warnings: [],
+    plan_versions: [1, 2, 3],
     ...overrides,
   };
 }

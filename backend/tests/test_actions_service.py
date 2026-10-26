@@ -76,11 +76,14 @@ def test_reminder_needs_a_future_same_day_due_time(env: Env) -> None:
         env.propose(E.SET_REMINDER, due_at=T0 + timedelta(days=3))
 
 
-def test_handoff_takes_no_due_time_and_save_needs_label(env: Env) -> None:
+def test_handoff_takes_no_due_time_and_save_needs_label(
+    env: Env, monkeypatch: pytest.MonkeyPatch
+) -> None:
     with fails(ActionFailure.INVALID):
         env.propose(E.LAUNCH_HANDOFF, due_at=T0 + timedelta(hours=1))
+    with_history = Env("memory", history=True, monkeypatch=monkeypatch)
     with fails(ActionFailure.INVALID):
-        env.propose(E.SAVE_PLACE, user_label=None)
+        with_history.propose(E.SAVE_PLACE, user_label=None)
 
 
 @pytest.mark.parametrize("target", ["a:b", "a.b", "..", "places.x"])
@@ -98,13 +101,31 @@ def test_workspace_must_belong_to_the_tenant_and_plan_match(env: Env) -> None:
     assert env.propose(plan_version=2)
 
 
-def test_save_place_proposal_is_created_but_disabled_without_history(env: Env) -> None:
+def test_save_place_is_rejected_at_propose_while_history_is_not_active(env: Env) -> None:
+    with fails(ActionFailure.DISABLED):
+        env.propose(E.SAVE_PLACE)
+    assert env.store.get(GUEST.uid, _action_id_for(KEY)) is None  # nothing was created
+    assert [e.event for e in env.trace.events].count(t.EventType.ACTION_PROPOSED) == 0
+    assert env.sink.calls == []
+
+
+def test_save_place_confirm_is_disabled_when_history_is_switched_off_later(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    env = Env("memory", history=True, monkeypatch=monkeypatch)
     action = env.propose(E.SAVE_PLACE)
+    env.service.runtime_config = None  # history went dark after the proposal
     with fails(ActionFailure.DISABLED):
         env.service.confirm(GUEST, action.id, action.nonce)
     assert env.sink.calls == []
     # nothing consumed: the nonce still works once history is on
     assert env.store.get(GUEST.uid, action.id).status.value == "PENDING"
+
+
+def _action_id_for(key: str) -> str:
+    from app.actions import _action_id
+
+    return _action_id(GUEST.uid, key)
 
 
 # -- confirm: boundaries -------------------------------------------------------------------------

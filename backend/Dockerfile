@@ -5,7 +5,9 @@ ENV PIP_NO_CACHE_DIR=1 PIP_DISABLE_PIP_VERSION_CHECK=1
 WORKDIR /build
 COPY pyproject.toml ./
 COPY app ./app
-RUN python -m venv /opt/venv && /opt/venv/bin/pip install .
+# The optional extras production needs: ``auth`` (PyJWT, cryptography: Firebase ID and App Check
+# token verification) and ``gcp`` (the Firestore client; production refuses in-memory state).
+RUN python -m venv /opt/venv && /opt/venv/bin/pip install ".[auth,gcp]"
 
 FROM python:3.12-slim AS runtime
 ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 PATH="/opt/venv/bin:$PATH"
@@ -13,5 +15,6 @@ RUN useradd --system --uid 10001 --no-create-home --shell /usr/sbin/nologin app
 COPY --from=builder /opt/venv /opt/venv
 USER 10001
 EXPOSE 8080
-# create_production_app fails closed (ConfigurationError) until an identity verifier exists.
+# create_production_app fails closed (ConfigurationError) without FIREBASE_PROJECT_ID, Firestore
+# state, a spend budget and the two provider keys.
 CMD ["sh", "-c", "exec uvicorn app.server:create_production_app --factory --host 0.0.0.0 --port ${PORT:-8080}"]

@@ -6,7 +6,7 @@ import { handoffUrlFrom, isPinnedMapsUrl, placeIdOf, routeSummary, freshness, lo
 import { Chat } from "../components/Chat";
 import { bootstrapBody, GROUNDED_TEXT, json, mockGeolocation, errorBody, usageView } from "./support";
 import {
-  blockWithIds, boardBackend, MAPS_URL, pendingAction, placeCard, PLACE_A, renderWithDiscovery, routeCheck, turnWithIds, workspace,
+  blockWithIds, boardBackend, MAPS_URL, pendingAction, placeCard, planVersion, PLACE_A, renderWithDiscovery, routeCheck, turnWithIds, workspace,
 } from "./boardSupport";
 
 afterEach(() => vi.restoreAllMocks());
@@ -31,7 +31,9 @@ describe("view models", () => {
   it("takes the place ID from the typed source field, never from text or URLs", () => {
     const [first] = blockWithIds().places;
     expect(placeIdOf(first!)).toBe(PLACE_A);
-    expect(placeIdOf({ title: "x", attribution_url: "https://www.google.com/maps/place/ChIJurl", place_url: "https://www.google.com/maps/place/ChIJurl" })).toBeNull();
+    // a URL that looks like it holds an ID is never parsed: only the typed field counts
+    expect(placeIdOf({ place_id: "", title: "x", attribution_url: "https://www.google.com/maps/place/ChIJurl", place_url: "https://www.google.com/maps/place/ChIJurl" })).toBeNull();
+    expect(placeIdOf({ place_id: "ChIJtyped", title: "x", attribution_url: "https://www.google.com/maps/place/ChIJurl", place_url: "https://www.google.com/maps/place/ChIJurl" })).toBe("ChIJtyped");
   });
   it("labels old checks stale and maps outcomes", () => {
     expect(freshness(new Date(Date.now() - 5 * 60_000).toISOString(), Date.now()).stale).toBe(false);
@@ -76,6 +78,24 @@ describe("Trip Board states", () => {
     expect((await screen.findAllByText("The Trip Board is not available yet. You can keep chatting.")).length).toBeGreaterThan(0);
   });
 
+  it("shows the server's plan warnings as fixed copy and the plan history from the typed view", async () => {
+    const backend = boardBackend({
+      "GET /v1/workspace": json(workspace({ latest_plan: planVersion(3), warnings: ["ASSUMPTIONS_UNCONFIRMED", "ROUTE_UNVERIFIED"], plan_versions: [1, 2, 3] })),
+    });
+    render(<Chat api={backend.api} boardApi={backend.boardApi} />);
+    expect(await screen.findByText("Plan version 3.")).toBeInTheDocument();
+    expect(screen.getByText("Earlier versions: 1, 2.")).toBeInTheDocument();
+    expect(screen.getByText(/Some assumptions are not confirmed yet/)).toBeInTheDocument();
+    expect(screen.getByText("The route has not been checked.")).toBeInTheDocument();
+  });
+
+  it("says so when there is no plan version yet", async () => {
+    const backend = boardBackend({ "GET /v1/workspace": json(workspace({ latest_plan: null, plan_versions: [], version: 2 })) });
+    render(<Chat api={backend.api} boardApi={backend.boardApi} />);
+    expect(await screen.findByText("No plan yet. Board version 2.")).toBeInTheDocument();
+    expect(screen.getByText("No earlier versions.")).toBeInTheDocument();
+  });
+
   it("shows the permission-denied copy on 401 and the unsupported warning", async () => {
     const denied = boardBackend({ "GET /v1/workspace": json(errorBody("POLICY"), 401) });
     render(<Chat api={denied.api} boardApi={denied.boardApi} />);
@@ -96,7 +116,7 @@ describe("Trip Board states", () => {
     let attempt = 0;
     const backend = boardBackend({
       "GET /v1/workspace": json(workspace()),
-      "PATCH /v1/workspace": () => (++attempt === 1 ? new Error("net") : json(workspace({ version: 4 }))),
+      "PATCH /v1/workspace": () => (++attempt === 1 ? new Error("net") : json(workspace({ version: 4, latest_plan: planVersion(4), plan_versions: [1, 2, 3, 4] }))),
     });
     render(<Chat api={backend.api} boardApi={backend.boardApi} />);
     const user = userEvent.setup();
@@ -120,7 +140,7 @@ describe("Trip Board states", () => {
     let conflict = true;
     const backend = boardBackend({
       "GET /v1/workspace": json(workspace()),
-      "PATCH /v1/workspace": () => (conflict ? json(errorBody("CONFLICT"), 409) : json(workspace({ version: 5 }))),
+      "PATCH /v1/workspace": () => (conflict ? json(errorBody("CONFLICT"), 409) : json(workspace({ version: 5, latest_plan: planVersion(5), plan_versions: [1, 2, 3, 4, 5] }))),
     });
     render(<Chat api={backend.api} boardApi={backend.boardApi} />);
     const user = userEvent.setup();
@@ -157,8 +177,11 @@ describe("pick, place card and route card", () => {
     expect(block.closest(".assistant")!.nextElementSibling).toBe(document.querySelector(".picks"));
   });
 
-  it("offers no pick button for a source without a typed place ID", async () => {
-    const backend = boardBackend({ "POST /v1/agent/turns": json((await import("./support")).turnResponse()) });
+  it("offers no pick button for a source whose typed place ID is empty", async () => {
+    const support = await import("./support");
+    const block = support.discoveryBlock();
+    const blank = { ...block, places: block.places.map((p) => ({ ...p, place_id: "" })) };
+    const backend = boardBackend({ "POST /v1/agent/turns": json(support.turnResponse({ discovery: blank })) });
     await renderWithDiscovery(backend);
     expect(screen.queryByRole("button", { name: /^Check this place/ })).toBeNull();
   });

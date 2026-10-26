@@ -257,11 +257,33 @@
           "action": {
             "$ref": "#/components/schemas/PendingAction"
           },
+          "handoff_url": {
+            "anyOf": [
+              {
+                "maxLength": 2048,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Handoff Url"
+          },
           "kind": {
             "const": "confirm_action_response",
             "default": "confirm_action_response",
             "title": "Kind",
             "type": "string"
+          },
+          "reminder": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ReminderItem"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "schema_version": {
             "default": 1,
@@ -614,6 +636,11 @@
             "title": "Attribution Url",
             "type": "string"
           },
+          "place_id": {
+            "pattern": "^[A-Za-z0-9_-]{1,300}$",
+            "title": "Place Id",
+            "type": "string"
+          },
           "place_url": {
             "maxLength": 2048,
             "title": "Place Url",
@@ -626,6 +653,7 @@
           }
         },
         "required": [
+          "place_id",
           "title",
           "attribution_url",
           "place_url"
@@ -650,6 +678,18 @@
         "properties": {
           "code": {
             "$ref": "#/components/schemas/ErrorCode"
+          },
+          "current_version": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Version"
           },
           "kind": {
             "const": "error",
@@ -713,14 +753,20 @@
           "DISCOVERY_UNAVAILABLE",
           "LOCATION_CONSENT_REQUIRED",
           "NOT_IMPLEMENTED",
-          "DISABLED"
+          "DISABLED",
+          "LINK_INTENT_EXPIRED",
+          "LINK_INTENT_CONSUMED",
+          "ACCOUNT_COLLISION",
+          "WRONG_UID",
+          "ANONYMOUS_PROVIDER",
+          "MIGRATION_INTERRUPTED"
         ],
         "title": "ErrorReason",
         "type": "string"
       },
       "ExportBundle": {
         "additionalProperties": false,
-        "description": "Everything the server holds about the caller: user data and place IDs only.",
+        "description": "Everything the server holds about the caller: user data and place IDs only. Never Maps\ncontent, a token, an idempotency key or a coordinate other than a saved place's rounded one.",
         "properties": {
           "consents": {
             "items": {
@@ -735,11 +781,24 @@
             "title": "Generated At",
             "type": "string"
           },
+          "history_active": {
+            "title": "History Active",
+            "type": "boolean"
+          },
           "kind": {
             "const": "export_bundle",
             "default": "export_bundle",
             "title": "Kind",
             "type": "string"
+          },
+          "outcomes": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/OutcomeCheckin"
+            },
+            "maxItems": 10000,
+            "title": "Outcomes",
+            "type": "array"
           },
           "outings": {
             "items": {
@@ -747,6 +806,15 @@
             },
             "maxItems": 10000,
             "title": "Outings",
+            "type": "array"
+          },
+          "plan_versions": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/PlanVersion"
+            },
+            "maxItems": 10000,
+            "title": "Plan Versions",
             "type": "array"
           },
           "saved_places": {
@@ -762,15 +830,135 @@
             "minimum": 1.0,
             "title": "Schema Version",
             "type": "integer"
+          },
+          "tier": {
+            "$ref": "#/components/schemas/Tier"
+          },
+          "usage": {
+            "$ref": "#/components/schemas/ExportUsage"
+          },
+          "workspaces": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/ExportWorkspace"
+            },
+            "maxItems": 100,
+            "title": "Workspaces",
+            "type": "array"
           }
         },
         "required": [
           "generated_at",
+          "tier",
+          "history_active",
           "consents",
           "saved_places",
-          "outings"
+          "outings",
+          "usage"
         ],
         "title": "ExportBundle",
+        "type": "object"
+      },
+      "ExportUsage": {
+        "additionalProperties": false,
+        "properties": {
+          "activated_trips": {
+            "minimum": 0.0,
+            "title": "Activated Trips",
+            "type": "integer"
+          },
+          "kind": {
+            "const": "export_usage",
+            "default": "export_usage",
+            "title": "Kind",
+            "type": "string"
+          },
+          "successful_turns": {
+            "minimum": 0.0,
+            "title": "Successful Turns",
+            "type": "integer"
+          },
+          "window_started_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Window Started At"
+          }
+        },
+        "required": [
+          "successful_turns",
+          "activated_trips"
+        ],
+        "title": "ExportUsage",
+        "type": "object"
+      },
+      "ExportWorkspace": {
+        "additionalProperties": false,
+        "properties": {
+          "active_plan_version": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Active Plan Version"
+          },
+          "facts": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/Fact"
+            },
+            "maxItems": 1000,
+            "title": "Facts",
+            "type": "array"
+          },
+          "goal": {
+            "anyOf": [
+              {
+                "maxLength": 20000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Goal"
+          },
+          "id": {
+            "pattern": "^[A-Za-z0-9_.:-]{1,128}$",
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "const": "export_workspace",
+            "default": "export_workspace",
+            "title": "Kind",
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/WorkspaceStatus"
+          },
+          "timezone": {
+            "maxLength": 64,
+            "title": "Timezone",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "status",
+          "timezone"
+        ],
+        "title": "ExportWorkspace",
         "type": "object"
       },
       "Fact": {
@@ -1128,6 +1316,162 @@
         ],
         "title": "MeterState",
         "type": "string"
+      },
+      "MigrationItemView": {
+        "additionalProperties": false,
+        "properties": {
+          "copied": {
+            "title": "Copied",
+            "type": "boolean"
+          },
+          "id": {
+            "pattern": "^[A-Za-z0-9_.:-]{1,128}$",
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "maxLength": 40,
+            "title": "Kind",
+            "type": "string"
+          },
+          "selected": {
+            "title": "Selected",
+            "type": "boolean"
+          },
+          "title": {
+            "maxLength": 100,
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "title",
+          "selected",
+          "copied"
+        ],
+        "title": "MigrationItemView",
+        "type": "object"
+      },
+      "MigrationRunRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "item_ids": {
+            "default": [],
+            "items": {
+              "pattern": "^[A-Za-z0-9_.:-]{1,128}$",
+              "type": "string"
+            },
+            "maxItems": 50,
+            "title": "Item Ids",
+            "type": "array"
+          },
+          "preference": {
+            "$ref": "#/components/schemas/PreferenceChoice",
+            "default": "KEEP_REGISTERED"
+          },
+          "schema_version": {
+            "default": 1,
+            "minimum": 1.0,
+            "title": "Schema Version",
+            "type": "integer"
+          }
+        },
+        "title": "MigrationRunRequest",
+        "type": "object"
+      },
+      "MigrationStartRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "intent_id": {
+            "pattern": "^[A-Za-z0-9_.:-]{1,128}$",
+            "title": "Intent Id",
+            "type": "string"
+          },
+          "nonce": {
+            "pattern": "^[A-Za-z0-9_-]{8,128}$",
+            "title": "Nonce",
+            "type": "string"
+          },
+          "schema_version": {
+            "default": 1,
+            "minimum": 1.0,
+            "title": "Schema Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "intent_id",
+          "nonce"
+        ],
+        "title": "MigrationStartRequest",
+        "type": "object"
+      },
+      "MigrationState": {
+        "enum": [
+          "PREVIEW",
+          "RUNNING",
+          "CLEANING",
+          "COMPLETED"
+        ],
+        "title": "MigrationState",
+        "type": "string"
+      },
+      "MigrationView": {
+        "additionalProperties": false,
+        "properties": {
+          "completed": {
+            "title": "Completed",
+            "type": "boolean"
+          },
+          "id": {
+            "pattern": "^[A-Za-z0-9_.:-]{1,128}$",
+            "title": "Id",
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/MigrationItemView"
+            },
+            "maxItems": 100,
+            "title": "Items",
+            "type": "array"
+          },
+          "kind": {
+            "const": "account_migration",
+            "default": "account_migration",
+            "title": "Kind",
+            "type": "string"
+          },
+          "preference": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PreferenceChoice"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "schema_version": {
+            "default": 1,
+            "minimum": 1.0,
+            "title": "Schema Version",
+            "type": "integer"
+          },
+          "state": {
+            "$ref": "#/components/schemas/MigrationState"
+          }
+        },
+        "required": [
+          "id",
+          "state",
+          "items",
+          "completed"
+        ],
+        "title": "MigrationView",
+        "type": "object"
       },
       "OutcomeAck": {
         "additionalProperties": false,
@@ -1687,9 +2031,198 @@
         "title": "PlaceRef",
         "type": "object"
       },
+      "PlanDestination": {
+        "additionalProperties": false,
+        "properties": {
+          "place_id": {
+            "pattern": "^[A-Za-z0-9_-]{1,300}$",
+            "title": "Place Id",
+            "type": "string"
+          },
+          "user_label": {
+            "anyOf": [
+              {
+                "maxLength": 80,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "User Label"
+          }
+        },
+        "required": [
+          "place_id"
+        ],
+        "title": "PlanDestination",
+        "type": "object"
+      },
+      "PlanVersion": {
+        "additionalProperties": false,
+        "properties": {
+          "assumption_fact_ids": {
+            "default": [],
+            "items": {
+              "pattern": "^[A-Za-z0-9_.:-]{1,128}$",
+              "type": "string"
+            },
+            "maxItems": 50,
+            "title": "Assumption Fact Ids",
+            "type": "array"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "destination": {
+            "$ref": "#/components/schemas/PlanDestination"
+          },
+          "grounded_evidence_id": {
+            "anyOf": [
+              {
+                "pattern": "^[A-Za-z0-9_.:-]{1,128}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Grounded Evidence Id"
+          },
+          "id": {
+            "pattern": "^[A-Za-z0-9_.:-]{1,128}$",
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "const": "plan_version",
+            "default": "plan_version",
+            "title": "Kind",
+            "type": "string"
+          },
+          "origin_ref": {
+            "pattern": "^[A-Za-z0-9_-]{8,64}$",
+            "title": "Origin Ref",
+            "type": "string"
+          },
+          "parent_version": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Version"
+          },
+          "replaced_reason": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ReplacedReason"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "route_evidence_id": {
+            "anyOf": [
+              {
+                "pattern": "^[A-Za-z0-9_.:-]{1,128}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Route Evidence Id"
+          },
+          "schema_version": {
+            "default": 1,
+            "minimum": 1.0,
+            "title": "Schema Version",
+            "type": "integer"
+          },
+          "user_constraint_fact_ids": {
+            "default": [],
+            "items": {
+              "pattern": "^[A-Za-z0-9_.:-]{1,128}$",
+              "type": "string"
+            },
+            "maxItems": 50,
+            "title": "User Constraint Fact Ids",
+            "type": "array"
+          },
+          "version": {
+            "minimum": 1.0,
+            "title": "Version",
+            "type": "integer"
+          },
+          "warnings": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/PlanWarning"
+            },
+            "maxItems": 20,
+            "title": "Warnings",
+            "type": "array"
+          },
+          "workspace_id": {
+            "pattern": "^[A-Za-z0-9_.:-]{1,128}$",
+            "title": "Workspace Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "workspace_id",
+          "version",
+          "destination",
+          "origin_ref",
+          "created_at"
+        ],
+        "title": "PlanVersion",
+        "type": "object"
+      },
+      "PlanWarning": {
+        "description": "Warnings are codes, never free text, so provider content cannot ride in them.",
+        "enum": [
+          "ASSUMPTIONS_UNCONFIRMED",
+          "EVIDENCE_STALE",
+          "ROUTE_UNVERIFIED",
+          "DETAILS_UNAVAILABLE",
+          "HARD_NEED_UNVERIFIED"
+        ],
+        "title": "PlanWarning",
+        "type": "string"
+      },
+      "PreferenceChoice": {
+        "enum": [
+          "KEEP_REGISTERED",
+          "USE_GUEST"
+        ],
+        "title": "PreferenceChoice",
+        "type": "string"
+      },
       "ProposeActionRequest": {
         "additionalProperties": false,
         "properties": {
+          "due_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Due At"
+          },
           "effect": {
             "$ref": "#/components/schemas/PendingActionEffect"
           },
@@ -1746,6 +2279,68 @@
         ],
         "title": "ProposeActionRequest",
         "type": "object"
+      },
+      "ReminderItem": {
+        "additionalProperties": false,
+        "description": "A confirmed in-app reminder: stored LOCALLY by the client, shown on next open.",
+        "properties": {
+          "action_id": {
+            "pattern": "^[A-Za-z0-9_.:-]{1,128}$",
+            "title": "Action Id",
+            "type": "string"
+          },
+          "due_at": {
+            "format": "date-time",
+            "title": "Due At",
+            "type": "string"
+          },
+          "kind": {
+            "const": "reminder_item",
+            "default": "reminder_item",
+            "title": "Kind",
+            "type": "string"
+          },
+          "place_id": {
+            "pattern": "^[A-Za-z0-9_-]{1,300}$",
+            "title": "Place Id",
+            "type": "string"
+          },
+          "schema_version": {
+            "default": 1,
+            "minimum": 1.0,
+            "title": "Schema Version",
+            "type": "integer"
+          },
+          "user_label": {
+            "anyOf": [
+              {
+                "maxLength": 80,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "User Label"
+          }
+        },
+        "required": [
+          "action_id",
+          "place_id",
+          "due_at"
+        ],
+        "title": "ReminderItem",
+        "type": "object"
+      },
+      "ReplacedReason": {
+        "enum": [
+          "USER_EDIT",
+          "CONSTRAINT_CHANGED",
+          "EVIDENCE_STALE",
+          "ADAPTATION"
+        ],
+        "title": "ReplacedReason",
+        "type": "string"
       },
       "RoundedPosition": {
         "additionalProperties": false,
@@ -2495,6 +3090,16 @@
             "title": "Kind",
             "type": "string"
           },
+          "latest_plan": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PlanVersion"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "pending_actions": {
             "default": [],
             "items": {
@@ -2502,6 +3107,15 @@
             },
             "maxItems": 20,
             "title": "Pending Actions",
+            "type": "array"
+          },
+          "plan_versions": {
+            "default": [],
+            "items": {
+              "type": "integer"
+            },
+            "maxItems": 1000,
+            "title": "Plan Versions",
             "type": "array"
           },
           "schema_version": {
@@ -2517,6 +3131,15 @@
             "minimum": 0.0,
             "title": "Version",
             "type": "integer"
+          },
+          "warnings": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/PlanWarning"
+            },
+            "maxItems": 20,
+            "title": "Warnings",
+            "type": "array"
           }
         },
         "required": [
@@ -2557,10 +3180,491 @@
         "summary": "Healthz"
       }
     },
+    "/v1/account-migrations": {
+      "post": {
+        "operationId": "start_migration_v1_account_migrations_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "idempotency-key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 200,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": true,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MigrationStartRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MigrationView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "POLICY"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "POLICY"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "NOT_FOUND"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "CONFLICT"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "VALIDATION"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "QUOTA",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds to wait before retrying.",
+                "schema": {
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "VALIDATION"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "PROVIDER"
+          },
+          "504": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "PROVIDER"
+          }
+        },
+        "summary": "Start Migration"
+      }
+    },
+    "/v1/account-migrations/{id}": {
+      "get": {
+        "operationId": "get_migration_v1_account_migrations__id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "pattern": "^[A-Za-z0-9_.:-]{1,128}$",
+              "title": "Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": true,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MigrationView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "POLICY"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "POLICY"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "NOT_FOUND"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "CONFLICT"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "VALIDATION"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "QUOTA",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds to wait before retrying.",
+                "schema": {
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "VALIDATION"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "PROVIDER"
+          },
+          "504": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "PROVIDER"
+          }
+        },
+        "summary": "Get Migration"
+      }
+    },
+    "/v1/account-migrations/{id}:run": {
+      "post": {
+        "operationId": "run_migration_v1_account_migrations__id__run_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "pattern": "^[A-Za-z0-9_.:-]{1,128}$",
+              "title": "Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": true,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MigrationRunRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MigrationView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "POLICY"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "POLICY"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "NOT_FOUND"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "CONFLICT"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "VALIDATION"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "QUOTA",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds to wait before retrying.",
+                "schema": {
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "VALIDATION"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "PROVIDER"
+          },
+          "504": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "PROVIDER"
+          }
+        },
+        "summary": "Run Migration"
+      }
+    },
     "/v1/account/link-intents": {
       "post": {
         "operationId": "start_account_link_v1_account_link_intents_post",
         "parameters": [
+          {
+            "in": "header",
+            "name": "idempotency-key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 200,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          },
           {
             "in": "header",
             "name": "authorization",
@@ -2619,6 +3723,16 @@
             },
             "description": "POLICY"
           },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "NOT_FOUND"
+          },
           "409": {
             "content": {
               "application/json": {
@@ -2657,16 +3771,6 @@
                 }
               }
             }
-          },
-          "501": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": "NOT_IMPLEMENTED"
           },
           "502": {
             "content": {
@@ -2774,6 +3878,16 @@
             },
             "description": "POLICY"
           },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "NOT_FOUND"
+          },
           "409": {
             "content": {
               "application/json": {
@@ -2813,16 +3927,6 @@
               }
             }
           },
-          "501": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": "NOT_IMPLEMENTED"
-          },
           "502": {
             "content": {
               "application/json": {
@@ -2861,6 +3965,17 @@
       "post": {
         "operationId": "propose_action_v1_actions_propose_post",
         "parameters": [
+          {
+            "in": "header",
+            "name": "idempotency-key",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 8,
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          },
           {
             "in": "header",
             "name": "authorization",
@@ -2919,6 +4034,16 @@
             },
             "description": "POLICY"
           },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "NOT_FOUND or DISABLED"
+          },
           "409": {
             "content": {
               "application/json": {
@@ -2957,16 +4082,6 @@
                 }
               }
             }
-          },
-          "501": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": "NOT_IMPLEMENTED"
           },
           "502": {
             "content": {
@@ -3064,6 +4179,16 @@
             },
             "description": "POLICY"
           },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "NOT_FOUND or DISABLED"
+          },
           "409": {
             "content": {
               "application/json": {
@@ -3103,16 +4228,6 @@
               }
             }
           },
-          "501": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": "NOT_IMPLEMENTED"
-          },
           "502": {
             "content": {
               "application/json": {
@@ -3149,6 +4264,7 @@
     },
     "/v1/actions/{id}/confirm": {
       "post": {
+        "description": "``Idempotency-Key`` is optional: when sent it must be the action's own key (a retry repeats\nthe same key and nonce and gets the same typed result).",
         "operationId": "confirm_action_v1_actions__id__confirm_post",
         "parameters": [
           {
@@ -3159,6 +4275,24 @@
               "pattern": "^[A-Za-z0-9_.:-]{1,128}$",
               "title": "Id",
               "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "idempotency-key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 200,
+                  "minLength": 8,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
             }
           },
           {
@@ -3219,6 +4353,16 @@
             },
             "description": "POLICY"
           },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "NOT_FOUND or DISABLED"
+          },
           "409": {
             "content": {
               "application/json": {
@@ -3257,16 +4401,6 @@
                 }
               }
             }
-          },
-          "501": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": "NOT_IMPLEMENTED"
           },
           "502": {
             "content": {
@@ -4199,6 +5333,16 @@
             },
             "description": "POLICY"
           },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "DISABLED"
+          },
           "409": {
             "content": {
               "application/json": {
@@ -4576,6 +5720,16 @@
             },
             "description": "POLICY"
           },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "NOT_FOUND"
+          },
           "409": {
             "content": {
               "application/json": {
@@ -4614,16 +5768,6 @@
                 }
               }
             }
-          },
-          "501": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": "NOT_IMPLEMENTED"
           },
           "502": {
             "content": {
@@ -4711,6 +5855,16 @@
             },
             "description": "POLICY"
           },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "NOT_FOUND"
+          },
           "409": {
             "content": {
               "application/json": {
@@ -4750,16 +5904,6 @@
               }
             }
           },
-          "501": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": "NOT_IMPLEMENTED"
-          },
           "502": {
             "content": {
               "application/json": {
@@ -4796,8 +5940,27 @@
     },
     "/v1/outcomes": {
       "post": {
+        "description": "Stored server-side only for a REGISTERED principal with history active and consent; for a\nguest nothing durable is written and ``recorded`` is False (keep it on the device).",
         "operationId": "record_outcome_v1_outcomes_post",
         "parameters": [
+          {
+            "in": "header",
+            "name": "idempotency-key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 200,
+                  "minLength": 8,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          },
           {
             "in": "header",
             "name": "authorization",
@@ -4895,16 +6058,6 @@
               }
             }
           },
-          "501": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": "NOT_IMPLEMENTED"
-          },
           "502": {
             "content": {
               "application/json": {
@@ -5001,6 +6154,16 @@
             },
             "description": "POLICY"
           },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "NOT_FOUND"
+          },
           "409": {
             "content": {
               "application/json": {
@@ -5039,16 +6202,6 @@
                 }
               }
             }
-          },
-          "501": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": "NOT_IMPLEMENTED"
           },
           "502": {
             "content": {
@@ -5146,6 +6299,16 @@
             },
             "description": "POLICY"
           },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "NOT_FOUND"
+          },
           "409": {
             "content": {
               "application/json": {
@@ -5184,16 +6347,6 @@
                 }
               }
             }
-          },
-          "501": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": "NOT_IMPLEMENTED"
           },
           "502": {
             "content": {
@@ -5814,6 +6967,7 @@
     },
     "/v1/trips/{id}:activate": {
       "post": {
+        "description": "Counts the workspace's trip once. At the trip limit the answer is a 200 whose usage meter\nis GATED with ``gate_reason`` TRIPS_LIMIT (the typed gate); the workspace is not counted.",
         "operationId": "activate_trip_v1_trips__id__activate_post",
         "parameters": [
           {
@@ -5884,6 +7038,16 @@
             },
             "description": "POLICY"
           },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "NOT_FOUND or DISABLED"
+          },
           "409": {
             "content": {
               "application/json": {
@@ -5922,16 +7086,6 @@
                 }
               }
             }
-          },
-          "501": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": "NOT_IMPLEMENTED"
           },
           "502": {
             "content": {
@@ -6019,6 +7173,16 @@
             },
             "description": "POLICY"
           },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "NOT_FOUND"
+          },
           "409": {
             "content": {
               "application/json": {
@@ -6058,16 +7222,6 @@
               }
             }
           },
-          "501": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": "NOT_IMPLEMENTED"
-          },
           "502": {
             "content": {
               "application/json": {
@@ -6104,6 +7258,17 @@
       "patch": {
         "operationId": "edit_workspace_v1_workspace_patch",
         "parameters": [
+          {
+            "in": "header",
+            "name": "idempotency-key",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 8,
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          },
           {
             "in": "header",
             "name": "authorization",
@@ -6162,6 +7327,16 @@
             },
             "description": "POLICY"
           },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "NOT_FOUND"
+          },
           "409": {
             "content": {
               "application/json": {
@@ -6200,16 +7375,6 @@
                 }
               }
             }
-          },
-          "501": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": "NOT_IMPLEMENTED"
           },
           "502": {
             "content": {

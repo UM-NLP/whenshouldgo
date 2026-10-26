@@ -98,8 +98,10 @@ _NOT_AN_ADDRESS = frozenset({
     "star", "stars", "seat", "seats", "table", "tables", "bed", "beds", "of", "to", "at", "on",
     "the", "a", "an", "in", "by", "for", "and", "or", "more", "than", "about", "around", "near",
 })
+# A lookahead, so every number is tried as a start: a candidate that begins earlier ("77 at 123
+# Queen Street") must not swallow the address that starts later in the same span.
 _NUM_NAME_SUFFIX = re.compile(
-    rf"\b\d{{1,6}}[A-Za-z]?\s+((?:[\w'’.-]+\s+){{0,2}}[\w'’.-]+)\s+({_SUFFIX})\b\.?"
+    rf"(?=\b\d{{1,6}}[A-Za-z]?\s+((?:[\w'’.-]+\s+){{0,2}}[\w'’.-]+)\s+({_SUFFIX})\b\.?)"
 )
 _NUM_FRENCH = re.compile(
     rf"\b\d{{1,6}}\s*,?\s+(?i:rue|avenue|boulevard|boul\.?|chemin|route)\s+{_NAME}"

@@ -766,6 +766,14 @@ class ErrorReason(StrEnum):
     LOCATION_CONSENT_REQUIRED = "LOCATION_CONSENT_REQUIRED"
     NOT_IMPLEMENTED = "NOT_IMPLEMENTED"  # a planned route whose handler is not built yet (501)
     DISABLED = "DISABLED"  # the feature is switched off on the server (history_enabled, 404)
+    # Account linking and the explicit merge (docs/access-tiers.md). The text of such an error is
+    # static and says nothing more: a client switches on the reason.
+    LINK_INTENT_EXPIRED = "LINK_INTENT_EXPIRED"  # the 15-minute link intent ran out
+    LINK_INTENT_CONSUMED = "LINK_INTENT_CONSUMED"  # the link intent was already used
+    ACCOUNT_COLLISION = "ACCOUNT_COLLISION"  # the credential already owns an account: merge flow
+    WRONG_UID = "WRONG_UID"  # the token is not the identity the intent was issued to
+    ANONYMOUS_PROVIDER = "ANONYMOUS_PROVIDER"  # still anonymous: sign in with a permanent provider
+    MIGRATION_INTERRUPTED = "MIGRATION_INTERRUPTED"  # the merge is saved; call again to resume
 
 
 class ErrorBody(Frozen):
@@ -774,6 +782,9 @@ class ErrorBody(Frozen):
     code: ErrorCode
     message: str = Field(max_length=500)  # server-authored, never provider or user content
     reason: ErrorReason | None = None  # omitted from the JSON when absent
+    # Set on a 409 workspace version conflict: the version the client must reload (the message
+    # text stays fixed, so it never carries data).
+    current_version: int | None = Field(default=None, ge=0)
 
 
 class FramingKind(StrEnum):
@@ -794,6 +805,9 @@ class _ApiFrozen(Frozen):
 class DiscoveryPlace(_ApiFrozen):
     """One source, exactly as Google provided it (shown as text, linked to its urls)."""
 
+    # Google's place ID (display-safe, validated by the discovery contract and bound into the
+    # display hash). A client may pass it to POST /v1/places/details; it never parses a URL.
+    place_id: PlaceId = Field(repr=False)
     title: str = Field(max_length=MAX_TITLE_CHARS, repr=False)
     attribution_url: str = Field(max_length=MAX_URI_CHARS, repr=False)
     place_url: str = Field(max_length=MAX_URI_CHARS, repr=False)
@@ -1059,15 +1073,39 @@ class AccountLinkIntent(Frozen):
         return self
 
 
+class ExportWorkspace(Frozen):
+    kind: Literal["export_workspace"] = "export_workspace"
+    id: Ident
+    status: WorkspaceStatus
+    timezone: str = Field(max_length=64)
+    goal: str | None = Field(default=None, max_length=20_000)
+    facts: tuple[Fact, ...] = Field(default=(), max_length=1_000)  # no TOOL facts, no evidence ids
+    active_plan_version: int | None = None
+
+
+class ExportUsage(Frozen):
+    kind: Literal["export_usage"] = "export_usage"
+    successful_turns: int = Field(ge=0)
+    activated_trips: int = Field(ge=0)
+    window_started_at: AwareDatetime | None = None
+
+
 class ExportBundle(Frozen):
-    """Everything the server holds about the caller: user data and place IDs only."""
+    """Everything the server holds about the caller: user data and place IDs only. Never Maps
+    content, a token, an idempotency key or a coordinate other than a saved place's rounded one."""
 
     schema_version: int = Field(default=SCHEMA_VERSION, ge=1)
     kind: Literal["export_bundle"] = "export_bundle"
     generated_at: AwareDatetime
+    tier: Tier
+    history_active: bool
     consents: tuple[ConsentRecord, ...] = Field(max_length=1_000)
     saved_places: tuple[SavedPlace, ...] = Field(max_length=1_000)
     outings: tuple[OutingRecord, ...] = Field(max_length=10_000)
+    workspaces: tuple[ExportWorkspace, ...] = Field(default=(), max_length=100)
+    plan_versions: tuple[PlanVersion, ...] = Field(default=(), max_length=10_000)
+    outcomes: tuple[OutcomeCheckin, ...] = Field(default=(), max_length=10_000)
+    usage: ExportUsage
 
 
 # --- Request and response shapes of the planned routes (typed 501 stubs for now) -----
@@ -1108,6 +1146,8 @@ class ProposeActionRequest(Frozen):
     target: Ident
     user_label: _LabelText | None = None
     label_kind: SavedPlaceKind | None = None
+    # SET_REMINDER only: when the in-app reminder is due (within a day of the proposal).
+    due_at: AwareDatetime | None = None
 
 
 class ConfirmActionRequest(Frozen):
@@ -1115,10 +1155,24 @@ class ConfirmActionRequest(Frozen):
     nonce: _Nonce
 
 
+class ReminderItem(Frozen):
+    """A confirmed in-app reminder: stored LOCALLY by the client, shown on next open."""
+
+    schema_version: int = Field(default=SCHEMA_VERSION, ge=1)
+    kind: Literal["reminder_item"] = "reminder_item"
+    action_id: Ident
+    place_id: PlaceId = Field(repr=False)
+    user_label: str | None = Field(default=None, max_length=80, repr=False)
+    due_at: AwareDatetime
+
+
 class ConfirmActionResponse(Frozen):
     schema_version: int = Field(default=SCHEMA_VERSION, ge=1)
     kind: Literal["confirm_action_response"] = "confirm_action_response"
     action: PendingAction
+    reminder: ReminderItem | None = None  # SET_REMINDER: the item the client stores locally
+    # LAUNCH_HANDOFF: a Maps URL built at confirm time from the place ID only; never stored.
+    handoff_url: str | None = Field(default=None, max_length=2_048, repr=False)
 
 
 class CancelActionResponse(Frozen):
@@ -1152,6 +1206,9 @@ class WorkspaceView(Frozen):
     goal: Annotated[str, StringConstraints(max_length=20_000)] | None = None
     facts: tuple[Fact, ...] = Field(default=(), max_length=200)
     pending_actions: tuple[PendingAction, ...] = Field(default=(), max_length=20)
+    latest_plan: PlanVersion | None = None
+    warnings: tuple[PlanWarning, ...] = Field(default=(), max_length=20)
+    plan_versions: tuple[int, ...] = Field(default=(), max_length=1_000)  # version numbers only
 
 
 class FactEdit(Frozen):
@@ -1191,6 +1248,52 @@ class AccountLinkResult(Frozen):
     kind: Literal["account_link_result"] = "account_link_result"
     linked: bool
     tier: Tier
+
+
+class MigrationState(StrEnum):
+    PREVIEW = "PREVIEW"  # manifest shown, nothing copied
+    RUNNING = "RUNNING"  # selected items are being copied (resumable)
+    CLEANING = "CLEANING"  # every selected item copied; the guest's server data is being deleted
+    COMPLETED = "COMPLETED"
+
+
+class PreferenceChoice(StrEnum):
+    KEEP_REGISTERED = "KEEP_REGISTERED"  # the registered account's own data wins (default)
+    USE_GUEST = "USE_GUEST"  # the user chose to replace it with the guest's copy
+
+
+_MigrationNonce = Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9_-]{8,128}$")]
+MIGRATION_TITLE_MAX = 100
+
+
+class MigrationStartRequest(Frozen):
+    schema_version: int = Field(default=SCHEMA_VERSION, ge=1)
+    intent_id: Ident
+    nonce: _MigrationNonce
+
+
+class MigrationRunRequest(Frozen):
+    schema_version: int = Field(default=SCHEMA_VERSION, ge=1)
+    item_ids: tuple[Ident, ...] = Field(default=(), max_length=50)
+    preference: PreferenceChoice = PreferenceChoice.KEEP_REGISTERED
+
+
+class MigrationItemView(Frozen):
+    id: Ident
+    kind: str = Field(max_length=40)
+    title: str = Field(max_length=MIGRATION_TITLE_MAX)  # the user's own text; empty once completed
+    selected: bool
+    copied: bool
+
+
+class MigrationView(Frozen):
+    schema_version: int = Field(default=SCHEMA_VERSION, ge=1)
+    kind: Literal["account_migration"] = "account_migration"
+    id: Ident
+    state: MigrationState
+    items: tuple[MigrationItemView, ...] = Field(max_length=100)
+    preference: PreferenceChoice | None = None
+    completed: bool
 
 
 class DeleteReceipt(Frozen):

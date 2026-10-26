@@ -59,5 +59,6 @@ def test_module_level_main_app_is_unchanged() -> None:
 def test_the_production_entry_point_fails_closed(monkeypatch: pytest.MonkeyPatch) -> None:
     for name, value in ENV.items():
         monkeypatch.setenv(name, value)
-    with pytest.raises(ConfigurationError, match="verifier"):
+    monkeypatch.delenv("FIREBASE_PROJECT_ID", raising=False)
+    with pytest.raises(ConfigurationError, match="FIREBASE_PROJECT_ID"):
         server.create_production_app()

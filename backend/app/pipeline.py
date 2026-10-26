@@ -263,8 +263,8 @@ def to_api_block(
     return DiscoveryBlock(
         text=text_part.text,
         places=tuple(
-            DiscoveryPlace(title=p.attribution_title, attribution_url=p.attribution_url,
-                           place_url=p.place_url)
+            DiscoveryPlace(place_id=p.place_id, title=p.attribution_title,
+                           attribution_url=p.attribution_url, place_url=p.place_url)
             for p in sources if isinstance(p, SourcePart)
         ),
         framing=rendered.framing,

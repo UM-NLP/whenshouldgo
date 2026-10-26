@@ -77,9 +77,8 @@ Code: `src/board/` (typed API layer `boardApi.ts`, view-models `viewModels.ts`, 
   one-tap "Confirm" on an assumption; the server stamps the confirmation). Edits are
   `PATCH /v1/workspace` with `base_version` and an `Idempotency-Key`; a retry reuses both; a 409 shows the
   conflict state with "Reload the board". Up to three places (place ID plus the user's own label, in memory),
-  timeline, warnings, pending actions and the plan version. Older versions are not shown (no API yet).
-- Pick: "Check this place" appears after Google's block (never inside it) and only for a source with a typed
-  `place_id`. `POST /v1/places/details` renders name, address, open-now and rating as text with "Google Maps"
+  timeline, warnings, pending actions and the plan version. Earlier plan versions are listed by number.
+- Pick: "Check this place" appears after Google's block (never inside it) and for every source (the typed `place_id`). `POST /v1/places/details` renders name, address, open-now and rating as text with "Google Maps"
   immediately after the fields. `POST /v1/routes/check` (DRIVE) shows "About N minutes by car" (rounded to 5)
   only with location consent; otherwise a fixed prompt opens the existing consent flow. The position is read
   inside the tap, sent once, never kept. Card and route data live in memory only.
@@ -95,18 +94,24 @@ Code: `src/board/` (typed API layer `boardApi.ts`, view-models `viewModels.ts`, 
   in the local `outing_log` (place ID and the user's label only). The note is never stored or logged.
 - Every failure shows fixed copy chosen by kind; a typed 501/503 DISABLED means "not available yet".
 
-### Contract gaps found (for the backend)
+### Contract notes
 
-1. `DiscoveryPlace` has no `place_id`; the client reads `place_id` if the server adds it and shows no
-   "Check this place" button otherwise. It never parses a URL or text.
-2. `ConfirmActionResponse` has no handoff URL field; the client reads `handoff_url` (response or action),
-   pinned to `https://www.google.com/maps`, and falls back to `action.target` only if that is a pinned URL.
-3. `ProposeActionRequest` has no due time, so a reminder's time is chosen and kept on the device and the
-   server preview cannot mention it.
-4. `WorkspaceView` has no candidates, timeline, evidence freshness, warnings or plan history. Candidates are
-   in memory; timeline reads facts keyed `leave_by` / `arrive_by`; freshness comes from the place and route
-   `fetched_at`; history shows only the current version.
-5. The board routes declare no `Idempotency-Key` header in OpenAPI; the client sends it anyway on PATCH
-   workspace, confirm and outcomes.
-6. `classifyFailure` maps 501/503 to "provider"; the board uses its own classifier (reason NOT_IMPLEMENTED or
-   DISABLED, or status 501, is "unavailable").
+The gaps the board work found were closed by the backend integration (2026-10-26); the client now uses
+typed fields only:
+
+- `DiscoveryPlace.place_id` is typed, so "Check this place" appears for every source (a source whose
+  ID is empty still gets no button). The client never parses a URL or text for an ID.
+- `ConfirmActionResponse.handoff_url` and `reminder` are typed. The handoff URL is still pinned to
+  `https://www.google.com/maps` before it is opened; the reminder saved on the device uses the
+  server's confirmed `due_at`.
+- `ProposeActionRequest.due_at` is sent for SET_REMINDER. The due time lives in the server's proposal,
+  so choosing another time creates a new proposal (new key) and cancels the old one.
+- `WorkspaceView` carries `latest_plan`, `warnings` and `plan_versions`: the board shows the plan
+  version, earlier version numbers and the server's warnings as fixed copy. An action or activation
+  names `latest_plan.version` (1 while there is no plan yet), not the workspace version.
+- `Idempotency-Key` is declared in OpenAPI for PATCH workspace, propose, confirm (optional, must be the
+  action's own key) and outcomes, and is sent through the typed `params.header`.
+- `classifyFailure` has an `unavailable` kind: 501, NOT_IMPLEMENTED, DISABLED and a 503 with no
+  transient provider reason. A 503 PROVIDER_* reason stays a retryable provider error.
+- Still missing: Firebase sign-in and an App Check token (the production build sends no auth token),
+  and the create-account button on the gated notice.

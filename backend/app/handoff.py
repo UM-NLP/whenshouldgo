@@ -2,7 +2,7 @@
 
 The origin is omitted so Maps uses the device's own position; the URL carries no coordinates and no
 name. The host is pinned. The result is returned to the client and never stored or logged by the
-caller (``ConfirmedActionResult.handoff_url`` is also excluded from ``repr``).
+caller (``ConfirmActionResponse.handoff_url`` is also excluded from ``repr``).
 """
 from __future__ import annotations
 

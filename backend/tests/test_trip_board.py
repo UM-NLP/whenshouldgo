@@ -257,7 +257,8 @@ def test_conflict_is_typed_with_the_current_version(env: Env) -> None:
     assert env.edit(body(0, [fact("a")])).status_code == 200
     r = env.edit(body(0, [fact("b")]), key="key-00000002")
     assert r.status_code == 409
-    assert r.json()["code"] == "CONFLICT" and "current version 1" in r.json()["message"]
+    assert r.json()["code"] == "CONFLICT" and r.json()["current_version"] == 1
+    assert r.json()["message"] == "workspace version conflict"  # fixed text, version is typed
     assert set(env.facts()) == {"a"}
 
 

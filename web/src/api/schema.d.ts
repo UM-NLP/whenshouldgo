@@ -21,6 +21,57 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/account-migrations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Start Migration */
+        post: operations["start_migration_v1_account_migrations_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/account-migrations/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Migration */
+        get: operations["get_migration_v1_account_migrations__id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/account-migrations/{id}:run": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Run Migration */
+        post: operations["run_migration_v1_account_migrations__id__run_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/account/link-intents": {
         parameters: {
             query?: never;
@@ -98,7 +149,11 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Confirm Action */
+        /**
+         * Confirm Action
+         * @description ``Idempotency-Key`` is optional: when sent it must be the action's own key (a retry repeats
+         *     the same key and nonce and gets the same typed result).
+         */
         post: operations["confirm_action_v1_actions__id__confirm_post"];
         delete?: never;
         options?: never;
@@ -254,7 +309,11 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Record Outcome */
+        /**
+         * Record Outcome
+         * @description Stored server-side only for a REGISTERED principal with history active and consent; for a
+         *     guest nothing durable is written and ``recorded`` is False (keep it on the device).
+         */
         post: operations["record_outcome_v1_outcomes_post"];
         delete?: never;
         options?: never;
@@ -341,7 +400,11 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Activate Trip */
+        /**
+         * Activate Trip
+         * @description Counts the workspace's trip once. At the trip limit the answer is a 200 whose usage meter
+         *     is GATED with ``gate_reason`` TRIPS_LIMIT (the typed gate); the workspace is not counted.
+         */
         post: operations["activate_trip_v1_trips__id__activate_post"];
         delete?: never;
         options?: never;
@@ -511,12 +574,15 @@ export interface components {
         /** ConfirmActionResponse */
         ConfirmActionResponse: {
             action: components["schemas"]["PendingAction"];
+            /** Handoff Url */
+            handoff_url?: string | null;
             /**
              * Kind
              * @default confirm_action_response
              * @constant
              */
             kind: "confirm_action_response";
+            reminder?: components["schemas"]["ReminderItem"] | null;
             /**
              * Schema Version
              * @default 1
@@ -693,6 +759,8 @@ export interface components {
         DiscoveryPlace: {
             /** Attribution Url */
             attribution_url: string;
+            /** Place Id */
+            place_id: string;
             /** Place Url */
             place_url: string;
             /** Title */
@@ -707,6 +775,8 @@ export interface components {
         /** ErrorBody */
         ErrorBody: {
             code: components["schemas"]["ErrorCode"];
+            /** Current Version */
+            current_version?: number | null;
             /**
              * Kind
              * @default error
@@ -733,10 +803,11 @@ export interface components {
          *     the message. Additive: a client must treat an unknown reason like its ``ErrorCode``.
          * @enum {string}
          */
-        ErrorReason: "RESULT_EXPIRED" | "TURN_IN_PROGRESS" | "SERVER_NOT_CONFIGURED" | "PROVIDER_RATE_LIMITED" | "PROVIDER_TIMEOUT" | "PROVIDER_UNAVAILABLE" | "OUTPUT_TRUNCATED" | "OUTPUT_REJECTED" | "OVER_BUDGET" | "RATE_LIMITED" | "DISCOVERY_UNAVAILABLE" | "LOCATION_CONSENT_REQUIRED" | "NOT_IMPLEMENTED" | "DISABLED";
+        ErrorReason: "RESULT_EXPIRED" | "TURN_IN_PROGRESS" | "SERVER_NOT_CONFIGURED" | "PROVIDER_RATE_LIMITED" | "PROVIDER_TIMEOUT" | "PROVIDER_UNAVAILABLE" | "OUTPUT_TRUNCATED" | "OUTPUT_REJECTED" | "OVER_BUDGET" | "RATE_LIMITED" | "DISCOVERY_UNAVAILABLE" | "LOCATION_CONSENT_REQUIRED" | "NOT_IMPLEMENTED" | "DISABLED" | "LINK_INTENT_EXPIRED" | "LINK_INTENT_CONSUMED" | "ACCOUNT_COLLISION" | "WRONG_UID" | "ANONYMOUS_PROVIDER" | "MIGRATION_INTERRUPTED";
         /**
          * ExportBundle
-         * @description Everything the server holds about the caller: user data and place IDs only.
+         * @description Everything the server holds about the caller: user data and place IDs only. Never Maps
+         *     content, a token, an idempotency key or a coordinate other than a saved place's rounded one.
          */
         ExportBundle: {
             /** Consents */
@@ -746,14 +817,26 @@ export interface components {
              * Format: date-time
              */
             generated_at: string;
+            /** History Active */
+            history_active: boolean;
             /**
              * Kind
              * @default export_bundle
              * @constant
              */
             kind: "export_bundle";
+            /**
+             * Outcomes
+             * @default []
+             */
+            outcomes: components["schemas"]["OutcomeCheckin"][];
             /** Outings */
             outings: components["schemas"]["OutingRecord"][];
+            /**
+             * Plan Versions
+             * @default []
+             */
+            plan_versions: components["schemas"]["PlanVersion"][];
             /** Saved Places */
             saved_places: components["schemas"]["SavedPlace"][];
             /**
@@ -761,6 +844,51 @@ export interface components {
              * @default 1
              */
             schema_version: number;
+            tier: components["schemas"]["Tier"];
+            usage: components["schemas"]["ExportUsage"];
+            /**
+             * Workspaces
+             * @default []
+             */
+            workspaces: components["schemas"]["ExportWorkspace"][];
+        };
+        /** ExportUsage */
+        ExportUsage: {
+            /** Activated Trips */
+            activated_trips: number;
+            /**
+             * Kind
+             * @default export_usage
+             * @constant
+             */
+            kind: "export_usage";
+            /** Successful Turns */
+            successful_turns: number;
+            /** Window Started At */
+            window_started_at?: string | null;
+        };
+        /** ExportWorkspace */
+        ExportWorkspace: {
+            /** Active Plan Version */
+            active_plan_version?: number | null;
+            /**
+             * Facts
+             * @default []
+             */
+            facts: components["schemas"]["Fact"][];
+            /** Goal */
+            goal?: string | null;
+            /** Id */
+            id: string;
+            /**
+             * Kind
+             * @default export_workspace
+             * @constant
+             */
+            kind: "export_workspace";
+            status: components["schemas"]["WorkspaceStatus"];
+            /** Timezone */
+            timezone: string;
         };
         /** Fact */
         Fact: {
@@ -921,6 +1049,73 @@ export interface components {
          * @enum {string}
          */
         MeterState: "NONE" | "QUIET_70" | "NOTICE_90" | "GATED";
+        /** MigrationItemView */
+        MigrationItemView: {
+            /** Copied */
+            copied: boolean;
+            /** Id */
+            id: string;
+            /** Kind */
+            kind: string;
+            /** Selected */
+            selected: boolean;
+            /** Title */
+            title: string;
+        };
+        /** MigrationRunRequest */
+        MigrationRunRequest: {
+            /**
+             * Item Ids
+             * @default []
+             */
+            item_ids: string[];
+            /** @default KEEP_REGISTERED */
+            preference: components["schemas"]["PreferenceChoice"];
+            /**
+             * Schema Version
+             * @default 1
+             */
+            schema_version: number;
+        };
+        /** MigrationStartRequest */
+        MigrationStartRequest: {
+            /** Intent Id */
+            intent_id: string;
+            /** Nonce */
+            nonce: string;
+            /**
+             * Schema Version
+             * @default 1
+             */
+            schema_version: number;
+        };
+        /**
+         * MigrationState
+         * @enum {string}
+         */
+        MigrationState: "PREVIEW" | "RUNNING" | "CLEANING" | "COMPLETED";
+        /** MigrationView */
+        MigrationView: {
+            /** Completed */
+            completed: boolean;
+            /** Id */
+            id: string;
+            /** Items */
+            items: components["schemas"]["MigrationItemView"][];
+            /**
+             * Kind
+             * @default account_migration
+             * @constant
+             */
+            kind: "account_migration";
+            preference?: components["schemas"]["PreferenceChoice"] | null;
+            /**
+             * Schema Version
+             * @default 1
+             */
+            schema_version: number;
+            state: components["schemas"]["MigrationState"];
+        };
         /** OutcomeAck */
         OutcomeAck: {
             /**
@@ -1167,8 +1362,78 @@ export interface components {
             /** Place Id */
             place_id: string;
         };
+        /** PlanDestination */
+        PlanDestination: {
+            /** Place Id */
+            place_id: string;
+            /** User Label */
+            user_label?: string | null;
+        };
+        /** PlanVersion */
+        PlanVersion: {
+            /**
+             * Assumption Fact Ids
+             * @default []
+             */
+            assumption_fact_ids: string[];
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            destination: components["schemas"]["PlanDestination"];
+            /** Grounded Evidence Id */
+            grounded_evidence_id?: string | null;
+            /** Id */
+            id: string;
+            /**
+             * Kind
+             * @default plan_version
+             * @constant
+             */
+            kind: "plan_version";
+            /** Origin Ref */
+            origin_ref: string;
+            /** Parent Version */
+            parent_version?: number | null;
+            replaced_reason?: components["schemas"]["ReplacedReason"] | null;
+            /** Route Evidence Id */
+            route_evidence_id?: string | null;
+            /**
+             * Schema Version
+             * @default 1
+             */
+            schema_version: number;
+            /**
+             * User Constraint Fact Ids
+             * @default []
+             */
+            user_constraint_fact_ids: string[];
+            /** Version */
+            version: number;
+            /**
+             * Warnings
+             * @default []
+             */
+            warnings: components["schemas"]["PlanWarning"][];
+            /** Workspace Id */
+            workspace_id: string;
+        };
+        /**
+         * PlanWarning
+         * @description Warnings are codes, never free text, so provider content cannot ride in them.
+         * @enum {string}
+         */
+        PlanWarning: "ASSUMPTIONS_UNCONFIRMED" | "EVIDENCE_STALE" | "ROUTE_UNVERIFIED" | "DETAILS_UNAVAILABLE" | "HARD_NEED_UNVERIFIED";
+        /**
+         * PreferenceChoice
+         * @enum {string}
+         */
+        PreferenceChoice: "KEEP_REGISTERED" | "USE_GUEST";
         /** ProposeActionRequest */
         ProposeActionRequest: {
+            /** Due At */
+            due_at?: string | null;
             effect: components["schemas"]["PendingActionEffect"];
             label_kind?: components["schemas"]["SavedPlaceKind"] | null;
             /** Plan Version */
@@ -1185,6 +1450,39 @@ export interface components {
             /** Workspace Id */
             workspace_id: string;
         };
+        /**
+         * ReminderItem
+         * @description A confirmed in-app reminder: stored LOCALLY by the client, shown on next open.
+         */
+        ReminderItem: {
+            /** Action Id */
+            action_id: string;
+            /**
+             * Due At
+             * Format: date-time
+             */
+            due_at: string;
+            /**
+             * Kind
+             * @default reminder_item
+             * @constant
+             */
+            kind: "reminder_item";
+            /** Place Id */
+            place_id: string;
+            /**
+             * Schema Version
+             * @default 1
+             */
+            schema_version: number;
+            /** User Label */
+            user_label?: string | null;
+        };
+        /**
+         * ReplacedReason
+         * @enum {string}
+         */
+        ReplacedReason: "USER_EDIT" | "CONSTRAINT_CHANGED" | "EVIDENCE_STALE" | "ADAPTATION";
         /**
          * RoundedPosition
          * @description A user-confirmed position rounded to ~100 m on parse; redacted from repr and errors.
@@ -1525,11 +1823,17 @@ export interface components {
              * @constant
              */
             kind: "workspace_view";
+            latest_plan?: components["schemas"]["PlanVersion"] | null;
             /**
              * Pending Actions
              * @default []
              */
             pending_actions: components["schemas"]["PendingAction"][];
+            /**
+             * Plan Versions
+             * @default []
+             */
+            plan_versions: number[];
             /**
              * Schema Version
              * @default 1
@@ -1538,6 +1842,11 @@ export interface components {
             status: components["schemas"]["WorkspaceStatus"];
             /** Version */
             version: number;
+            /**
+             * Warnings
+             * @default []
+             */
+            warnings: components["schemas"]["PlanWarning"][];
         };
     };
     responses: never;
@@ -1570,10 +1879,339 @@ export interface operations {
             };
         };
     };
+    start_migration_v1_account_migrations_post: {
+        parameters: {
+            query?: never;
+            header: {
+                "idempotency-key"?: string | null;
+                authorization: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MigrationStartRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MigrationView"];
+                };
+            };
+            /** @description POLICY */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description POLICY */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description NOT_FOUND */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description CONFLICT */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description VALIDATION */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description QUOTA */
+            429: {
+                headers: {
+                    /** @description Seconds to wait before retrying. */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description VALIDATION */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description PROVIDER */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description PROVIDER */
+            504: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    get_migration_v1_account_migrations__id__get: {
+        parameters: {
+            query?: never;
+            header: {
+                authorization: string | null;
+            };
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MigrationView"];
+                };
+            };
+            /** @description POLICY */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description POLICY */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description NOT_FOUND */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description CONFLICT */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description VALIDATION */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description QUOTA */
+            429: {
+                headers: {
+                    /** @description Seconds to wait before retrying. */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description VALIDATION */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description PROVIDER */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description PROVIDER */
+            504: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    run_migration_v1_account_migrations__id__run_post: {
+        parameters: {
+            query?: never;
+            header: {
+                authorization: string | null;
+            };
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MigrationRunRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MigrationView"];
+                };
+            };
+            /** @description POLICY */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description POLICY */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description NOT_FOUND */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description CONFLICT */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description VALIDATION */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description QUOTA */
+            429: {
+                headers: {
+                    /** @description Seconds to wait before retrying. */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description VALIDATION */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description PROVIDER */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description PROVIDER */
+            504: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
     start_account_link_v1_account_link_intents_post: {
         parameters: {
             query?: never;
             header: {
+                "idempotency-key"?: string | null;
                 authorization: string | null;
             };
             path?: never;
@@ -1612,6 +2250,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorBody"];
                 };
             };
+            /** @description NOT_FOUND */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
             /** @description CONFLICT */
             409: {
                 headers: {
@@ -1635,15 +2282,6 @@ export interface operations {
                 headers: {
                     /** @description Seconds to wait before retrying. */
                     "Retry-After"?: number;
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorBody"];
-                };
-            };
-            /** @description NOT_IMPLEMENTED */
-            501: {
-                headers: {
                     [name: string]: unknown;
                 };
                 content: {
@@ -1723,6 +2361,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorBody"];
                 };
             };
+            /** @description NOT_FOUND */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
             /** @description CONFLICT */
             409: {
                 headers: {
@@ -1746,15 +2393,6 @@ export interface operations {
                 headers: {
                     /** @description Seconds to wait before retrying. */
                     "Retry-After"?: number;
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorBody"];
-                };
-            };
-            /** @description NOT_IMPLEMENTED */
-            501: {
-                headers: {
                     [name: string]: unknown;
                 };
                 content: {
@@ -1794,6 +2432,7 @@ export interface operations {
         parameters: {
             query?: never;
             header: {
+                "idempotency-key": string;
                 authorization: string | null;
             };
             path?: never;
@@ -1832,6 +2471,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorBody"];
                 };
             };
+            /** @description NOT_FOUND or DISABLED */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
             /** @description CONFLICT */
             409: {
                 headers: {
@@ -1855,15 +2503,6 @@ export interface operations {
                 headers: {
                     /** @description Seconds to wait before retrying. */
                     "Retry-After"?: number;
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorBody"];
-                };
-            };
-            /** @description NOT_IMPLEMENTED */
-            501: {
-                headers: {
                     [name: string]: unknown;
                 };
                 content: {
@@ -1939,6 +2578,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorBody"];
                 };
             };
+            /** @description NOT_FOUND or DISABLED */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
             /** @description CONFLICT */
             409: {
                 headers: {
@@ -1962,15 +2610,6 @@ export interface operations {
                 headers: {
                     /** @description Seconds to wait before retrying. */
                     "Retry-After"?: number;
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorBody"];
-                };
-            };
-            /** @description NOT_IMPLEMENTED */
-            501: {
-                headers: {
                     [name: string]: unknown;
                 };
                 content: {
@@ -2010,6 +2649,7 @@ export interface operations {
         parameters: {
             query?: never;
             header: {
+                "idempotency-key"?: string | null;
                 authorization: string | null;
             };
             path: {
@@ -2050,6 +2690,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorBody"];
                 };
             };
+            /** @description NOT_FOUND or DISABLED */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
             /** @description CONFLICT */
             409: {
                 headers: {
@@ -2073,15 +2722,6 @@ export interface operations {
                 headers: {
                     /** @description Seconds to wait before retrying. */
                     "Retry-After"?: number;
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorBody"];
-                };
-            };
-            /** @description NOT_IMPLEMENTED */
-            501: {
-                headers: {
                     [name: string]: unknown;
                 };
                 content: {
@@ -2798,6 +3438,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorBody"];
                 };
             };
+            /** @description DISABLED */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
             /** @description CONFLICT */
             409: {
                 headers: {
@@ -3086,6 +3735,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorBody"];
                 };
             };
+            /** @description NOT_FOUND */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
             /** @description CONFLICT */
             409: {
                 headers: {
@@ -3109,15 +3767,6 @@ export interface operations {
                 headers: {
                     /** @description Seconds to wait before retrying. */
                     "Retry-After"?: number;
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorBody"];
-                };
-            };
-            /** @description NOT_IMPLEMENTED */
-            501: {
-                headers: {
                     [name: string]: unknown;
                 };
                 content: {
@@ -3191,6 +3840,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorBody"];
                 };
             };
+            /** @description NOT_FOUND */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
             /** @description CONFLICT */
             409: {
                 headers: {
@@ -3214,15 +3872,6 @@ export interface operations {
                 headers: {
                     /** @description Seconds to wait before retrying. */
                     "Retry-After"?: number;
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorBody"];
-                };
-            };
-            /** @description NOT_IMPLEMENTED */
-            501: {
-                headers: {
                     [name: string]: unknown;
                 };
                 content: {
@@ -3262,6 +3911,7 @@ export interface operations {
         parameters: {
             query?: never;
             header: {
+                "idempotency-key"?: string | null;
                 authorization: string | null;
             };
             path?: never;
@@ -3323,15 +3973,6 @@ export interface operations {
                 headers: {
                     /** @description Seconds to wait before retrying. */
                     "Retry-After"?: number;
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorBody"];
-                };
-            };
-            /** @description NOT_IMPLEMENTED */
-            501: {
-                headers: {
                     [name: string]: unknown;
                 };
                 content: {
@@ -3409,6 +4050,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorBody"];
                 };
             };
+            /** @description NOT_FOUND */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
             /** @description CONFLICT */
             409: {
                 headers: {
@@ -3432,15 +4082,6 @@ export interface operations {
                 headers: {
                     /** @description Seconds to wait before retrying. */
                     "Retry-After"?: number;
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorBody"];
-                };
-            };
-            /** @description NOT_IMPLEMENTED */
-            501: {
-                headers: {
                     [name: string]: unknown;
                 };
                 content: {
@@ -3518,6 +4159,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorBody"];
                 };
             };
+            /** @description NOT_FOUND */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
             /** @description CONFLICT */
             409: {
                 headers: {
@@ -3541,15 +4191,6 @@ export interface operations {
                 headers: {
                     /** @description Seconds to wait before retrying. */
                     "Retry-After"?: number;
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorBody"];
-                };
-            };
-            /** @description NOT_IMPLEMENTED */
-            501: {
-                headers: {
                     [name: string]: unknown;
                 };
                 content: {
@@ -4073,6 +4714,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorBody"];
                 };
             };
+            /** @description NOT_FOUND or DISABLED */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
             /** @description CONFLICT */
             409: {
                 headers: {
@@ -4096,15 +4746,6 @@ export interface operations {
                 headers: {
                     /** @description Seconds to wait before retrying. */
                     "Retry-After"?: number;
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorBody"];
-                };
-            };
-            /** @description NOT_IMPLEMENTED */
-            501: {
-                headers: {
                     [name: string]: unknown;
                 };
                 content: {
@@ -4178,6 +4819,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorBody"];
                 };
             };
+            /** @description NOT_FOUND */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
             /** @description CONFLICT */
             409: {
                 headers: {
@@ -4201,15 +4851,6 @@ export interface operations {
                 headers: {
                     /** @description Seconds to wait before retrying. */
                     "Retry-After"?: number;
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorBody"];
-                };
-            };
-            /** @description NOT_IMPLEMENTED */
-            501: {
-                headers: {
                     [name: string]: unknown;
                 };
                 content: {
@@ -4249,6 +4890,7 @@ export interface operations {
         parameters: {
             query?: never;
             header: {
+                "idempotency-key": string;
                 authorization: string | null;
             };
             path?: never;
@@ -4287,6 +4929,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorBody"];
                 };
             };
+            /** @description NOT_FOUND */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
             /** @description CONFLICT */
             409: {
                 headers: {
@@ -4310,15 +4961,6 @@ export interface operations {
                 headers: {
                     /** @description Seconds to wait before retrying. */
                     "Retry-After"?: number;
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorBody"];
-                };
-            };
-            /** @description NOT_IMPLEMENTED */
-            501: {
-                headers: {
                     [name: string]: unknown;
                 };
                 content: {

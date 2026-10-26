@@ -42,7 +42,7 @@ def test_no_silent_merge_without_the_parked_collision_and_both_proofs(env: Env) 
     intent = env.start_intent("g1")
     # the intent was never parked: a registered account cannot just claim a guest's data
     not_parked = env.start_migration(intent)
-    assert not_parked.status_code == 409 and not_parked.json()["message"].startswith("NOT_COLLISION")
+    assert not_parked.status_code == 409 and not_parked.json()["message"] == "the link intent was not parked for this account"
     # a guest token is not a registered account
     assert env.start_migration(intent, who="g1").status_code in (403, 409)
     # wrong nonce looks like an unknown intent
@@ -55,7 +55,7 @@ def test_no_silent_merge_without_the_parked_collision_and_both_proofs(env: Env) 
 def test_a_different_registered_account_cannot_use_a_parked_intent(env: Env) -> None:
     intent = env.collide(who="r1")  # parked for r1
     stolen = env.start_migration(intent, who="r2")  # r2 has the id and nonce but is not the parked uid
-    assert stolen.status_code == 409 and stolen.json()["message"].startswith("NOT_COLLISION")
+    assert stolen.status_code == 409 and stolen.json()["message"] == "the link intent was not parked for this account"
     assert env.start_migration(intent, who="r1").status_code == 200
 
 
@@ -63,7 +63,7 @@ def test_the_expired_intent_cannot_start_a_merge(env: Env) -> None:
     intent = env.collide()
     env.clock.advance(minutes=16)
     response = env.start_migration(intent)
-    assert response.status_code == 409 and response.json()["message"].startswith("EXPIRED")
+    assert response.status_code == 409 and response.json().get("reason") == "LINK_INTENT_EXPIRED"
 
 
 def test_start_is_idempotent_by_key_and_one_unfinished_merge_per_guest(env: Env) -> None:
@@ -144,7 +144,7 @@ def test_choosing_nothing_copies_nothing_and_still_requires_completion(env: Env)
 def test_a_selection_outside_the_manifest_is_refused_and_changes_nothing(env: Env) -> None:
     migration = env.start_migration(env.collide()).json()
     response = env.run_migration(migration["id"], item_ids=["not-in-the-manifest"])
-    assert response.status_code == 422 and response.json()["message"].startswith("UNKNOWN_ITEM")
+    assert response.status_code == 422 and response.json()["message"] == "the selection is not in the manifest"
     assert ws(env, "g1") is not None
     assert env.http.get(f"/v1/account-migrations/{migration['id']}", headers=H["r1"]).json()[
         "state"] == "PREVIEW"
@@ -175,7 +175,7 @@ def test_an_interrupted_merge_resumes_and_both_identities_survive_until_success(
     source = flaky(env, fail_times=1)
     migration = env.start_migration(env.collide()).json()
     first = env.run_migration(migration["id"], item_ids=["workspace-default"])
-    assert first.status_code == 503 and first.json()["message"].startswith("INTERRUPTED")
+    assert first.status_code == 503 and first.json().get("reason") == "MIGRATION_INTERRUPTED"
     # both identities and all their data are intact; the journal says RUNNING
     assert ws(env, "g1") is not None and env.quotas.usage_for("g1").successful_turns == 40
     assert ws(env, "r1").goal == "my usual saturday outing" and ws(env, "r1", f"migrated-{migration['id'][:16]}") is None
@@ -248,7 +248,7 @@ def test_another_account_cannot_read_or_run_a_migration(env: Env) -> None:
         ("POST", f"/v1/account-migrations/{migration['id']}:run", {"item_ids": []}),
     ):
         response = env.http.request(method, path, json=body, headers=H["r2"])
-        assert response.status_code == 404 and response.json()["message"].startswith("NOT_FOUND")
+        assert response.status_code == 404 and response.json()["message"] in ("unknown link intent", "unknown migration")
     assert ws(env, "g1") is not None
     unknown = env.http.get("/v1/account-migrations/mig-nope", headers=H["r1"])
     assert unknown.status_code == 404

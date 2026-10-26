@@ -4,7 +4,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 
 import anyio
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -21,6 +21,7 @@ from .gateway import ModelGateway
 from .orchestrator import TurnOrchestrator
 from .quota import QuotaService
 from .routes import ROUTERS
+from .routes.common import app_check_gate
 from .routes.common import error_response as _error_response
 from .routes.turns import TurnRequest  # noqa: F401  (kept importable from here)
 from .telemetry import (
@@ -150,6 +151,7 @@ def create_app(
     enable_docs: bool = False,
     workspace_store: WorkspaceStore | None = None,
     idempotency_store: IdempotencyStore | None = None,
+    account_guard: Callable[[str], None] | None = None,
 ) -> FastAPI:
     """Build the API. With no verifier, every authenticated route fails closed (401).
 
@@ -162,7 +164,7 @@ def create_app(
     ``orchestrator`` cannot be combined with injected parts."""
     ensure_log_guard()
     parts = (gateway, discovery_client, display_cache, runtime_config, quotas, clock, cost_ledger,
-             dev_scaffold or None, workspace_store, idempotency_store)
+             dev_scaffold or None, workspace_store, idempotency_store, account_guard)
     if orchestrator is not None and any(part is not None for part in parts):
         raise ValueError("pass either an orchestrator or the parts to build one, not both")
     # /docs, /redoc and /openapi.json are off unless explicitly enabled; ``app.openapi()`` (used by
@@ -173,7 +175,7 @@ def create_app(
         quotas, trace_sink, gateway=gateway, discovery_client=discovery_client,
         display_cache=display_cache, runtime_config=runtime_config, cost_ledger=cost_ledger,
         clock=clock, dev_scaffold=dev_scaffold, workspace_store=workspace_store,
-        idempotency_store=idempotency_store,
+        idempotency_store=idempotency_store, account_guard=account_guard,
     )
     application.state.sink = (
         trace_sink or getattr(application.state.orchestrator, "sink", None) or get_default_sink()
@@ -182,7 +184,8 @@ def create_app(
     application.state.verifier = verifier
     # The audited runtime config (None when the orchestrator carries none): read-only, server-owned.
     application.state.runtime_config = runtime_config or getattr(orchestrator, "runtime_config", None)
-    application.state.consents = consent_store or InMemoryConsentStore(clock)
+    application.state.consents = consent_store or InMemoryConsentStore(
+        clock, config=application.state.runtime_config)
     application.state.consent_limiter = OperationLimiter(clock)
     application.state.clock = clock or (lambda: datetime.now(UTC))
     # Bootstrap is the tightest (once per page load); reads of the meter and capabilities are cheap.
@@ -204,8 +207,10 @@ def create_app(
             message = detail if isinstance(detail, str) else "request failed"
         headers = dict(exc.headers) if exc.headers else None
         reason = ErrorReason(detail["reason"]) if isinstance(detail, dict) and detail.get("reason") else None
+        version = detail.get("current_version") if isinstance(detail, dict) else None
         _trace_error(request, code, _phase_for(exc.status_code), exc.status_code)
-        return _error_response(exc.status_code, code, message, headers, reason)
+        return _error_response(exc.status_code, code, message, headers, reason,
+                               version if isinstance(version, int) else None)
 
     @application.exception_handler(RequestValidationError)
     async def _invalid_request(request: Request, __: RequestValidationError) -> JSONResponse:
@@ -222,7 +227,7 @@ def create_app(
         return {"status": "ok"}
 
     for router in ROUTERS:
-        application.include_router(router)
+        application.include_router(router, dependencies=[Depends(app_check_gate)])
 
     def _openapi() -> dict:
         if application.openapi_schema:

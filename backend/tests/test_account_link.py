@@ -56,7 +56,7 @@ def test_a_key_of_another_user_is_a_different_intent(env: Env) -> None:
 
 def test_a_registered_account_cannot_start_a_link(env: Env) -> None:
     response = env.http.post("/v1/account/link-intents", json={"provider": "GOOGLE"}, headers=H["r1"])
-    assert response.status_code == 409 and response.json()["message"].startswith("ALREADY_REGISTERED")
+    assert response.status_code == 409 and response.json()["message"] == "the account is already registered"
 
 
 def test_identity_is_never_read_from_the_body(env: Env) -> None:
@@ -93,7 +93,7 @@ def test_complete_is_one_time_a_second_use_is_rejected(env: Env) -> None:
     env.admin.link("g1")
     assert env.complete(intent).status_code == 200
     again = env.complete(intent)
-    assert again.status_code == 409 and again.json()["message"].startswith("CONSUMED")
+    assert again.status_code == 409 and again.json().get("reason") == "LINK_INTENT_CONSUMED"
 
 
 def test_wrong_nonce_unknown_id_and_another_tenants_intent_look_the_same(env: Env) -> None:
@@ -104,7 +104,7 @@ def test_wrong_nonce_unknown_id_and_another_tenants_intent_look_the_same(env: En
     cross = env.http.post(f"/v1/account/link-intents/{intent['id']}:complete",
                           json={"nonce": "y" * 24}, headers=H["g2"])
     for response in (wrong, unknown, cross):
-        assert response.status_code == 404 and response.json()["message"].startswith("NOT_FOUND")
+        assert response.status_code == 404 and response.json()["message"] in ("unknown link intent", "unknown migration")
     assert env.service.store.get_account("g1") is None  # nothing changed
 
 
@@ -112,7 +112,7 @@ def test_the_same_intent_presented_by_a_different_anonymous_uid_is_rejected(env:
     intent = env.start_intent("g1")
     response = env.http.post(f"/v1/account/link-intents/{intent['id']}:complete",
                              json={"nonce": intent["nonce"]}, headers=H["g2"])
-    assert response.status_code == 403 and response.json()["message"].startswith("WRONG_UID")
+    assert response.status_code == 403 and response.json().get("reason") == "WRONG_UID"
     assert env.service.store.get_account("g1") is None and env.service.store.get_account("g2") is None
 
 
@@ -121,17 +121,17 @@ def test_an_anonymous_token_cannot_complete(env: Env) -> None:
     env.admin.link("g1")
     stale = env.http.post(f"/v1/account/link-intents/{intent['id']}:complete",
                           json={"nonce": intent["nonce"]}, headers=H["g1"])
-    assert stale.status_code == 403 and stale.json()["message"].startswith("ANONYMOUS_PROVIDER")
+    assert stale.status_code == 403 and stale.json().get("reason") == "ANONYMOUS_PROVIDER"
     assert env.service.store.get_account("g1") is None
 
 
 def test_the_admin_must_confirm_a_permanent_provider_even_if_the_token_claims_one(env: Env) -> None:
     intent = env.start_intent()  # admin still shows g1 with no provider
     response = env.complete(intent)
-    assert response.status_code == 403 and response.json()["message"].startswith("ANONYMOUS_PROVIDER")
+    assert response.status_code == 403 and response.json().get("reason") == "ANONYMOUS_PROVIDER"
     env.admin.link("g1", "password")  # a provider that does not match the GOOGLE intent
     mismatch = env.complete(intent)
-    assert mismatch.status_code == 403 and mismatch.json()["message"].startswith("PROVIDER_MISMATCH")
+    assert mismatch.status_code == 403 and mismatch.json()["message"] == "the provider differs from the intent"
     assert env.service.store.get_account("g1") is None
 
 
@@ -140,7 +140,7 @@ def test_an_expired_intent_is_rejected(env: Env) -> None:
     env.admin.link("g1")
     env.clock.advance(minutes=15, seconds=1)
     response = env.complete(intent)
-    assert response.status_code == 409 and response.json()["message"].startswith("EXPIRED")
+    assert response.status_code == 409 and response.json().get("reason") == "LINK_INTENT_EXPIRED"
     assert env.service.store.get_account("g1") is None
 
 
@@ -156,7 +156,7 @@ def test_a_credential_that_owns_an_account_is_a_typed_collision(env: Env) -> Non
     intent = env.start_intent("g1")
     response = env.complete(intent, who="r1")  # r1 already exists and presents g1's intent
     assert response.status_code == 409
-    assert response.json()["message"].startswith("COLLISION") and response.json()["code"] == "CONFLICT"
+    assert response.json().get("reason") == "ACCOUNT_COLLISION" and response.json()["code"] == "CONFLICT"
     assert env.service.store.get_account("g1") is None and env.service.store.get_account("r1") is None
     assert env.stores.workspaces.get("g1", "default", env.clock()) is not None  # both preserved
     assert env.quotas.usage_for("g1").successful_turns == 3

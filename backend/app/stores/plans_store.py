@@ -65,6 +65,9 @@ class PlanVersionStore(Protocol):
     def latest(self, owner_id: str, workspace_id: str, now: datetime) -> PlanVersion | None: ...
     def history(self, owner_id: str, workspace_id: str, now: datetime) -> tuple[PlanVersion, ...]: ...
     def delete_workspace(self, owner_id: str, workspace_id: str) -> None: ...
+    def delete_owner(self, owner_id: str) -> int:
+        """Every version of every workspace of ``owner_id`` (account deletion). Returns a count."""
+        ...
 
 
 def _check_lineage(plan: PlanVersion, latest: int) -> None:
@@ -119,6 +122,14 @@ class MemoryPlanVersionStore:
         with self._lock:
             self.items.pop((owner_id, workspace_id), None)
             self._expires.pop((owner_id, workspace_id), None)
+
+    def delete_owner(self, owner_id: str) -> int:
+        with self._lock:
+            mine = [key for key in self.items if key[0] == owner_id]
+            for key in mine:
+                del self.items[key]
+                self._expires.pop(key, None)
+            return len(mine)
 
 
 class FirestorePlanVersionStore(_Base):
@@ -214,6 +225,18 @@ class FirestorePlanVersionStore(_Base):
         for version in range(1, number + 1):
             self._ver(owner_id, workspace_id, version).delete()
         self._head(owner_id, workspace_id).delete()
+
+    def delete_owner(self, owner_id: str) -> int:
+        removed = 0
+        for collection in (PLAN_VERSIONS, PLAN_HEADS):
+            while True:
+                rows = list(self._col(collection).where("owner_id", "==", owner_id).limit(200).stream())
+                if not rows:
+                    break
+                for snap in rows:
+                    snap.reference.delete()
+                    removed += 1
+        return removed
 
 
 _EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)

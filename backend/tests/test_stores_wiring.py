@@ -228,7 +228,9 @@ def test_optional_hooks_for_identity_and_places_are_passed_through() -> None:
     runtime = build(places_service=marker, app_check_verifier=marker)
     assert runtime.app.state.places_service is marker
     assert runtime.app.state.app_check_verifier is marker
-    assert build().app.state.places_service is None
+    # by default the places service is built, and OFF: the price table is unreviewed (no network)
+    default = build().app.state.places_service
+    assert default is not None and default.enabled is False
 
 
 def _turn(runtime, key: str, **extra):

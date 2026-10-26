@@ -1,41 +1,23 @@
-"""The caller's workspace (live) and trip activation (typed 501 stub).
-
-``GET/PATCH /v1/workspace`` run on ``app.state.workspace_service``; None is a typed 503. The tenant
-is the verified principal; the view never carries Maps content. Replace the ``not_implemented``
-call of activation when it is built; keep its path and models.
+"""The caller's workspace (live): ``GET/PATCH /v1/workspace`` on ``app.state.workspace_service``;
+None is a typed 503. The tenant is the verified principal; the view never carries Maps content.
+Trip activation lives in ``routes/actions.py``.
 """
 from __future__ import annotations
 
-from typing import NoReturn
-
-from fastapi import APIRouter, Depends, Header, Path, Request
+from fastapi import APIRouter, Depends, Header, Request
 
 from ..auth import current_principal
 from ..domain import (
-    ActivateTripRequest,
-    ErrorCode,
-    ErrorReason,
-    TripActivation,
+    ErrorBody,
+    Principal,
     WorkspaceEditRequest,
     WorkspaceView,
-    Principal,
 )
 from ..failures import TurnFailure
 from ..workspaces import WorkspaceError, WorkspaceNotConfigured, WorkspaceService, to_view
-from .common import access_principal, error, not_implemented, stub_responses
+from .common import ERROR_RESPONSES, access_principal, error
 
 router = APIRouter()
-IDENT = r"^[A-Za-z0-9_.:-]{1,128}$"
-
-
-@router.post("/v1/trips/{id}:activate", response_model=TripActivation, responses=stub_responses(False),)
-def activate_trip(
-    body: ActivateTripRequest,
-    request: Request,
-    id: str = Path(pattern=IDENT),
-    principal: Principal = Depends(current_principal),
-) -> NoReturn:
-    not_implemented(request, principal)
 
 
 def service(request: Request) -> WorkspaceService:
@@ -46,12 +28,11 @@ def service(request: Request) -> WorkspaceService:
 
 
 def typed(failure: WorkspaceError):
-    return error(failure.status, failure.code, failure.message, failure.reason)
+    return error(failure.status, failure.code, failure.message, failure.reason,
+                 current_version=getattr(failure, "current_version", None))
 
 
-# The 501 entry stays in the documented responses so the checked-in OpenAPI document changes only
-# with the contract (regenerate with ``npm run api:generate`` to drop it).
-_RESPONSES = stub_responses(False)
+_RESPONSES = {**ERROR_RESPONSES, 404: {"model": ErrorBody, "description": "NOT_FOUND"}}
 
 
 @router.get("/v1/workspace", response_model=WorkspaceView, responses=_RESPONSES)

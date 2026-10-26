@@ -30,7 +30,7 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Any, Protocol, runtime_checkable
 
-from ..domain import SCHEMA_VERSION, LinkProvider
+from ..domain import SCHEMA_VERSION, LinkProvider, MigrationState
 from .firestore import StoredDataError, _Base, doc_id
 
 ACCOUNTS = "accounts"
@@ -93,13 +93,6 @@ class LinkCompletion(StrEnum):
     EXPIRED = "EXPIRED"
     CONSUMED = "CONSUMED"
     COLLISION = "COLLISION"  # the intent was parked for the explicit merge flow
-
-
-class MigrationState(StrEnum):
-    PREVIEW = "PREVIEW"  # manifest shown, nothing copied
-    RUNNING = "RUNNING"  # selected items are being copied (resumable)
-    CLEANING = "CLEANING"  # every selected item copied; the guest's server data is being deleted
-    COMPLETED = "COMPLETED"
 
 
 class ItemState(StrEnum):

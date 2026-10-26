@@ -10,17 +10,13 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, Header, Path, Request
 
 from ..access import AccountUnavailable, usage_view
-from ..actions import (
-    ActionError,
-    ActionFailure,
-    ActionService,
-    ConfirmedActionResult,
-    ProposeActionBody,
-)
+from ..actions import ActionError, ActionFailure, ActionService
 from ..auth import current_principal
 from ..domain import (
     CancelActionResponse,
     ConfirmActionRequest,
+    ConfirmActionResponse,
+    ProposeActionRequest,
     ErrorBody,
     ErrorCode,
     ErrorReason,
@@ -71,7 +67,7 @@ def _typed(exc: ActionError):  # noqa: ANN202
 
 @router.post("/v1/actions/propose", response_model=PendingAction, responses=_RESPONSES)
 def propose_action(
-    body: ProposeActionBody,
+    body: ProposeActionRequest,
     request: Request,
     principal: Principal = Depends(current_principal),
     idempotency_key: str = Header(min_length=8, max_length=200),
@@ -83,16 +79,19 @@ def propose_action(
         raise _typed(exc) from None
 
 
-@router.post("/v1/actions/{id}/confirm", response_model=ConfirmedActionResult, responses=_RESPONSES)
+@router.post("/v1/actions/{id}/confirm", response_model=ConfirmActionResponse, responses=_RESPONSES)
 def confirm_action(
     body: ConfirmActionRequest,
     request: Request,
     id: str = Path(pattern=IDENT),
     principal: Principal = Depends(current_principal),
-) -> ConfirmedActionResult:
+    idempotency_key: str | None = Header(default=None, min_length=8, max_length=200),
+) -> ConfirmActionResponse:
+    """``Idempotency-Key`` is optional: when sent it must be the action's own key (a retry repeats
+    the same key and nonce and gets the same typed result)."""
     service = _service(request, principal)
     try:
-        return service.confirm(principal, id, body.nonce)
+        return service.confirm(principal, id, body.nonce, idempotency_key)
     except ActionError as exc:
         raise _typed(exc) from None
 

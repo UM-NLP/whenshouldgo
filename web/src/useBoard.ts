@@ -11,7 +11,7 @@ import type {
   Workspace,
 } from "./board/boardApi";
 import { logOutcomeLocally, saveReminder } from "./board/reminders";
-import { handoffUrlFrom, MAX_CANDIDATES, secondsLeft } from "./board/viewModels";
+import { handoffUrlFrom, MAX_CANDIDATES, planVersionOf, secondsLeft } from "./board/viewModels";
 import { GeoError, geoErrorText, type Coordinates } from "./lib/geo";
 import { newIdempotencyKey } from "./lib/idempotency";
 import type { OutcomeValue } from "./board/boardApi";
@@ -83,7 +83,7 @@ export interface Board {
   removeCandidate(placeId: string): void;
   renameCandidate(placeId: string, label: string): void;
   propose(effect: PendingActionEffect, placeId: string): void;
-  setDue(actionId: string, minutes: number): void;
+  setDue(actionId: string, minutes: number): void | Promise<void>;
   confirm(actionId: string): void;
   cancel(actionId: string): void;
   acceptNotice(actionId: string): void;
@@ -94,6 +94,7 @@ export interface Board {
 }
 
 const LOADING = { status: "loading" } as const;
+const DEFAULT_DUE_MINUTES = 60;
 
 export function useBoard(api: BoardApi, location: LocationConsent, session: LocalSession | null): Board {
   const [workspace, setWorkspace] = useState<Loadable<Workspace>>(LOADING);
@@ -305,13 +306,21 @@ export function useBoard(api: BoardApi, location: LocationConsent, session: Loca
         target: placeId,
         userLabel: label,
         workspaceId: current.data.id,
-        planVersion: current.data.version,
+        planVersion: planVersionOf(current.data),
+        idempotencyKey: newIdempotencyKey(),
+        ...(effect === "SET_REMINDER" ? { dueAt: new Date(Date.now() + DEFAULT_DUE_MINUTES * 60_000).toISOString() } : {}),
       });
       if (!live.current) return;
       if (outcome.ok) {
         setActions((a) => [
           ...a.filter((x) => x.action.id !== outcome.data.id),
-          { action: outcome.data, label, phase: "preview", dueMinutes: 60, dueAt: Date.now() + 60 * 60 * 1000 },
+          {
+            action: outcome.data,
+            label,
+            phase: "preview",
+            dueMinutes: DEFAULT_DUE_MINUTES,
+            dueAt: Date.now() + DEFAULT_DUE_MINUTES * 60_000,
+          },
         ]);
       } else setProposeFailure(outcome.failure);
     },
@@ -357,11 +366,11 @@ export function useBoard(api: BoardApi, location: LocationConsent, session: Loca
         updateAction(actionId, { phase: "done", handoffUrl: url });
         setFollowUps((f) => (f.some((x) => x.placeId === placeId) ? f : [...f, { placeId, label: state.label }]));
       } else if (effect === "SET_REMINDER") {
-        const reminder = await persistReminder(
-          { placeId, label: state.label, dueAt: Date.now() + (state.dueMinutes ?? 60) * 60_000 },
-          actionId,
-        );
-        if (live.current) updateAction(actionId, { phase: "done", reminder });
+        // The server's typed reminder is the one that counts: its due time is the confirmed one.
+        const item = outcome.data.reminder;
+        const dueAt = item ? Date.parse(item.due_at) : Date.now() + (state.dueMinutes ?? DEFAULT_DUE_MINUTES) * 60_000;
+        const reminder = await persistReminder({ placeId, label: state.label, dueAt }, actionId);
+        if (live.current) updateAction(actionId, { phase: "done", reminder, dueAt });
       } else updateAction(actionId, { phase: "done" });
     },
     [actions, api, updateAction, persistReminder],
@@ -407,9 +416,37 @@ export function useBoard(api: BoardApi, location: LocationConsent, session: Loca
     [updateAction],
   );
 
+  // The due time lives in the server's proposal, so a new time is a NEW proposal (new key) that
+  // replaces the old preview; the old one is cancelled, best effort.
   const setDue = useCallback(
-    (actionId: string, minutes: number) => updateAction(actionId, { dueMinutes: minutes, dueAt: Date.now() + minutes * 60_000 }),
-    [updateAction],
+    async (actionId: string, minutes: number) => {
+      const state = actions.find((a) => a.action.id === actionId);
+      const current = workspaceRef.current;
+      if (!state || state.phase === "confirming" || current.status !== "ok") return;
+      const dueAt = Date.now() + minutes * 60_000;
+      updateAction(actionId, { dueMinutes: minutes, dueAt, failure: undefined });
+      const outcome = await api.propose({
+        effect: state.action.effect,
+        target: state.action.target,
+        userLabel: state.label,
+        workspaceId: current.data.id,
+        planVersion: planVersionOf(current.data),
+        idempotencyKey: newIdempotencyKey(),
+        dueAt: new Date(dueAt).toISOString(),
+      });
+      if (!live.current) return;
+      if (!outcome.ok) {
+        updateAction(actionId, { phase: "failed", failure: outcome.failure });
+        return;
+      }
+      void api.cancel(actionId);
+      setActions((list) =>
+        list.map((a) =>
+          a.action.id === actionId ? { ...a, action: outcome.data, phase: "preview", failure: undefined, dueMinutes: minutes, dueAt } : a,
+        ),
+      );
+    },
+    [actions, api, updateAction],
   );
 
   const addFollowUp = useCallback((followUp: FollowUp) => {
@@ -429,7 +466,7 @@ export function useBoard(api: BoardApi, location: LocationConsent, session: Loca
     const current = workspaceRef.current;
     if (current.status !== "ok") return;
     setActivation(LOADING);
-    const outcome = await api.activateTrip(current.data.id, current.data.version);
+    const outcome = await api.activateTrip(current.data.id, planVersionOf(current.data));
     if (!live.current) return;
     if (outcome.ok) {
       setActivation({ status: "ok", data: null });

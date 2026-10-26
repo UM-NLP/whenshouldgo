@@ -5,9 +5,10 @@ import threading
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from app.actions import ActionService, ProposeActionBody
+from app.actions import ActionService
 from app.domain import (
-    Principal, PrincipalKind, TripWorkspace, PendingActionEffect as E, SavedPlaceKind,
+    Principal, PrincipalKind, ProposeActionRequest, TripWorkspace, PendingActionEffect as E,
+    SavedPlaceKind,
 )
 from app.entitlements import Allowance, EntitlementPolicy, Period, PolicyRegistry
 from app.quota import QuotaService
@@ -91,7 +92,7 @@ class Env:
             clock=self.clock, runtime_config=config, saved_place_sink=self.sink,
             trace_sink=self.trace)
 
-    def body(self, effect: E = E.LAUNCH_HANDOFF, **kw: Any) -> ProposeActionBody:
+    def body(self, effect: E = E.LAUNCH_HANDOFF, **kw: Any) -> ProposeActionRequest:
         base: dict[str, Any] = dict(workspace_id="ws1", plan_version=1, effect=effect, target=PLACE)
         if effect == E.SET_REMINDER:
             base["due_at"] = self.clock() + timedelta(hours=2)
@@ -100,7 +101,7 @@ class Env:
             base["user_label"] = "Home"
             base["label_kind"] = SavedPlaceKind.HOME
         base.update(kw)
-        return ProposeActionBody(**base)
+        return ProposeActionRequest(**base)
 
     def propose(self, effect: E = E.LAUNCH_HANDOFF, key: str = KEY, principal: Principal = GUEST,
                 **kw: Any):

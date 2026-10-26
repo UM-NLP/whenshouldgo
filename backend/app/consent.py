@@ -22,21 +22,43 @@ from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from typing import Protocol, runtime_checkable
 
-from .domain import ConsentProcessor, ConsentPurpose, ConsentRecord, ConsentScope, evolve
+from .domain import (
+    ConsentProcessor,
+    ConsentPurpose,
+    ConsentRecord,
+    ConsentScope,
+    RuntimeConfig,
+    evolve,
+    history_active,
+)
 from .stores.memory import MemoryConsentLedger
 from .stores.protocols import ConsentLedgerStore
 
 # The notice text the client shows before it calls POST /v1/me/consents. A grant must name this
 # exact version: a stale client cannot record consent to a notice the server no longer serves.
 LOCATION_NOTICE_VERSION = "location-notice-1"
-SUPPORTED_PURPOSES = frozenset({ConsentPurpose.LOCATION_FOREGROUND})
+# History and saved places (decisions 24 and 25) are grantable only while ``history_active(config)``
+# holds, and then only against the config's approved ``history_notice_version`` (never a constant
+# here): with history off the grant is a typed DISABLED and a stored consent reads as inactive.
+HISTORY_PURPOSES = frozenset({ConsentPurpose.HISTORY_STORE, ConsentPurpose.SAVED_PLACE})
+SUPPORTED_PURPOSES = frozenset({ConsentPurpose.LOCATION_FOREGROUND}) | HISTORY_PURPOSES
+# docs/data-and-history-design.md: the notice names Google, OpenRouter and the upstream model host.
+_NOTICE_PROCESSORS = (
+    ConsentProcessor.GOOGLE, ConsentProcessor.OPENROUTER, ConsentProcessor.UPSTREAM_MODEL_HOST)
 PROCESSORS: dict[ConsentPurpose, tuple[ConsentProcessor, ...]] = {
     ConsentPurpose.LOCATION_FOREGROUND: (ConsentProcessor.GOOGLE,),
+    ConsentPurpose.HISTORY_STORE: _NOTICE_PROCESSORS,
+    ConsentPurpose.SAVED_PLACE: _NOTICE_PROCESSORS,
 }
+# Fixed notices only; the history purposes' notice comes from the runtime config.
 NOTICE_VERSIONS: dict[ConsentPurpose, str] = {
     ConsentPurpose.LOCATION_FOREGROUND: LOCATION_NOTICE_VERSION,
 }
-_CONTEXT = {ConsentPurpose.LOCATION_FOREGROUND: "location.foreground"}
+_CONTEXT = {
+    ConsentPurpose.LOCATION_FOREGROUND: "location.foreground",
+    ConsentPurpose.HISTORY_STORE: "history.store",
+    ConsentPurpose.SAVED_PLACE: "saved_place",
+}
 
 
 # Upper bound on principals an OperationLimiter tracks (least recently used are dropped). A dropped
@@ -46,6 +68,10 @@ MAX_TRACKED_OWNERS = 50_000
 
 class WrongNoticeVersion(Exception):
     """The grant named a notice version the server does not currently serve."""
+
+
+class ConsentDisabled(Exception):
+    """The purpose belongs to a feature that is switched off (history is not active)."""
 
 
 @runtime_checkable
@@ -65,9 +91,19 @@ class InMemoryConsentStore:
     def __init__(
         self, clock: Callable[[], datetime] | None = None, *,
         ledger: ConsentLedgerStore | None = None,
+        config: RuntimeConfig | Callable[[], RuntimeConfig | None] | None = None,
     ) -> None:
         self._clock = clock or (lambda: datetime.now(UTC))
         self._ledger: ConsentLedgerStore = ledger if ledger is not None else MemoryConsentLedger()
+        self._config = config
+
+    def notice_version_for(self, purpose: ConsentPurpose) -> str | None:
+        """The notice a grant must name now: fixed for location, the approved config notice for
+        the history purposes (None while history is not active, so nothing matches)."""
+        if purpose in HISTORY_PURPOSES:
+            config = self._config() if callable(self._config) else self._config
+            return config.history_notice_version if history_active(config) else None
+        return NOTICE_VERSIONS.get(purpose)
 
     @staticmethod
     def _latest(records: tuple[ConsentRecord, ...]) -> dict[str, ConsentRecord]:
@@ -76,18 +112,32 @@ class InMemoryConsentStore:
             latest[record.id] = record
         return latest
 
-    @classmethod
     def _active_for(
-        cls, records: tuple[ConsentRecord, ...], purpose: ConsentPurpose
+        self, records: tuple[ConsentRecord, ...], purpose: ConsentPurpose
     ) -> ConsentRecord | None:
-        for record in cls._latest(records).values():
+        current = self.notice_version_for(purpose)
+        for record in self._latest(records).values():
             if (record.purpose == purpose and record.withdrawn_at is None
-                    and record.notice_version == NOTICE_VERSIONS.get(purpose)):
+                    and record.notice_version == current):
+                return record
+        return None
+
+    def _open_for(
+        self, records: tuple[ConsentRecord, ...], purpose: ConsentPurpose
+    ) -> ConsentRecord | None:
+        """A consent not yet withdrawn, whatever notice it named: withdrawal always works."""
+        for record in self._latest(records).values():
+            if record.purpose == purpose and record.withdrawn_at is None:
                 return record
         return None
 
     def grant(self, owner_id: str, purpose: ConsentPurpose, notice_version: str) -> ConsentRecord:
-        if purpose not in SUPPORTED_PURPOSES or notice_version != NOTICE_VERSIONS[purpose]:
+        if purpose not in SUPPORTED_PURPOSES:
+            raise WrongNoticeVersion()
+        current = self.notice_version_for(purpose)
+        if purpose in HISTORY_PURPOSES and current is None:
+            raise ConsentDisabled()  # history is off: nothing is grantable, nothing is written
+        if notice_version != current:
             raise WrongNoticeVersion()
 
         def decide(records: tuple[ConsentRecord, ...]) -> tuple[tuple[ConsentRecord, ...], ConsentRecord]:
@@ -104,7 +154,7 @@ class InMemoryConsentStore:
 
     def withdraw(self, owner_id: str, purpose: ConsentPurpose) -> bool:
         def decide(records: tuple[ConsentRecord, ...]) -> tuple[tuple[ConsentRecord, ...], bool]:
-            existing = self._active_for(records, purpose)
+            existing = self._open_for(records, purpose)
             if existing is None:
                 return (), False
             now = max(self._clock(), existing.granted_at)
@@ -115,7 +165,7 @@ class InMemoryConsentStore:
     def active(self, owner_id: str) -> tuple[ConsentRecord, ...]:
         return tuple(
             r for r in self._latest(self._ledger.read(owner_id)).values()
-            if r.withdrawn_at is None and r.notice_version == NOTICE_VERSIONS.get(r.purpose))
+            if r.withdrawn_at is None and r.notice_version == self.notice_version_for(r.purpose))
 
     def has_active(self, owner_id: str, purpose: ConsentPurpose) -> bool:
         return self._active_for(self._ledger.read(owner_id), purpose) is not None

@@ -33,7 +33,6 @@ from .domain import (
     ConsentPurpose,
     ErrorCode,
     ErrorReason,
-    Fact,
     FactSource,
     OutcomeAck,
     OutcomeCheckin,
@@ -107,7 +106,7 @@ class WorkspaceConflict(WorkspaceError):
     code = ErrorCode.CONFLICT
 
     def __init__(self, current_version: int) -> None:
-        super().__init__(f"workspace version conflict; current version {current_version}")
+        super().__init__("workspace version conflict")  # fixed text; the version is a typed field
         self.current_version = current_version
 
 
@@ -133,6 +132,14 @@ class NoteRejected(WorkspaceError):
     default_message = "note not accepted"
 
 
+class WorkspaceUnavailable(WorkspaceError):
+    """The account was deleted while the request was in flight."""
+
+    status = 403
+    code = ErrorCode.POLICY
+    default_message = "account unavailable"
+
+
 class WorkspaceBusy(WorkspaceError):
     status = 409
     code = ErrorCode.CONFLICT
@@ -152,21 +159,13 @@ class WorkspaceSnapshot:
         return self.latest_plan.warnings if self.latest_plan is not None else ()
 
 
-_EXTRA_VIEW_FIELDS = ("latest_plan", "warnings", "plan_versions")
-
-
 def to_view(snapshot: WorkspaceSnapshot) -> WorkspaceView:
-    """The client-facing view. Fields ``WorkspaceView`` does not declare yet (``latest_plan``,
-    ``warnings``, ``plan_versions``) are included as soon as the contract gains them."""
+    """The client-facing view: no owner and no evidence."""
     ws = snapshot.workspace
-    fields: dict[str, Any] = {
-        "id": ws.id, "status": ws.status, "version": ws.version, "goal": ws.goal,
-        "facts": tuple(ws.facts), "pending_actions": tuple(ws.pending_actions)}
-    extra = {"latest_plan": snapshot.latest_plan, "warnings": snapshot.warnings,
-             "plan_versions": snapshot.plan_versions}
-    declared = WorkspaceView.model_fields
-    fields.update({k: v for k, v in extra.items() if k in declared})
-    return WorkspaceView(**fields)
+    return WorkspaceView(
+        id=ws.id, status=ws.status, version=ws.version, goal=ws.goal, facts=tuple(ws.facts),
+        pending_actions=tuple(ws.pending_actions), latest_plan=snapshot.latest_plan,
+        warnings=snapshot.warnings, plan_versions=snapshot.plan_versions)
 
 
 # --- per-tenant lock -------------------------------------------------------------------------
@@ -240,8 +239,9 @@ class WorkspaceService:
         consents: ConsentStore | None = None,
         runtime_config: RuntimeConfig | Callable[[], RuntimeConfig | None] | None = None,
         clock: Callable[[], datetime] | None = None, sink: TraceSink | None = None,
-        lock: LockFactory | None = None,
+        lock: LockFactory | None = None, account_guard: Callable[[str], None] | None = None,
     ) -> None:
+        self._account_guard = account_guard  # raises once the account is deleted
         self._workspaces = workspaces
         self._stores = stores
         self._policies = policies
@@ -277,14 +277,32 @@ class WorkspaceService:
             return existing, False
         return TripWorkspace(id=str(uuid4()), owner_id=principal.uid), True
 
+    def _assert_active(self, uid: str) -> None:
+        """Before any write: a request in flight when the account is deleted writes nothing back
+        (the tombstone is written first; an unreadable tombstone fails closed)."""
+        if self._account_guard is None:
+            return
+        try:
+            self._account_guard(uid)
+        except Exception:  # noqa: BLE001
+            inactive = True
+        else:
+            inactive = False
+        if inactive:
+            raise WorkspaceUnavailable()
+
     # -- reads --
     def read(self, principal: Principal) -> WorkspaceSnapshot:
         now = self._clock()
         with self._lock((principal.uid, WORKSPACE_NAME)):
             workspace, created = self._current(principal, now)
             if created:
-                self._workspaces.put(principal.uid, WORKSPACE_NAME, workspace, now,
-                                     self._ttl(principal))
+                self._assert_active(principal.uid)
+            if created and not self._workspaces.put_if_version(
+                    principal.uid, WORKSPACE_NAME, workspace, now, self._ttl(principal),
+                    expected_version=None):
+                # Another instance created it first: that one is the workspace.
+                workspace, _ = self._current(principal, now)
             return self._snapshot(principal, workspace, now)
 
     def plan_version(self, principal: Principal, version: int) -> PlanVersion | None:
@@ -374,7 +392,16 @@ class WorkspaceService:
             plan = self._plan_for_edit(principal, workspace, updated, result.changed_ids)
             if plan is not None:
                 updated = self.with_plan(updated, plan)
-            self._workspaces.put(principal.uid, WORKSPACE_NAME, updated, now, self._ttl(principal))
+            self._assert_active(principal.uid)
+            # Compare-and-set on the version this edit read: a concurrent writer on another
+            # instance (the in-process lock cannot see it) makes this a typed 409, never a lost update.
+            if not self._workspaces.put_if_version(
+                    principal.uid, WORKSPACE_NAME, updated, now, self._ttl(principal),
+                    expected_version=None if _created else workspace.version):
+                current, _ = self._current(principal, now)
+                self._trace(WorkspaceEdit, upserts=len(request.upsert_facts),
+                            removals=len(request.remove_fact_ids), outcome=EditOutcome.CONFLICT)
+                raise WorkspaceConflict(current.version)
             self._stores.receipts.put(principal.uid, idempotency_key,
                                       EditReceipt(fingerprint, updated.version), now)
             self._trace(WorkspaceEdit, upserts=result.upserts, removals=result.removals,
@@ -425,6 +452,7 @@ class WorkspaceService:
                 raise NoteRejected()
         stored = self._may_store(principal)
         if stored:
+            self._assert_active(principal.uid)
             key = idempotency_key or hashlib.sha256(
                 f"{checkin.place_id}\x1f{checkin.outcome.value}\x1f{checkin.note or ''}"
                 .encode()).hexdigest()
@@ -446,17 +474,18 @@ def build_workspace_service(
     consents: ConsentStore | None = None,
     runtime_config: RuntimeConfig | Callable[[], RuntimeConfig | None] | None = None,
     clock: Callable[[], datetime] | None = None, sink: TraceSink | None = None,
-    lock: LockFactory | None = None,
+    lock: LockFactory | None = None, account_guard: Callable[[str], None] | None = None,
 ) -> WorkspaceService:
     """The service over the SAME ``WorkspaceStore`` the orchestrator uses (one workspace per
     tenant) and the plan/outcome/receipt stores. Pass ``lock`` = the orchestrator's per-tenant
     workspace lock so a user edit and a turn never interleave."""
     return WorkspaceService(workspaces, stores, policies=policies, consents=consents,
-                            runtime_config=runtime_config, clock=clock, sink=sink, lock=lock)
+                            runtime_config=runtime_config, clock=clock, sink=sink, lock=lock,
+                            account_guard=account_guard)
 
 
 __all__ = [
     "EditRejected", "IdempotencyKeyReused", "NoteRejected", "WorkspaceBusy", "WorkspaceConflict",
     "WorkspaceError", "WorkspaceNotConfigured", "WorkspaceService", "WorkspaceSnapshot",
-    "build_workspace_service", "to_view",
+    "WorkspaceUnavailable", "build_workspace_service", "to_view",
 ]

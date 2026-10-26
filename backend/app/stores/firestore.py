@@ -290,8 +290,9 @@ class FirestoreWorkspaceStore(_Base):
             raise StoredDataError("workspace belongs to another tenant")
         return workspace
 
-    def put(self, owner_id: str, name: str, workspace: TripWorkspace, now: datetime,
-            ttl: timedelta | None) -> None:
+    @staticmethod
+    def _record(owner_id: str, name: str, workspace: TripWorkspace, now: datetime,
+                ttl: timedelta | None) -> dict[str, Any]:
         if workspace.owner_id != owner_id:
             raise ValueError("workspace owner does not match the tenant key")
         doc: dict[str, Any] = {
@@ -299,7 +300,37 @@ class FirestoreWorkspaceStore(_Base):
             "name": name, "workspace": workspace.model_dump(mode="json"), "updated_at": now}
         if ttl is not None:
             doc["expires_at"] = now + ttl  # refreshed by every write: inactive days
+        return doc
+
+    def put(self, owner_id: str, name: str, workspace: TripWorkspace, now: datetime,
+            ttl: timedelta | None) -> None:
+        doc = self._record(owner_id, name, workspace, now, ttl)
         self._ref(owner_id, name).set(doc)  # a full replace also clears an old expires_at
+
+    def put_if_version(self, owner_id: str, name: str, workspace: TripWorkspace, now: datetime,
+                       ttl: timedelta | None, *, expected_version: int | None) -> bool:
+        doc = self._record(owner_id, name, workspace, now, ttl)
+        ref = self._ref(owner_id, name)
+
+        def body(txn: Any) -> bool:
+            snap = ref.get(transaction=txn)
+            current: int | None = None
+            if snap.exists:
+                stored = snap.to_dict()
+                if stored.get("owner_id") != owner_id or stored.get("name") != name:
+                    raise StoredDataError("workspace document does not belong to this tenant")
+                expires = stored.get("expires_at")
+                if expires is None or now < expires:  # an expired record reads as absent
+                    try:
+                        current = TripWorkspace.model_validate(stored["workspace"]).version
+                    except (ValidationError, KeyError):
+                        raise StoredDataError("workspace document does not match the schema") from None
+            if current != expected_version:
+                return False
+            txn.set(ref, doc)
+            return True
+
+        return self._transact(body)
 
     def delete(self, owner_id: str, name: str) -> None:
         self._ref(owner_id, name).delete()

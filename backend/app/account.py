@@ -32,13 +32,12 @@ from __future__ import annotations
 import hmac
 import secrets
 import threading
-from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, field
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
-from typing import Any, Literal, Protocol
+from typing import Any, Protocol
 
-from pydantic import Field
 
 from .consent import ConsentStore, OperationLimiter
 from .domain import (
@@ -47,10 +46,11 @@ from .domain import (
     AccountLinkResult,
     DeleteReceipt,
     ExportBundle,
+    ExportUsage,
+    ExportWorkspace,
     Fact,
     FactSource,
     Frozen,
-    Ident,
     LinkProvider,
     OutcomeCheckin,
     OutingRecord,
@@ -61,7 +61,6 @@ from .domain import (
     SavedPlace,
     Tier,
     TripWorkspace,
-    WorkspaceStatus,
     history_active,
 )
 from .migration import (
@@ -209,34 +208,9 @@ class _Contributor:
     requires_history: bool
 
 
-# --- export contract (additive to ExportBundle; promote to domain.py, see the report) ----------
-class ExportWorkspace(Frozen):
-    kind: Literal["export_workspace"] = "export_workspace"
-    id: Ident
-    status: WorkspaceStatus
-    timezone: str = Field(max_length=64)
-    goal: str | None = Field(default=None, max_length=20_000)
-    facts: tuple[Fact, ...] = Field(default=(), max_length=1_000)  # no TOOL facts, no evidence ids
-    active_plan_version: int | None = None
-
-
-class ExportUsage(Frozen):
-    kind: Literal["export_usage"] = "export_usage"
-    successful_turns: int = Field(ge=0)
-    activated_trips: int = Field(ge=0)
-    window_started_at: datetime | None = None
-
-
-class AccountExportBundle(ExportBundle):
-    """``ExportBundle`` plus the rest of what the server holds for the caller."""
-
-    tier: Tier
-    history_active: bool
-    workspaces: tuple[ExportWorkspace, ...] = Field(default=(), max_length=100)
-    plan_versions: tuple[PlanVersion, ...] = Field(default=(), max_length=10_000)
-    outcomes: tuple[OutcomeCheckin, ...] = Field(default=(), max_length=10_000)
-    usage: ExportUsage
-
+# The export contract lives in domain.py (ExportBundle, ExportWorkspace, ExportUsage); the old
+# name stays importable.
+AccountExportBundle = ExportBundle
 
 ExportPart.model_rebuild()
 
@@ -620,6 +594,36 @@ def register_state_deleters(
     registry.register("account_migrations", account_store.delete_migrations)
 
 
+def register_plan_state(
+    service: AccountService, *, stores: StateStores, plan_stores: Any, action_store: Any,
+    clock: Callable[[], datetime],
+) -> None:
+    """Deleters for plan versions, outcomes, edit receipts and pending actions, plus the export
+    contributor for plan versions and outcomes (both backends: each store knows its own delete)."""
+    service.deleters.register("plans", plan_stores.plans.delete_owner)
+    service.deleters.register("outcomes", plan_stores.outcomes.delete_all)
+    service.deleters.register("edit_receipts", plan_stores.receipts.delete_owner)
+    service.deleters.register("pending_actions", action_store.delete_owner)
+
+    def contribute(uid: str) -> ExportPart:
+        now = clock()
+        versions: list[PlanVersion] = []
+        seen: set[str] = set()
+        for name in (DEFAULT_WORKSPACE, *service.migrations.copied_targets(uid)):
+            workspace = stores.workspaces.get(uid, name, now)
+            if workspace is not None and workspace.owner_id == uid and workspace.id not in seen:
+                seen.add(workspace.id)
+                versions.extend(plan_stores.plans.history(uid, workspace.id, now))
+        outcomes = tuple(
+            OutcomeCheckin(place_id=e.place_id, outcome=e.outcome, note=e.note)
+            for e in plan_stores.outcomes.entries(uid, now))
+        return ExportPart(plan_versions=tuple(versions), outcomes=outcomes)
+
+    # Not gated by history: outcomes exist only because history was once active and consented to,
+    # and the user can export them whatever the flag says now.
+    service.register_export("plans_outcomes", contribute)
+
+
 # --- composition -------------------------------------------------------------------------------
 def build_account_service(
     *, stores: StateStores, quotas: QuotaService, consents: ConsentStore,
@@ -656,5 +660,6 @@ __all__ = [
     "AccountError", "AccountErrorKind", "AccountExportBundle", "AccountLimits", "AccountOp",
     "AccountService", "AdminAccount", "DeleteReport", "Deleter", "DeleterRegistry",
     "ExportPart", "ExportUsage", "ExportWorkspace", "FirebaseAdmin", "build_account_service",
-    "export_workspace_of", "register_owner_collection", "register_state_deleters",
+    "export_workspace_of", "register_owner_collection", "register_plan_state",
+    "register_state_deleters",
 ]

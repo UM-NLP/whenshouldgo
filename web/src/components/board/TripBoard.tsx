@@ -1,6 +1,14 @@
 import type { BoardApi, Fact } from "../../board/boardApi";
 import { useNow } from "../../board/useNow";
-import { boardFailureText, canRetry, factStale, freshness, routeSummary, splitFacts } from "../../board/viewModels";
+import {
+  boardFailureText,
+  canRetry,
+  factStale,
+  freshness,
+  planWarningText,
+  routeSummary,
+  splitFacts,
+} from "../../board/viewModels";
 import type { Board } from "../../useBoard";
 import type { LocationConsent } from "../../useLocationConsent";
 import { ActionCard } from "./ActionCard";
@@ -36,6 +44,7 @@ export function TripBoard({ api, board, location }: Props) {
 
   const warnings: string[] = [];
   if (view?.status === "UNSUPPORTED") warnings.push("This kind of request is not supported in this version, so the board may stay empty.");
+  for (const code of view?.warnings ?? []) warnings.push(planWarningText(code));
   const staleFacts = facts.filter((f) => factStale(f, now)).length;
   if (staleFacts > 0) warnings.push(`${staleFacts} item${staleFacts === 1 ? "" : "s"} on the board may be out of date.`);
   for (const c of board.candidates) {
@@ -207,8 +216,12 @@ export function TripBoard({ api, board, location }: Props) {
       {view ? (
         <section aria-label="Plan history">
           <h3>Plan history</h3>
-          <p>{`Plan version ${view.version}.`}</p>
-          <p className="muted">Earlier versions are not available yet.</p>
+          <p>{view.latest_plan ? `Plan version ${view.latest_plan.version}.` : `No plan yet. Board version ${view.version}.`}</p>
+          {(view.plan_versions ?? []).length > 1 ? (
+            <p className="muted">{`Earlier versions: ${(view.plan_versions ?? []).slice(0, -1).join(", ")}.`}</p>
+          ) : (
+            <p className="muted">No earlier versions.</p>
+          )}
           {view.status === "PROPOSED" || view.status === "CONFIRMED" ? (
             <div>
               <button type="button" disabled={board.activation.status === "loading" || board.activation.status === "ok"} onClick={board.activate}>

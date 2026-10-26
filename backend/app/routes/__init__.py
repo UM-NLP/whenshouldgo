@@ -1,8 +1,9 @@
 """One APIRouter per area. ``create_app`` includes every router; a feature owns only its module.
 
-``session``, ``consents`` and ``turns`` are live. ``places``, ``actions``, ``workspace``,
-``account``, ``history`` and ``saved_places`` hold typed 501 stubs that freeze the API contract;
-replace a stub's ``not_implemented`` call (keeping its path and models) when the route is built.
+``session``, ``consents``, ``turns``, ``places``, ``actions``, ``workspace``, ``account`` and the
+outcome route are live (each answers a typed 503 until its service is attached). The history and
+saved-place routes are dark typed 501 stubs behind ``require_history_active``; replace a stub's
+``not_implemented`` call (keeping its path and models) when the route is built.
 """
 from __future__ import annotations
 

@@ -69,8 +69,9 @@ export function discoveryBlock(overrides: Partial<DiscoveryBlock> = {}): Discove
     render_mode: "text",
     text: GROUNDED_TEXT,
     places: [
-      { title: "Noodle Bar", attribution_url: place, place_url: place },
+      { place_id: "ChIJplaceAAAA", title: "Noodle Bar", attribution_url: place, place_url: place },
       {
+        place_id: "ChIJplaceBBBB",
         title: "Tea House",
         attribution_url: `https://www.google.com/maps/place//data=!4m2!3m1!1sZyXwVuTs98:0xaabbccdd1122`,
         place_url: `https://www.google.com/maps/place//data=!4m2!3m1!1sZyXwVuTs98:0xaabbccdd1122`,

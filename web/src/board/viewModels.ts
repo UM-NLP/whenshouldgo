@@ -1,7 +1,7 @@
 // Pure view-models for the Trip Board: fixed copy and formatting, no I/O. Every string a user sees
 // from a failure is chosen here by kind; server message text never reaches the screen.
 import type { DiscoveryPlace } from "../api/client";
-import type { BoardFailure, ConfirmActionResponse, Fact, OutcomeValue, PendingAction, RouteCheck } from "./boardApi";
+import type { BoardFailure, ConfirmActionResponse, Fact, OutcomeValue, RouteCheck, Workspace } from "./boardApi";
 import type { OutingOutcome } from "../storage";
 
 export const MAX_CANDIDATES = 3;
@@ -10,8 +10,28 @@ export const REMINDER_COPY =
 
 /** The place ID comes only from the typed source field; it is never parsed out of text or a URL. */
 export function placeIdOf(place: DiscoveryPlace): string | null {
-  const value = (place as DiscoveryPlace & { place_id?: unknown }).place_id;
+  const value = place.place_id;
   return typeof value === "string" && value.length > 0 && value.length <= 300 ? value : null;
+}
+
+/** The plan version an action or activation names: the latest stored version, or 1 while the
+ * workspace has no plan yet (the server accepts any version until one is active). */
+export function planVersionOf(workspace: Workspace): number {
+  return workspace.latest_plan?.version ?? 1;
+}
+
+type PlanWarning = NonNullable<Workspace["warnings"]>[number];
+
+/** Fixed copy per server warning code; the codes carry no provider text. */
+const PLAN_WARNING_TEXT: Record<PlanWarning, string> = {
+  ASSUMPTIONS_UNCONFIRMED: "Some assumptions are not confirmed yet. Confirm or change them.",
+  EVIDENCE_STALE: "Place information may be out of date. Refresh before you go.",
+  ROUTE_UNVERIFIED: "The route has not been checked.",
+  DETAILS_UNAVAILABLE: "Place details were not available.",
+  HARD_NEED_UNVERIFIED: "A must-have need was not checked against the place. Check it yourself.",
+};
+export function planWarningText(code: PlanWarning): string {
+  return PLAN_WARNING_TEXT[code] ?? "Check this plan before you go.";
 }
 
 export type BoardArea = "workspace" | "edit" | "place" | "route" | "action" | "outcome" | "activate";
@@ -126,15 +146,10 @@ export function isPinnedMapsUrl(value: unknown): value is string {
   }
 }
 
-/** The URL the server returned at confirm time, or null. Read defensively: the field is not in the
- * frozen contract yet (see the web README gap list), and anything off the pinned host is dropped. */
+/** The URL the server returned at confirm time (typed `handoff_url`), or null. Anything off the
+ * pinned Google Maps host is dropped, even from the server. */
 export function handoffUrlFrom(response: ConfirmActionResponse): string | null {
-  const bag = response as unknown as Record<string, unknown>;
-  const action = response.action as PendingAction & Record<string, unknown>;
-  for (const candidate of [bag.handoff_url, action.handoff_url, action.target]) {
-    if (isPinnedMapsUrl(candidate)) return candidate;
-  }
-  return null;
+  return isPinnedMapsUrl(response.handoff_url) ? response.handoff_url : null;
 }
 
 export const OUTCOME_LABEL: Record<OutcomeValue, string> = {

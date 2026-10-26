@@ -109,11 +109,9 @@ def test_typed_errors() -> None:
     assert env.quotas.usage_for("guest-a").activated_trips == 0
 
 
-def test_save_place_confirm_is_typed_disabled() -> None:
+def test_save_place_propose_is_typed_disabled_without_history() -> None:
     client, _ = make()
-    action = propose(client, "SAVE_PLACE", user_label="Home", label_kind="HOME").json()
-    res = client.post(f"/v1/actions/{action['id']}/confirm", json={"nonce": action["nonce"]},
-                      headers=headers())
+    res = propose(client, "SAVE_PLACE", user_label="Home", label_kind="HOME")
     assert res.status_code == 404 and res.json()["reason"] == "DISABLED"
 
 
@@ -187,7 +185,7 @@ def test_canary_never_reaches_logs_telemetry_ledgers_or_stored_records(caplog) -
                      headers=headers())
     handoff = propose(client, key="idem-key-0002").json()
     url = client.post(f"/v1/actions/{handoff['id']}/confirm", json={"nonce": handoff["nonce"]},
-                      headers=headers()).json()["handoff_url"]
+                      headers=headers(key="idem-key-0002")).json()["handoff_url"]
     assert ok.status_code == 200 and url
     secrets = [LABEL, "CANARYLABEL", PLACE, url, action["nonce"], handoff["nonce"]]
 
