@@ -1,0 +1,17 @@
+.env
+.env.*
+**/.env
+**/.env.*
+.venv/
+**/__pycache__/
+**/*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.git/
+tests/
+scripts/
+evals/frame_bakeoff/results/
+*.pem
+*.key
+*credentials*.json
+*service-account*.json
