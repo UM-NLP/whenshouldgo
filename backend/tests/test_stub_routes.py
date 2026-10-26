@@ -1,6 +1,8 @@
-"""Item 4: every planned route (places/details and routes/check are now live: test_places_details_routes) exists as a typed 501 NOT_IMPLEMENTED stub with its final contract.
+"""The dark history and saved-place routes (built, decision 25): their frozen contract.
 
-History and saved-place routes answer a typed 404 DISABLED first, while ``history_enabled`` is off.
+They answer a typed 404 DISABLED first, while ``history_enabled`` is off; with history active but
+no service attached they answer a typed 503 SERVER_NOT_CONFIGURED. The behaviour itself is in
+test_history_routes.py and test_saved_places_routes.py.
 """
 from __future__ import annotations
 
@@ -55,7 +57,7 @@ def make(history: bool = False, monkeypatch: pytest.MonkeyPatch | None = None):
 
 def call(client, method, path, body, token="tok-a"):
     url = path.replace("{id}", "abc12345")
-    headers = {"Authorization": f"Bearer {token}"} if token else {}
+    headers = {"Authorization": f"Bearer {token}", "Idempotency-Key": "idem-key-0001"} if token else {}
     return client.request(method, url, json=body, headers=headers)
 
 
@@ -68,12 +70,13 @@ def test_requires_auth(method, path, req, resp, gated, body) -> None:
 
 
 @pytest.mark.parametrize("method,path,req,resp,gated,body", STUBS, ids=IDS)
-def test_typed_501_when_reachable(method, path, req, resp, gated, body, monkeypatch) -> None:
+def test_typed_503_until_the_service_is_attached(method, path, req, resp, gated, body,
+                                                 monkeypatch) -> None:
     client, _ = make(history=gated, monkeypatch=monkeypatch)
     response = call(client, method, path, body)
-    assert response.status_code == 501, response.text
-    assert response.json() == {"schema_version": 1, "kind": "error", "code": "PROVIDER",
-                               "message": "not implemented", "reason": "NOT_IMPLEMENTED"}
+    assert response.status_code == 503, response.text
+    assert response.json()["code"] == "PROVIDER"
+    assert response.json()["reason"] == "SERVER_NOT_CONFIGURED"
 
 
 @pytest.mark.parametrize("method,path,req,resp,gated,body", STUBS, ids=IDS)
@@ -87,7 +90,7 @@ def test_disabled_principal_is_refused(method, path, req, resp, gated, body, mon
 def test_rate_limited_with_the_existing_limiter(method, path, req, resp, gated, body, monkeypatch) -> None:
     client, _ = make(history=gated, monkeypatch=monkeypatch)
     statuses = [call(client, method, path, body).status_code for _ in range(125)]
-    assert statuses[0] == 501 and statuses[-1] == 429
+    assert statuses[0] == 503 and statuses[-1] == 429
     response = call(client, method, path, body)
     assert response.json()["reason"] == "RATE_LIMITED" and "retry-after" in response.headers
 
@@ -139,8 +142,7 @@ def test_capabilities_history_flag_comes_from_the_server(monkeypatch) -> None:
 def test_openapi_declares_the_final_contract(method, path, req, resp, gated, body) -> None:
     schema = create_app().openapi()
     operation = schema["paths"][path][method.lower()]
-    assert operation["responses"]["501"]["content"]["application/json"]["schema"]["$ref"].endswith(
-        "/ErrorBody")
+    assert "501" not in operation["responses"]  # built: no stub answer is documented any more
     assert ("404" in operation["responses"]) is gated
     ok = operation["responses"]["200"]["content"]["application/json"]["schema"]["$ref"]
     assert ok.endswith("/" + resp)

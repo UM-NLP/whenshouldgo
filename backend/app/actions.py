@@ -13,7 +13,9 @@ Effects (Phase 0 only; nothing else is accepted):
 * ``LAUNCH_HANDOFF``: returns a Maps URL built NOW from the place ID only (``handoff.py``); the URL
   is never stored or logged.
 * ``SAVE_PLACE``: created here, executable only while ``history_active``; the write goes through
-  the injected ``SavedPlaceSink`` (default: typed DISABLED). Saved-place storage is not here.
+  the injected ``SavedPlaceSink`` (default: typed DISABLED). Saved-place storage is not here. The
+  proposal carries the user's consented position (rounded on parse); it is held in the pending
+  record only until confirm, cancel or expiry and is then scrubbed (``ActionRecord.position``).
 
 Confirming a reminder or a handoff activates the workspace trip once (``QuotaService``); a user
 who has used their trips can still confirm (the gate never blocks these two effects).
@@ -39,6 +41,7 @@ from .domain import (
     Principal,
     ProposeActionRequest,
     ReminderItem,
+    RoundedPosition,
     RuntimeConfig,
     SavedPlaceKind,
     WorkspaceStatus,
@@ -75,6 +78,8 @@ class ActionFailure(StrEnum):
     CANCELLED = "CANCELLED"
     ALREADY_CONFIRMED = "ALREADY_CONFIRMED"
     DISABLED = "DISABLED"
+    NOT_ALLOWED = "NOT_ALLOWED"  # a guest: saved places stay on the device (decision 19)
+    CONSENT_REQUIRED = "CONSENT_REQUIRED"  # SAVED_PLACE consent is not held
     STALE_PLAN = "STALE_PLAN"
     IDEMPOTENCY_CONFLICT = "IDEMPOTENCY_CONFLICT"
     INVALID = "INVALID"
@@ -95,6 +100,8 @@ _TELEMETRY_REASON = {
     ActionFailure.CANCELLED: ActionRejectReason.CANCELLED,
     ActionFailure.ALREADY_CONFIRMED: ActionRejectReason.ALREADY_CONFIRMED,
     ActionFailure.DISABLED: ActionRejectReason.EFFECT_NOT_ALLOWED,
+    ActionFailure.NOT_ALLOWED: ActionRejectReason.EFFECT_NOT_ALLOWED,
+    ActionFailure.CONSENT_REQUIRED: ActionRejectReason.CONSENT_REQUIRED,
     ActionFailure.STALE_PLAN: ActionRejectReason.EXPIRED,  # approval no longer current
     ActionFailure.IDEMPOTENCY_CONFLICT: ActionRejectReason.EFFECT_NOT_ALLOWED,
     ActionFailure.INVALID: ActionRejectReason.EFFECT_NOT_ALLOWED,
@@ -102,16 +109,25 @@ _TELEMETRY_REASON = {
 
 
 class SavedPlaceSink(Protocol):
-    """Writes a confirmed SAVE_PLACE. Implemented by the history work; must be idempotent on
-    ``action_id``. Receives typed fields only (no position: see the report)."""
+    """Writes a confirmed SAVE_PLACE (``saved_places.SavedPlaceActionSink``). ``precheck`` runs at
+    propose time (flag, registered tier, SAVED_PLACE consent) and ``save_place`` again at commit,
+    so a consent withdrawn in between saves nothing. ``save_place`` must be idempotent on
+    ``action_id``. The position is the user's own, rounded: it is never logged."""
+
+    def precheck(self, principal: Principal) -> None: ...
 
     def save_place(self, principal: Principal, *, place_id: str, user_label: str,
-                   label_kind: SavedPlaceKind, action_id: str) -> None: ...
+                   label_kind: SavedPlaceKind, action_id: str,
+                   position: RoundedPosition) -> None: ...
 
 
 class DisabledSavedPlaceSink:
+    def precheck(self, principal: Principal) -> None:
+        raise ActionError(ActionFailure.DISABLED)
+
     def save_place(self, principal: Principal, *, place_id: str, user_label: str,
-                   label_kind: SavedPlaceKind, action_id: str) -> None:
+                   label_kind: SavedPlaceKind, action_id: str,
+                   position: RoundedPosition) -> None:
         raise ActionError(ActionFailure.DISABLED)
 
 
@@ -127,7 +143,8 @@ class ActivationOutcome:
 def _fingerprint(owner: str, body: ProposeActionRequest) -> str:
     due = body.due_at.astimezone(UTC).isoformat() if body.due_at else ""
     parts = (owner, body.effect.value, body.target, body.workspace_id, str(body.plan_version),
-             body.user_label or "", body.label_kind.value if body.label_kind else "", due)
+             body.user_label or "", body.label_kind.value if body.label_kind else "", due,
+             f"{body.position.latitude:.3f},{body.position.longitude:.3f}" if body.position else "")
     return hashlib.sha256("\x1f".join(parts).encode("utf-8")).hexdigest()
 
 
@@ -202,8 +219,13 @@ class ActionService:
         effect = body.effect
         if effect not in _ACTION_EFFECTS:
             raise self._reject(ActionFailure.INVALID, None)
-        if effect == PendingActionEffect.SAVE_PLACE and not history_active(self.runtime_config):
-            raise self._reject(ActionFailure.DISABLED, effect)  # nothing to save into: refuse early
+        if effect == PendingActionEffect.SAVE_PLACE:
+            if not history_active(self.runtime_config):
+                raise self._reject(ActionFailure.DISABLED, effect)  # nothing to save into
+            try:
+                self._sink.precheck(principal)  # registered tier and SAVED_PLACE consent
+            except ActionError as exc:
+                raise self._reject(exc.failure, effect) from None
         if not isinstance(idempotency_key, str) or not 8 <= len(idempotency_key) <= 200:
             raise self._reject(ActionFailure.INVALID, effect)
         if _PLACE_ID.fullmatch(body.target) is None:
@@ -215,8 +237,10 @@ class ActionService:
         elif body.due_at is not None:
             raise self._reject(ActionFailure.INVALID, effect)
         if effect == PendingActionEffect.SAVE_PLACE:
-            if not body.user_label or body.label_kind is None:
+            if not body.user_label or body.label_kind is None or body.position is None:
                 raise self._reject(ActionFailure.INVALID, effect)
+        elif body.position is not None:
+            raise self._reject(ActionFailure.INVALID, effect)  # a position is for SAVE_PLACE only
         elif effect == PendingActionEffect.LAUNCH_HANDOFF and body.label_kind is not None:
             raise self._reject(ActionFailure.INVALID, effect)
         elif effect == PendingActionEffect.SET_REMINDER and body.label_kind is not None:
@@ -243,7 +267,8 @@ class ActionService:
             expires_at=now + MAX_PENDING_ACTION_TTL)
         record = ActionRecord(
             owner_id=principal.uid, action=action, fingerprint=fingerprint,
-            user_label=body.user_label, label_kind=body.label_kind, due_at=body.due_at)
+            user_label=body.user_label, label_kind=body.label_kind, due_at=body.due_at,
+            position=body.position)
         stored = self._store.update(
             principal.uid, action_id, lambda current: (current or record, current or record))
         if stored.fingerprint != fingerprint:  # lost a race to a different request on this key
@@ -280,8 +305,9 @@ class ActionService:
                 return None, (ActionFailure.IDEMPOTENCY_CONFLICT, rec)
             if rec.status == ActionStatus.CONFIRMED:
                 return None, ("replay", rec)
-            if now > action.expires_at:
-                return None, (ActionFailure.EXPIRED, rec)
+            if now > action.expires_at:  # an expired proposal keeps no position
+                return (replace(rec, position=None) if rec.position is not None else None,
+                        (ActionFailure.EXPIRED, rec))
             if action.effect == PendingActionEffect.SAVE_PLACE and not history:
                 return None, (ActionFailure.DISABLED, rec)
             if not self._plan_ok(workspace, action.plan_version):
@@ -297,7 +323,7 @@ class ActionService:
         assert rec is not None
         first = outcome == "confirmed"
         if rec.action.effect == PendingActionEffect.SAVE_PLACE:
-            if first:
+            if first or rec.position is not None:  # a replay finishes a save that was cut short
                 self._save_place(principal, rec)
         else:
             self._activate(principal, rec.action.workspace_id)  # idempotent per workspace
@@ -305,16 +331,25 @@ class ActionService:
         return self._result(rec)
 
     def _save_place(self, principal: Principal, rec: ActionRecord) -> None:
-        assert rec.user_label is not None and rec.label_kind is not None
         try:
+            if rec.user_label is None or rec.label_kind is None or rec.position is None:
+                raise ActionError(ActionFailure.INVALID)  # never report a save that cannot happen
             self._sink.save_place(
                 principal, place_id=rec.action.target, user_label=rec.user_label,
-                label_kind=rec.label_kind, action_id=rec.action.id)
+                label_kind=rec.label_kind, action_id=rec.action.id, position=rec.position)
         except BaseException as exc:
             self._store.update(principal.uid, rec.action.id, self._reopen)  # nothing was saved
             if isinstance(exc, ActionError):
                 raise self._reject(exc.failure, rec.action.effect) from None
             raise
+        # The position now lives in the saved place only: scrub it from the pending record.
+        self._store.update(principal.uid, rec.action.id, self._scrub)
+
+    @staticmethod
+    def _scrub(rec: ActionRecord | None) -> tuple[ActionRecord | None, None]:
+        if rec is None or rec.position is None:
+            return None, None
+        return replace(rec, position=None, user_label=None), None
 
     @staticmethod
     def _reopen(rec: ActionRecord | None) -> tuple[ActionRecord | None, None]:
@@ -346,7 +381,7 @@ class ActionService:
                 return None, (ActionFailure.ALREADY_CONFIRMED, rec)
             if rec.status == ActionStatus.CANCELLED:
                 return None, ("cancelled", rec)
-            return replace(rec, status=ActionStatus.CANCELLED), ("cancelled", rec)
+            return replace(rec, status=ActionStatus.CANCELLED, position=None), ("cancelled", rec)
 
         outcome, rec = self._store.update(principal.uid, action_id, decide)
         if isinstance(outcome, ActionFailure):
@@ -377,6 +412,11 @@ class ActionService:
     # -- retention ---------------------------------------------------------------------------------
     def purge(self) -> int:
         return self._store.purge(self._clock())
+
+    def delete_save_place_records(self, uid: str) -> int:
+        """SAVED_PLACE consent withdrawn: no pending or confirmed SAVE_PLACE record (label, held
+        position) remains for the user."""
+        return self._store.delete_save_place_records(uid)
 
 
 def build_action_service(

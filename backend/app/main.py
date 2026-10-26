@@ -187,6 +187,9 @@ def create_app(
     application.state.consents = consent_store or InMemoryConsentStore(
         clock, config=application.state.runtime_config)
     application.state.consent_limiter = OperationLimiter(clock)
+    # Per history purpose, the data deleters a withdrawal runs (decisions 24 and 25). The
+    # composition root registers them; each takes the verified uid and deletes everything it holds.
+    application.state.consent_withdrawal_hooks = {}
     application.state.clock = clock or (lambda: datetime.now(UTC))
     # Bootstrap is the tightest (once per page load); reads of the meter and capabilities are cheap.
     application.state.bootstrap_limiter = OperationLimiter(clock, max_operations=30)

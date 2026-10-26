@@ -774,6 +774,10 @@ class ErrorReason(StrEnum):
     WRONG_UID = "WRONG_UID"  # the token is not the identity the intent was issued to
     ANONYMOUS_PROVIDER = "ANONYMOUS_PROVIDER"  # still anonymous: sign in with a permanent provider
     MIGRATION_INTERRUPTED = "MIGRATION_INTERRUPTED"  # the merge is saved; call again to resume
+    # Phase 1, built dark (decisions 19, 24, 25): server history and saved places are for registered
+    # accounts only, and only while the matching consent is held.
+    GUEST_NOT_ALLOWED = "GUEST_NOT_ALLOWED"  # guests keep history and saved places on the device
+    CONSENT_REQUIRED = "CONSENT_REQUIRED"  # HISTORY_STORE or SAVED_PLACE consent is not held
 
 
 class ErrorBody(Frozen):
@@ -932,6 +936,9 @@ class TurnResponse(Frozen):
     # Additive (schema_version stays 1): present only for a turn that ran discovery.
     discovery: DiscoveryBlock | None = None
     warnings: tuple[TurnWarning, ...] = Field(default=(), max_length=10)
+    # Additive (decision 24): present only when the server wants the client to show its fixed
+    # "save as Home/Work?" question. Server-authored text, never model-generated.
+    saved_place_prompt: SavedPlacePrompt | None = None
 
 
 # --- Phase 1 contracts, built dark (decisions 24, 25, 27) --------------------------
@@ -1045,6 +1052,10 @@ class OutcomeCheckin(Frozen):
     place_id: PlaceId
     outcome: OutcomeValue
     note: Annotated[str, StringConstraints(max_length=280)] | None = Field(default=None, repr=False)
+    # Additive, optional (decision 19): what the user chose at check-in. Used only for the
+    # opt-in server history record; never a Maps name.
+    user_label: _LabelText | None = Field(default=None, repr=False)
+    intent_tag: IntentTag | None = None
 
 
 class LinkProvider(StrEnum):
@@ -1139,6 +1150,8 @@ class RouteCheckResponse(Frozen):
 
 
 class ProposeActionRequest(Frozen):
+    model_config = ConfigDict(extra="forbid", frozen=True, hide_input_in_errors=True)
+
     schema_version: int = Field(default=SCHEMA_VERSION, ge=1)
     workspace_id: Ident
     plan_version: int = Field(ge=1)
@@ -1146,6 +1159,10 @@ class ProposeActionRequest(Frozen):
     target: Ident
     user_label: _LabelText | None = None
     label_kind: SavedPlaceKind | None = None
+    # SAVE_PLACE only (decision 24): the user's consented foreground position, rounded on parse.
+    # Held only in the pending-action record until confirm (then in the saved place); never
+    # logged, never sent to a model.
+    position: RoundedPosition | None = Field(default=None, repr=False)
     # SET_REMINDER only: when the in-app reminder is due (within a day of the proposal).
     due_at: AwareDatetime | None = None
 
@@ -1346,3 +1363,82 @@ class SavedPlaceDeleteResult(Frozen):
     schema_version: int = Field(default=SCHEMA_VERSION, ge=1)
     kind: Literal["saved_place_delete_result"] = "saved_place_delete_result"
     deleted: int = Field(ge=0)
+
+
+# --- Phase 1: history settings and edits, saved-place ask policy (built dark) ---------------
+
+HISTORY_DEFAULT_RETENTION_DAYS = 90  # decision 27
+HISTORY_MIN_RETENTION_DAYS = 30  # decision 27: the user may pick 30 to 180
+HISTORY_MAX_RETENTION_DAYS = MAX_OUTING_RETENTION_DAYS  # decision 19: the 180-day ceiling
+
+
+class HistorySettings(Frozen):
+    schema_version: int = Field(default=SCHEMA_VERSION, ge=1)
+    kind: Literal["history_settings"] = "history_settings"
+    retention_days: int = Field(ge=HISTORY_MIN_RETENTION_DAYS, le=HISTORY_MAX_RETENTION_DAYS)
+    default_retention_days: int = HISTORY_DEFAULT_RETENTION_DAYS
+    min_retention_days: int = HISTORY_MIN_RETENTION_DAYS
+    max_retention_days: int = HISTORY_MAX_RETENTION_DAYS
+
+
+class HistorySettingsUpdate(Frozen):
+    """Shortening purges what is already past the new period, immediately."""
+
+    schema_version: int = Field(default=SCHEMA_VERSION, ge=1)
+    retention_days: int = Field(ge=HISTORY_MIN_RETENTION_DAYS, le=HISTORY_MAX_RETENTION_DAYS)
+
+
+class HistoryRecordEdit(Frozen):
+    """The user's edit of their own record: label, activity tag and feedback only."""
+
+    schema_version: int = Field(default=SCHEMA_VERSION, ge=1)
+    user_label: _LabelText | None = None
+    clear_label: bool = False
+    intent_tag: IntentTag | None = None
+    feedback: OutingFeedback | None = None
+
+
+class AskDecision(StrEnum):
+    DECLINED = "DECLINED"  # starts the 30-day cooldown for this label
+    DONT_ASK_AGAIN = "DONT_ASK_AGAIN"  # one-tap: never ask for this label
+    ASK_AGAIN = "ASK_AGAIN"  # clears the above
+
+
+class AskCheckRequest(Frozen):
+    """The user's message, read once for a home/work reference. Never stored or logged."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, hide_input_in_errors=True)
+
+    schema_version: int = Field(default=SCHEMA_VERSION, ge=1)
+    message: str = Field(min_length=1, max_length=2_000, repr=False)
+
+
+class SavedPlacePrompt(Frozen):
+    """Tells the client to show a FIXED question. ``question`` is server text, never model text."""
+
+    schema_version: int = Field(default=SCHEMA_VERSION, ge=1)
+    kind: Literal["saved_place_prompt"] = "saved_place_prompt"
+    ask: bool
+    label_kind: SavedPlaceKind | None = None  # HOME or WORK when ``ask``
+    question: str | None = Field(default=None, max_length=200)
+
+
+class AskStateUpdate(Frozen):
+    schema_version: int = Field(default=SCHEMA_VERSION, ge=1)
+    label_kind: SavedPlaceKind
+    decision: AskDecision
+
+
+class AskStateView(Frozen):
+    """``recorded`` is False when the server stored nothing (no SAVED_PLACE consent): the client
+    keeps the ask-state on the device, as a guest does."""
+
+    schema_version: int = Field(default=SCHEMA_VERSION, ge=1)
+    kind: Literal["saved_place_ask_state"] = "saved_place_ask_state"
+    label_kind: SavedPlaceKind
+    recorded: bool
+    dont_ask_again: bool = False
+    cooldown_until: AwareDatetime | None = None
+
+
+TurnResponse.model_rebuild()

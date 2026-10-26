@@ -44,6 +44,14 @@ price table is passed: the unreviewed default keeps Places Details and Routes di
 deleter and export contributor is registered with the account service, and a deleted account is
 refused by the orchestrator and the late writers (``account_service.assert_active``).
 
+PHASE 1, BUILT DARK (decision 25): ``history_service`` and ``saved_place_service`` are always built
+and attached, over the same backend as the other stores, but nothing in them runs unless
+``history_active(config)``: the ``history_enabled`` flag (``build_runtime(history_enabled=...)``,
+default False) AND a ``history_notice_version`` on the owner-approved list
+(``domain.APPROVED_HISTORY_NOTICE_VERSIONS``, empty until the signed legal checklist and Phase 0
+exit). The flag alone is never enough. Their deleters, export contributors and the consent-withdrawal
+cascade hooks are registered here.
+
 Escalation or fallback: a second model would be a second ``OpenRouterGateway`` (bound to its own
 audited ``RuntimeConfig``, see ``second_model_config``) wrapped in its own ``ResilientGateway``.
 It is NOT wired: a failover policy (when to escalate, how it is charged) is future work, and
@@ -63,7 +71,12 @@ from typing import Any
 
 from fastapi import FastAPI
 
-from .account import AccountService, build_account_service, register_plan_state
+from .account import (
+    AccountService,
+    build_account_service,
+    register_history_state,
+    register_plan_state,
+)
 from .actions import ActionService
 from .auth import IdentityVerifier, PrincipalResolver
 from .consent import InMemoryConsentStore
@@ -77,14 +90,17 @@ from .discovery import (
     McpTransport,
 )
 from .domain import (
+    ConsentPurpose,
     PhaseFlags,
     RuntimeConfig,
     RuntimeTTLs,
     TokenCeilings,
     ToolSchemaVersion,
+    evolve,
 )
 from .entitlements import PILOT_POLICY
 from .frame import prompt_version_hashes
+from .history import HistoryService
 from .gateway import (
     GatewayPolicy,
     HttpxTransport,
@@ -99,6 +115,7 @@ from .main import create_app
 from .orchestrator import TurnOrchestrator
 from .places import UNREVIEWED_PRICE_TABLE, PlacesPriceTable, build_places_service
 from .quota import QuotaService
+from .saved_places import SavedPlaceActionSink, SavedPlaceService
 from .stores import SpendBudget, StateStores, StoreKillSwitch, firestore_stores, memory_stores
 from .stores import firestore as firestore_adapters
 from .stores.actions_store import (
@@ -106,7 +123,9 @@ from .stores.actions_store import (
     MemoryPendingActionStore,
     PendingActionStore,
 )
+from .stores.history_store import firestore_history_store, memory_history_store
 from .stores.plans_store import PlanStores, firestore_plan_stores, memory_plan_stores
+from .stores.saved_places_store import firestore_saved_place_stores, memory_saved_place_stores
 from .telemetry import TraceSink
 from .workspaces import WorkspaceService, build_workspace_service
 
@@ -346,6 +365,8 @@ class Runtime:
     workspace_service: WorkspaceService | None = None
     account_service: AccountService | None = None
     plan_stores: PlanStores | None = None
+    history_service: HistoryService | None = None
+    saved_place_service: SavedPlaceService | None = None
 
     def __repr__(self) -> str:
         return f"Runtime(model={self.config.model_id!r}, provider={self.config.provider!r})"
@@ -359,6 +380,7 @@ class Runtime:
         return {
             "pending_actions": self.action_service.purge() if self.action_service else 0,
             "display_cache": self.display_cache.purge(),
+            "history": self.history_service.purge() if self.history_service else 0,
         }
 
 
@@ -380,6 +402,8 @@ def build_runtime(
     app_check_verifier: Any = None,
     disabled_uids: set[str] | None = None,
     firebase_admin: Any = None,
+    history_enabled: bool = False,
+    history_notice_version: str | None = None,
 ) -> Runtime:
     """Build the production app from ``env`` (a mapping the caller supplies).
 
@@ -391,7 +415,10 @@ def build_runtime(
     verifier. ``places_service`` overrides the built one (tests); by default it is built from the
     Maps key and ``places_price_table`` and stays OFF while that table is unreviewed. Durable state
     is chosen as the module docstring says. Raises ``ConfigurationError`` (static text, no values)
-    for any refusal."""
+    for any refusal.
+
+    ``history_enabled`` and ``history_notice_version`` set the Phase 1 config (decision 25); both are
+    inert until ``domain.APPROVED_HISTORY_NOTICE_VERSIONS`` lists the notice version."""
     if identity_verifier is None:
         raise ConfigurationError("an identity verifier is required (no production verifier yet)")
     now: Callable[[], datetime] = clock if clock is not None else (lambda: datetime.now(UTC))
@@ -407,6 +434,9 @@ def build_runtime(
     app_check_policy = _app_check_policy(env, app_check_verifier)
 
     config = pinned_runtime_config()
+    if history_enabled or history_notice_version is not None:
+        config = evolve(config, history_enabled=history_enabled,
+                        history_notice_version=history_notice_version)
     prices = pinned_price_table()
     latch = QuotaLatch()
     kill_switch = StoreKillSwitch(stores.costs, now)
@@ -451,6 +481,20 @@ def build_runtime(
     register_plan_state(account_service, stores=stores, plan_stores=plan_stores,
                         action_store=action_store, clock=now)
     guard = account_service.assert_active  # an in-flight request writes nothing for a deleted uid
+    if stores.kind == "firestore":
+        history_store = firestore_history_store(stores.client)
+        places_store, asks_store = firestore_saved_place_stores(stores.client)
+    else:
+        history_store = memory_history_store()
+        places_store, asks_store = memory_saved_place_stores()
+    history_service = HistoryService(
+        history_store, consents, runtime_config=config, workspaces=stores.workspaces, clock=now,
+        sink=sink, account_guard=guard)
+    saved_place_service = SavedPlaceService(
+        places_store, asks_store, consents, runtime_config=config, clock=now, sink=sink,
+        account_guard=guard)
+    register_history_state(account_service, history=history_service,
+                           saved_places=saved_place_service)
 
     app = create_app(
         verifier=identity_verifier,
@@ -464,21 +508,30 @@ def build_runtime(
     orchestrator = app.state.orchestrator
     action_service = ActionService(
         action_store, quotas, workspaces=stores.workspaces, clock=now, runtime_config=config,
-        trace_sink=sink, account_guard=guard)
+        trace_sink=sink, account_guard=guard,
+        saved_place_sink=SavedPlaceActionSink(saved_place_service))
     workspace_service = build_workspace_service(
         stores.workspaces, plan_stores, policies=quotas.policies, consents=consents,
         runtime_config=config, clock=now, sink=sink, lock=orchestrator.workspace_lock,
-        account_guard=guard)
+        account_guard=guard, history=history_service)
     app.state.places_service = places_service
     app.state.app_check_verifier = app_check_verifier
     app.state.app_check_policy = app_check_policy
     app.state.action_service = action_service
     app.state.workspace_service = workspace_service
     app.state.account_service = account_service
+    app.state.history_service = history_service
+    app.state.saved_place_service = saved_place_service
+    # Withdrawing a history consent deletes what it covered (the cascade also runs on retry).
+    app.state.consent_withdrawal_hooks.update({
+        ConsentPurpose.HISTORY_STORE: [history_service.delete_all, plan_stores.outcomes.delete_all],
+        ConsentPurpose.SAVED_PLACE: [saved_place_service.delete_all, action_service.delete_save_place_records],
+    })
     return Runtime(
         app=app, gateway=gateway, discovery_client=discovery, display_cache=cache,
         orchestrator=orchestrator, costs=ledger, quotas=quotas, kill_switch=kill_switch,
         quota_latch=latch, config=config, price_table=prices, stores=stores,
         places_service=places_service, action_service=action_service,
         workspace_service=workspace_service, account_service=account_service,
-        plan_stores=plan_stores)
+        plan_stores=plan_stores, history_service=history_service,
+        saved_place_service=saved_place_service)

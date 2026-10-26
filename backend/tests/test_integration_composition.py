@@ -159,7 +159,7 @@ def test_bootstrap_reconciles_a_registered_token_with_no_account_record() -> Non
 
 def test_purge_expired_runs_both_sweeps() -> None:
     runtime, _, _ = runtime_for("memory")
-    assert runtime.purge_expired() == {"pending_actions": 0, "display_cache": 0}
+    assert runtime.purge_expired() == {"pending_actions": 0, "display_cache": 0, "history": 0}
 
 
 # -- delete and export cascade across every store -------------------------------------------------

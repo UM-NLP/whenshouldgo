@@ -8,7 +8,13 @@ from fastapi.responses import Response
 from pydantic import BaseModel, ConfigDict, Field
 
 from ..auth import current_principal
-from ..consent import SUPPORTED_PURPOSES, ConsentDisabled, ConsentStore, WrongNoticeVersion
+from ..consent import (
+    HISTORY_PURPOSES,
+    SUPPORTED_PURPOSES,
+    ConsentDisabled,
+    ConsentStore,
+    WrongNoticeVersion,
+)
 from ..domain import (
     ConsentProcessor,
     ConsentPurpose,
@@ -98,6 +104,19 @@ def withdraw_consent(
         parsed = ConsentPurpose(purpose)
     except ValueError:
         raise error(404, ErrorCode.VALIDATION, "no such consent") from None
-    if parsed not in SUPPORTED_PURPOSES or not store.withdraw(principal.uid, parsed):
+    if parsed not in SUPPORTED_PURPOSES:
+        raise error(404, ErrorCode.VALIDATION, "no such consent")
+    withdrawn = store.withdraw(principal.uid, parsed)
+    if parsed in HISTORY_PURPOSES:
+        # Withdrawal deletes the data it covered (decisions 19, 24, 25). The cascade runs on every
+        # call, even when the consent was already withdrawn, so a failed cleanup is retryable.
+        hooks = getattr(request.app.state, "consent_withdrawal_hooks", {}).get(parsed, ())
+        try:
+            for hook in hooks:
+                hook(principal.uid)
+        except Exception:  # noqa: BLE001 - static answer; the consent is already withdrawn
+            raise error(503, ErrorCode.PROVIDER, "withdrawal cleanup incomplete: retry",
+                        ErrorReason.PROVIDER_UNAVAILABLE) from None
+    if not withdrawn:
         raise error(404, ErrorCode.VALIDATION, "no such consent")
     return Response(status_code=204)

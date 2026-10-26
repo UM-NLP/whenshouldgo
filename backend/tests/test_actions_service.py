@@ -11,7 +11,7 @@ from actions_support import (
 
 from app import telemetry as t
 from app.actions import ActionError, ActionFailure, ActionService
-from app.domain import MAX_PENDING_ACTION_TTL, SavedPlaceKind
+from app.domain import MAX_PENDING_ACTION_TTL, RoundedPosition, SavedPlaceKind
 from app.domain import PendingActionEffect as E
 from app.handoff import build_maps_url
 
@@ -305,8 +305,9 @@ def test_save_place_runs_the_sink_once_when_history_is_active(kind: str, monkeyp
     action = env.propose(E.SAVE_PLACE)
     env.service.confirm(GUEST, action.id, action.nonce)
     env.service.confirm(GUEST, action.id, action.nonce)
-    assert env.sink.calls == [dict(uid=GUEST.uid, place_id=PLACE, user_label="Home",
-                                   label_kind=SavedPlaceKind.HOME, action_id=action.id)]
+    assert env.sink.calls == [dict(
+        uid=GUEST.uid, place_id=PLACE, user_label="Home", label_kind=SavedPlaceKind.HOME,
+        action_id=action.id, position=RoundedPosition(latitude=43.653, longitude=-79.383))]
 
 
 def test_a_failing_sink_reopens_the_action(monkeypatch) -> None:
@@ -325,10 +326,9 @@ def test_default_sink_is_disabled(monkeypatch) -> None:
     env = Env("memory", history=True, monkeypatch=monkeypatch)
     service = ActionService(env.store, env.quotas, clock=env.clock,
                             runtime_config=env.service.runtime_config)
-    action = service.propose(GUEST, env.body(E.SAVE_PLACE), KEY)
-    with fails(ActionFailure.DISABLED):
-        service.confirm(GUEST, action.id, action.nonce)
-    assert env.store.get(GUEST.uid, action.id).status.value == "PENDING"
+    with fails(ActionFailure.DISABLED):  # the default sink refuses at propose: nothing to save into
+        service.propose(GUEST, env.body(E.SAVE_PLACE), KEY)
+    assert env.store.get(GUEST.uid, _action_id_for(KEY)) is None
 
 
 # -- purge ---------------------------------------------------------------------------------------

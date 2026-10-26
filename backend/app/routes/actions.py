@@ -43,6 +43,10 @@ _ERRORS: dict[ActionFailure, tuple[int, ErrorCode, str, ErrorReason | None]] = {
     ActionFailure.CANCELLED: (409, ErrorCode.CONFLICT, "action cancelled", None),
     ActionFailure.ALREADY_CONFIRMED: (409, ErrorCode.CONFLICT, "action already confirmed", None),
     ActionFailure.DISABLED: (404, ErrorCode.VALIDATION, "feature disabled", ErrorReason.DISABLED),
+    ActionFailure.NOT_ALLOWED: (403, ErrorCode.POLICY, "not available for guest accounts",
+                                ErrorReason.GUEST_NOT_ALLOWED),
+    ActionFailure.CONSENT_REQUIRED: (403, ErrorCode.POLICY, "consent required",
+                                     ErrorReason.CONSENT_REQUIRED),
     ActionFailure.STALE_PLAN: (409, ErrorCode.CONFLICT, "plan changed", None),
     ActionFailure.IDEMPOTENCY_CONFLICT: (
         409, ErrorCode.CONFLICT, "idempotency key reused with a different request", None),

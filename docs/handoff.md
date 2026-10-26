@@ -23,12 +23,22 @@ Composition (`backend/app/composition.py`, `build_runtime`) attaches every servi
 
 ## What is off
 
-- **Phase 1 history, saved places, Home and Work** (decision 25): `history_enabled` is false and fails closed without an approved notice. The history and saved-place routes are typed 501 stubs behind `require_history_active`. Enabling needs Phase 0 exit and the signed legal checklist.
+- **Phase 1 history, saved places, Home and Work** (decisions 19, 24, 25, 27): CODE-COMPLETE BUT DARK. `history_enabled` is false and `history_active(config)` also needs a notice version listed in `domain.APPROVED_HISTORY_NOTICE_VERSIONS` (empty), so with the flag off every history and saved-place route is a typed 404 DISABLED before any work and nothing is written. Enabling needs Phase 0 exit, the signed legal checklist, an approved notice version added to `APPROVED_HISTORY_NOTICE_VERSIONS`, the `history_records` TTL policy (runbook) and `build_runtime(history_enabled=True, history_notice_version=...)`. See "Phase 1 built dark" below.
 - **Places Details and route check**: off until a reviewed `PlacesPriceTable` is passed to `build_runtime(places_price_table=...)` (owner price review). The web shows "not available yet".
 - **Account link completion** answers a typed 503 and a deleted account's login is not removed, until Firebase Admin credentials exist (`account.FirebaseAdmin` has no implementation).
 - **App Check** is not enforced unless `APP_CHECK_ENFORCE=true`; the web client sends no App Check token and the production web build sends no auth token yet (no Firebase sign-in in `web/`).
 - **Retention sweep**: `Runtime.purge_expired()` exists but nothing schedules it; rely on Firestore TTL policies once created.
-- No patterns, routines or notifications, no model escalation or second-model fallback, no server history.
+- No patterns, routines or notifications, no model escalation or second-model fallback. Server history exists but is dark.
+
+## Phase 1 built dark
+
+Everything below does nothing unless `history_active(config)`; REGISTERED_FREE only (a guest gets a typed 403 `GUEST_NOT_ALLOWED`: history, saved places and the ask-state stay on the device).
+
+- **History** (`history.py`, `stores/history_store.py`, `routes/history.py`): opt-in `OutingRecord` = place ID + the user's own label + an activity tag (derived conservatively from the user's own request, never KIDS, or chosen at check-in) + timestamp + outcome + feedback; no Maps content, no coordinates. Needs an active `HISTORY_STORE` consent bound to the approved notice. Written from a confirmed outcome (`POST /v1/outcomes`, server-side storage already gated on consent) and by explicit save (`POST /v1/history/records`, `Idempotency-Key` required); both idempotent by key. `GET /v1/history/records` returns place IDs and labels only; the client re-fetches details via `/v1/places/details` and shows "details unavailable" on a miss. Edit (`PATCH /v1/history/records/{id}`: label, tag, feedback), delete one, clear all, retention (`GET/PUT /v1/history/settings`: default 90, 30 to 180, over 180 rejected, shortening purges at once, lengthening never extends stored records), export (in `POST /v1/me:export`, only while active).
+- **Saved places** (`saved_places.py`, `stores/saved_places_store.py`, `routes/saved_places.py`): place ID + label + kind HOME, WORK or CUSTOM + position rounded to 3 decimals. Needs `SAVED_PLACE` consent. Created ONLY by a confirmed `SAVE_PLACE` PendingAction (`ProposeActionRequest.position`, the user's consented foreground position, rounded on parse; held in the pending record only until confirm, cancel or expiry, then scrubbed). `PUT /v1/saved-places` edits the label of an existing entry only (a different kind or position is a 422, an unknown place a 404). One Home and one Work per user; a new one replaces the old only through a confirmed action. A saved Home or Work is never applied silently: the client may send it in the turn `location` field (decision 27).
+- **Fixed question** (`ask_policy.py`): "Is where you are now your home? Save it as Home?" (and Work). Shown when the message references home or work (conservative English and French keyword rules, negations ignored), no such saved place exists, 30 days have passed since a decline and the user has not chosen "don't ask again". Server-authored text. Delivered as `TurnResponse.saved_place_prompt` (registered users) and `POST /v1/saved-places/ask-check`; the user's answer goes to `PUT /v1/saved-places/ask-state` (stored only with `SAVED_PLACE` consent, else `recorded=false` and the client keeps it). A guest's client keeps the ask-state and applies the same rules locally. No inference from visit patterns.
+- **Cascade**: consent withdrawal runs hooks (`app.state.consent_withdrawal_hooks`, registered in `composition.py`): `HISTORY_STORE` deletes history, retention choice and the outcome ledger; `SAVED_PLACE` deletes saved places, the ask-state and any SAVE_PLACE action records. The cascade also runs on a retried DELETE, so a failed cleanup (503) is retryable. Account deletion registers `history` and `saved_places` deleters. Export contributors fill `ExportBundle.outings` and `saved_places`.
+- **Tests**: `tests/test_history_*.py`, `test_saved_places_*.py`, `test_ask_policy.py` over the memory stores and the Firestore fake: flag-off write-count, flag-on without an approved notice, guest refusal, tenant matrix, retention bounds, cooldown, Maps-content, label and position canaries, raw-document scan after account deletion.
 
 ## How to run it
 
@@ -51,7 +61,7 @@ python scripts/live_smoke.py --env-file ../.env --ssl-mode os-store-nonstrict --
 
 `--ssl-mode os-store-nonstrict` is only for a corporate TLS proxy. Google's text is shown in the terminal only and must not be saved, pasted into shared files or committed. The dev server and smoke script are never production entry points.
 
-Checks: `cd backend && python -m pytest -q` (3162 passed, 1 skipped at this snapshot; includes the OpenAPI drift check) and `cd web && npm test && npm run build` (122 tests). After any API change run `npm run api:generate` in `web/` and commit `openapi.json` and `schema.d.ts`. Install the extras for the verifier tests: `pip install -e ".[dev,auth]"`.
+Checks: `cd backend && python -m pytest -q` (3432 passed, 1 skipped at this snapshot; includes the OpenAPI drift check) and `cd web && npm test && npm run build` (186 tests at this snapshot, the web agent was mid-change). After any API change run `npm run api:generate` in `web/` and commit `openapi.json` and `schema.d.ts`. Install the extras for the verifier tests: `pip install -e ".[dev,auth]"`.
 
 ## Known limits
 

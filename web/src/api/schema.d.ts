@@ -188,10 +188,55 @@ export interface paths {
         /** List History */
         get: operations["list_history_v1_history_records_get"];
         put?: never;
-        /** Write History */
+        /**
+         * Write History
+         * @description The user's explicit save of an outing (idempotent by ``Idempotency-Key``).
+         */
         post: operations["write_history_v1_history_records_post"];
-        /** Delete History */
+        /**
+         * Delete History
+         * @description Clear all of the caller's history.
+         */
         delete: operations["delete_history_v1_history_records_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/history/records/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete History Record */
+        delete: operations["delete_history_record_v1_history_records__id__delete"];
+        options?: never;
+        head?: never;
+        /** Edit History Record */
+        patch: operations["edit_history_record_v1_history_records__id__patch"];
+        trace?: never;
+    };
+    "/v1/history/settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get History Settings */
+        get: operations["get_history_settings_v1_history_settings_get"];
+        /**
+         * Put History Settings
+         * @description Choose 30 to 180 days. Shortening purges what is already past the new period, at once.
+         */
+        put: operations["put_history_settings_v1_history_settings_put"];
+        post?: never;
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -364,11 +409,60 @@ export interface paths {
         };
         /** List Saved Places */
         get: operations["list_saved_places_v1_saved_places_get"];
-        /** Put Saved Place */
+        /**
+         * Put Saved Place
+         * @description Edit the label of an EXISTING saved place. Creating or moving one needs a confirmed
+         *     SAVE_PLACE action, so an unknown place ID is a 404 and a different kind or position a 422.
+         */
         put: operations["put_saved_place_v1_saved_places_put"];
         post?: never;
-        /** Delete Saved Places */
+        /**
+         * Delete Saved Places
+         * @description One saved place (``place_id``) or, without it, all of them.
+         */
         delete: operations["delete_saved_places_v1_saved_places_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/saved-places/ask-check": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Check Saved Place Ask
+         * @description Whether to show the FIXED "Is where you are now your home? Save it as Home?" question for
+         *     this message. The text is server-authored; the message is neither stored nor logged.
+         */
+        post: operations["check_saved_place_ask_v1_saved_places_ask_check_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/saved-places/ask-state": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Put Saved Place Ask State
+         * @description Record a decline (30-day cooldown), "don't ask again", or clear them. ``recorded`` is False
+         *     when the server stored nothing (no SAVED_PLACE consent): the client keeps it on the device.
+         */
+        put: operations["put_saved_place_ask_state_v1_saved_places_ask_state_put"];
+        post?: never;
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -506,6 +600,62 @@ export interface components {
         ActivateTripRequest: {
             /** Plan Version */
             plan_version: number;
+            /**
+             * Schema Version
+             * @default 1
+             */
+            schema_version: number;
+        };
+        /**
+         * AskCheckRequest
+         * @description The user's message, read once for a home/work reference. Never stored or logged.
+         */
+        AskCheckRequest: {
+            /** Message */
+            message: string;
+            /**
+             * Schema Version
+             * @default 1
+             */
+            schema_version: number;
+        };
+        /**
+         * AskDecision
+         * @enum {string}
+         */
+        AskDecision: "DECLINED" | "DONT_ASK_AGAIN" | "ASK_AGAIN";
+        /** AskStateUpdate */
+        AskStateUpdate: {
+            decision: components["schemas"]["AskDecision"];
+            label_kind: components["schemas"]["SavedPlaceKind"];
+            /**
+             * Schema Version
+             * @default 1
+             */
+            schema_version: number;
+        };
+        /**
+         * AskStateView
+         * @description ``recorded`` is False when the server stored nothing (no SAVED_PLACE consent): the client
+         *     keeps the ask-state on the device, as a guest does.
+         */
+        AskStateView: {
+            /** Cooldown Until */
+            cooldown_until?: string | null;
+            /**
+             * Dont Ask Again
+             * @default false
+             */
+            dont_ask_again: boolean;
+            /**
+             * Kind
+             * @default saved_place_ask_state
+             * @constant
+             */
+            kind: "saved_place_ask_state";
+            label_kind: components["schemas"]["SavedPlaceKind"];
+            /** Recorded */
+            recorded: boolean;
             /**
              * Schema Version
              * @default 1
@@ -803,7 +953,7 @@ export interface components {
          *     the message. Additive: a client must treat an unknown reason like its ``ErrorCode``.
          * @enum {string}
          */
-        ErrorReason: "RESULT_EXPIRED" | "TURN_IN_PROGRESS" | "SERVER_NOT_CONFIGURED" | "PROVIDER_RATE_LIMITED" | "PROVIDER_TIMEOUT" | "PROVIDER_UNAVAILABLE" | "OUTPUT_TRUNCATED" | "OUTPUT_REJECTED" | "OVER_BUDGET" | "RATE_LIMITED" | "DISCOVERY_UNAVAILABLE" | "LOCATION_CONSENT_REQUIRED" | "NOT_IMPLEMENTED" | "DISABLED" | "LINK_INTENT_EXPIRED" | "LINK_INTENT_CONSUMED" | "ACCOUNT_COLLISION" | "WRONG_UID" | "ANONYMOUS_PROVIDER" | "MIGRATION_INTERRUPTED";
+        ErrorReason: "RESULT_EXPIRED" | "TURN_IN_PROGRESS" | "SERVER_NOT_CONFIGURED" | "PROVIDER_RATE_LIMITED" | "PROVIDER_TIMEOUT" | "PROVIDER_UNAVAILABLE" | "OUTPUT_TRUNCATED" | "OUTPUT_REJECTED" | "OVER_BUDGET" | "RATE_LIMITED" | "DISCOVERY_UNAVAILABLE" | "LOCATION_CONSENT_REQUIRED" | "NOT_IMPLEMENTED" | "DISABLED" | "LINK_INTENT_EXPIRED" | "LINK_INTENT_CONSUMED" | "ACCOUNT_COLLISION" | "WRONG_UID" | "ANONYMOUS_PROVIDER" | "MIGRATION_INTERRUPTED" | "GUEST_NOT_ALLOWED" | "CONSENT_REQUIRED";
         /**
          * ExportBundle
          * @description Everything the server holds about the caller: user data and place IDs only. Never Maps
@@ -1007,6 +1157,26 @@ export interface components {
             /** Workspace Id */
             workspace_id: string;
         };
+        /**
+         * HistoryRecordEdit
+         * @description The user's edit of their own record: label, activity tag and feedback only.
+         */
+        HistoryRecordEdit: {
+            /**
+             * Clear Label
+             * @default false
+             */
+            clear_label: boolean;
+            feedback?: components["schemas"]["OutingFeedback"] | null;
+            intent_tag?: components["schemas"]["IntentTag"] | null;
+            /**
+             * Schema Version
+             * @default 1
+             */
+            schema_version: number;
+            /** User Label */
+            user_label?: string | null;
+        };
         /** HistoryRecordList */
         HistoryRecordList: {
             /**
@@ -1017,6 +1187,50 @@ export interface components {
             kind: "history_record_list";
             /** Records */
             records: components["schemas"]["OutingRecord"][];
+            /**
+             * Schema Version
+             * @default 1
+             */
+            schema_version: number;
+        };
+        /** HistorySettings */
+        HistorySettings: {
+            /**
+             * Default Retention Days
+             * @default 90
+             */
+            default_retention_days: number;
+            /**
+             * Kind
+             * @default history_settings
+             * @constant
+             */
+            kind: "history_settings";
+            /**
+             * Max Retention Days
+             * @default 180
+             */
+            max_retention_days: number;
+            /**
+             * Min Retention Days
+             * @default 30
+             */
+            min_retention_days: number;
+            /** Retention Days */
+            retention_days: number;
+            /**
+             * Schema Version
+             * @default 1
+             */
+            schema_version: number;
+        };
+        /**
+         * HistorySettingsUpdate
+         * @description Shortening purges what is already past the new period, immediately.
+         */
+        HistorySettingsUpdate: {
+            /** Retention Days */
+            retention_days: number;
             /**
              * Schema Version
              * @default 1
@@ -1137,6 +1351,7 @@ export interface components {
          * @description The user's own report after an outing. The note is free text: excluded from telemetry.
          */
         OutcomeCheckin: {
+            intent_tag?: components["schemas"]["IntentTag"] | null;
             /**
              * Kind
              * @default outcome_checkin
@@ -1153,6 +1368,8 @@ export interface components {
              * @default 1
              */
             schema_version: number;
+            /** User Label */
+            user_label?: string | null;
         };
         /**
          * OutcomeValue
@@ -1438,6 +1655,7 @@ export interface components {
             label_kind?: components["schemas"]["SavedPlaceKind"] | null;
             /** Plan Version */
             plan_version: number;
+            position?: components["schemas"]["RoundedPosition"] | null;
             /**
              * Schema Version
              * @default 1
@@ -1632,6 +1850,28 @@ export interface components {
              */
             schema_version: number;
         };
+        /**
+         * SavedPlacePrompt
+         * @description Tells the client to show a FIXED question. ``question`` is server text, never model text.
+         */
+        SavedPlacePrompt: {
+            /** Ask */
+            ask: boolean;
+            /**
+             * Kind
+             * @default saved_place_prompt
+             * @constant
+             */
+            kind: "saved_place_prompt";
+            label_kind?: components["schemas"]["SavedPlaceKind"] | null;
+            /** Question */
+            question?: string | null;
+            /**
+             * Schema Version
+             * @default 1
+             */
+            schema_version: number;
+        };
         /** SavedPlaceUpsert */
         SavedPlaceUpsert: {
             label_kind: components["schemas"]["SavedPlaceKind"];
@@ -1722,6 +1962,7 @@ export interface components {
             policy_version: string;
             /** Reply */
             reply: string;
+            saved_place_prompt?: components["schemas"]["SavedPlacePrompt"] | null;
             /**
              * Schema Version
              * @default 1
@@ -2896,7 +3137,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorBody"];
                 };
             };
-            /** @description DISABLED */
+            /** @description DISABLED or NOT_FOUND */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -2928,15 +3169,6 @@ export interface operations {
                 headers: {
                     /** @description Seconds to wait before retrying. */
                     "Retry-After"?: number;
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorBody"];
-                };
-            };
-            /** @description NOT_IMPLEMENTED */
-            501: {
-                headers: {
                     [name: string]: unknown;
                 };
                 content: {
@@ -2976,6 +3208,7 @@ export interface operations {
         parameters: {
             query?: never;
             header: {
+                "idempotency-key": string;
                 authorization: string | null;
             };
             path?: never;
@@ -3014,7 +3247,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorBody"];
                 };
             };
-            /** @description DISABLED */
+            /** @description DISABLED or NOT_FOUND */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -3046,15 +3279,6 @@ export interface operations {
                 headers: {
                     /** @description Seconds to wait before retrying. */
                     "Retry-After"?: number;
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorBody"];
-                };
-            };
-            /** @description NOT_IMPLEMENTED */
-            501: {
-                headers: {
                     [name: string]: unknown;
                 };
                 content: {
@@ -3128,7 +3352,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorBody"];
                 };
             };
-            /** @description DISABLED */
+            /** @description DISABLED or NOT_FOUND */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -3166,9 +3390,432 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorBody"];
                 };
             };
-            /** @description NOT_IMPLEMENTED */
-            501: {
+            /** @description VALIDATION */
+            502: {
                 headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description PROVIDER */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description PROVIDER */
+            504: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    delete_history_record_v1_history_records__id__delete: {
+        parameters: {
+            query?: never;
+            header: {
+                authorization: string | null;
+            };
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HistoryDeleteResult"];
+                };
+            };
+            /** @description POLICY */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description POLICY */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description DISABLED or NOT_FOUND */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description CONFLICT */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description VALIDATION */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description QUOTA */
+            429: {
+                headers: {
+                    /** @description Seconds to wait before retrying. */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description VALIDATION */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description PROVIDER */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description PROVIDER */
+            504: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    edit_history_record_v1_history_records__id__patch: {
+        parameters: {
+            query?: never;
+            header: {
+                authorization: string | null;
+            };
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HistoryRecordEdit"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OutingRecord"];
+                };
+            };
+            /** @description POLICY */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description POLICY */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description DISABLED or NOT_FOUND */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description CONFLICT */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description VALIDATION */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description QUOTA */
+            429: {
+                headers: {
+                    /** @description Seconds to wait before retrying. */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description VALIDATION */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description PROVIDER */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description PROVIDER */
+            504: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    get_history_settings_v1_history_settings_get: {
+        parameters: {
+            query?: never;
+            header: {
+                authorization: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HistorySettings"];
+                };
+            };
+            /** @description POLICY */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description POLICY */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description DISABLED or NOT_FOUND */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description CONFLICT */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description VALIDATION */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description QUOTA */
+            429: {
+                headers: {
+                    /** @description Seconds to wait before retrying. */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description VALIDATION */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description PROVIDER */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description PROVIDER */
+            504: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    put_history_settings_v1_history_settings_put: {
+        parameters: {
+            query?: never;
+            header: {
+                authorization: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HistorySettingsUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HistorySettings"];
+                };
+            };
+            /** @description POLICY */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description POLICY */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description DISABLED or NOT_FOUND */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description CONFLICT */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description VALIDATION */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description QUOTA */
+            429: {
+                headers: {
+                    /** @description Seconds to wait before retrying. */
+                    "Retry-After"?: number;
                     [name: string]: unknown;
                 };
                 content: {
@@ -4264,7 +4911,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorBody"];
                 };
             };
-            /** @description DISABLED */
+            /** @description DISABLED or NOT_FOUND */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -4296,15 +4943,6 @@ export interface operations {
                 headers: {
                     /** @description Seconds to wait before retrying. */
                     "Retry-After"?: number;
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorBody"];
-                };
-            };
-            /** @description NOT_IMPLEMENTED */
-            501: {
-                headers: {
                     [name: string]: unknown;
                 };
                 content: {
@@ -4382,7 +5020,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorBody"];
                 };
             };
-            /** @description DISABLED */
+            /** @description DISABLED or NOT_FOUND */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -4414,15 +5052,6 @@ export interface operations {
                 headers: {
                     /** @description Seconds to wait before retrying. */
                     "Retry-After"?: number;
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorBody"];
-                };
-            };
-            /** @description NOT_IMPLEMENTED */
-            501: {
-                headers: {
                     [name: string]: unknown;
                 };
                 content: {
@@ -4498,7 +5127,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorBody"];
                 };
             };
-            /** @description DISABLED */
+            /** @description DISABLED or NOT_FOUND */
             404: {
                 headers: {
                     [name: string]: unknown;
@@ -4536,9 +5165,218 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorBody"];
                 };
             };
-            /** @description NOT_IMPLEMENTED */
-            501: {
+            /** @description VALIDATION */
+            502: {
                 headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description PROVIDER */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description PROVIDER */
+            504: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    check_saved_place_ask_v1_saved_places_ask_check_post: {
+        parameters: {
+            query?: never;
+            header: {
+                authorization: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AskCheckRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SavedPlacePrompt"];
+                };
+            };
+            /** @description POLICY */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description POLICY */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description DISABLED or NOT_FOUND */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description CONFLICT */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description VALIDATION */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description QUOTA */
+            429: {
+                headers: {
+                    /** @description Seconds to wait before retrying. */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description VALIDATION */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description PROVIDER */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description PROVIDER */
+            504: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    put_saved_place_ask_state_v1_saved_places_ask_state_put: {
+        parameters: {
+            query?: never;
+            header: {
+                authorization: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AskStateUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AskStateView"];
+                };
+            };
+            /** @description POLICY */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description POLICY */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description DISABLED or NOT_FOUND */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description CONFLICT */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description VALIDATION */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description QUOTA */
+            429: {
+                headers: {
+                    /** @description Seconds to wait before retrying. */
+                    "Retry-After"?: number;
                     [name: string]: unknown;
                 };
                 content: {

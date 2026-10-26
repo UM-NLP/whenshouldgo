@@ -142,6 +142,109 @@
         "title": "ActivateTripRequest",
         "type": "object"
       },
+      "AskCheckRequest": {
+        "additionalProperties": false,
+        "description": "The user's message, read once for a home/work reference. Never stored or logged.",
+        "properties": {
+          "message": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Message",
+            "type": "string"
+          },
+          "schema_version": {
+            "default": 1,
+            "minimum": 1.0,
+            "title": "Schema Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "message"
+        ],
+        "title": "AskCheckRequest",
+        "type": "object"
+      },
+      "AskDecision": {
+        "enum": [
+          "DECLINED",
+          "DONT_ASK_AGAIN",
+          "ASK_AGAIN"
+        ],
+        "title": "AskDecision",
+        "type": "string"
+      },
+      "AskStateUpdate": {
+        "additionalProperties": false,
+        "properties": {
+          "decision": {
+            "$ref": "#/components/schemas/AskDecision"
+          },
+          "label_kind": {
+            "$ref": "#/components/schemas/SavedPlaceKind"
+          },
+          "schema_version": {
+            "default": 1,
+            "minimum": 1.0,
+            "title": "Schema Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "label_kind",
+          "decision"
+        ],
+        "title": "AskStateUpdate",
+        "type": "object"
+      },
+      "AskStateView": {
+        "additionalProperties": false,
+        "description": "``recorded`` is False when the server stored nothing (no SAVED_PLACE consent): the client\nkeeps the ask-state on the device, as a guest does.",
+        "properties": {
+          "cooldown_until": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cooldown Until"
+          },
+          "dont_ask_again": {
+            "default": false,
+            "title": "Dont Ask Again",
+            "type": "boolean"
+          },
+          "kind": {
+            "const": "saved_place_ask_state",
+            "default": "saved_place_ask_state",
+            "title": "Kind",
+            "type": "string"
+          },
+          "label_kind": {
+            "$ref": "#/components/schemas/SavedPlaceKind"
+          },
+          "recorded": {
+            "title": "Recorded",
+            "type": "boolean"
+          },
+          "schema_version": {
+            "default": 1,
+            "minimum": 1.0,
+            "title": "Schema Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "label_kind",
+          "recorded"
+        ],
+        "title": "AskStateView",
+        "type": "object"
+      },
       "CancelActionResponse": {
         "additionalProperties": false,
         "properties": {
@@ -759,7 +862,9 @@
           "ACCOUNT_COLLISION",
           "WRONG_UID",
           "ANONYMOUS_PROVIDER",
-          "MIGRATION_INTERRUPTED"
+          "MIGRATION_INTERRUPTED",
+          "GUEST_NOT_ALLOWED",
+          "CONSENT_REQUIRED"
         ],
         "title": "ErrorReason",
         "type": "string"
@@ -1233,6 +1338,58 @@
         "title": "HistoryRecordCreate",
         "type": "object"
       },
+      "HistoryRecordEdit": {
+        "additionalProperties": false,
+        "description": "The user's edit of their own record: label, activity tag and feedback only.",
+        "properties": {
+          "clear_label": {
+            "default": false,
+            "title": "Clear Label",
+            "type": "boolean"
+          },
+          "feedback": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OutingFeedback"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "intent_tag": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/IntentTag"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "schema_version": {
+            "default": 1,
+            "minimum": 1.0,
+            "title": "Schema Version",
+            "type": "integer"
+          },
+          "user_label": {
+            "anyOf": [
+              {
+                "maxLength": 80,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "User Label"
+          }
+        },
+        "title": "HistoryRecordEdit",
+        "type": "object"
+      },
       "HistoryRecordList": {
         "additionalProperties": false,
         "properties": {
@@ -1261,6 +1418,72 @@
           "records"
         ],
         "title": "HistoryRecordList",
+        "type": "object"
+      },
+      "HistorySettings": {
+        "additionalProperties": false,
+        "properties": {
+          "default_retention_days": {
+            "default": 90,
+            "title": "Default Retention Days",
+            "type": "integer"
+          },
+          "kind": {
+            "const": "history_settings",
+            "default": "history_settings",
+            "title": "Kind",
+            "type": "string"
+          },
+          "max_retention_days": {
+            "default": 180,
+            "title": "Max Retention Days",
+            "type": "integer"
+          },
+          "min_retention_days": {
+            "default": 30,
+            "title": "Min Retention Days",
+            "type": "integer"
+          },
+          "retention_days": {
+            "maximum": 180.0,
+            "minimum": 30.0,
+            "title": "Retention Days",
+            "type": "integer"
+          },
+          "schema_version": {
+            "default": 1,
+            "minimum": 1.0,
+            "title": "Schema Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "retention_days"
+        ],
+        "title": "HistorySettings",
+        "type": "object"
+      },
+      "HistorySettingsUpdate": {
+        "additionalProperties": false,
+        "description": "Shortening purges what is already past the new period, immediately.",
+        "properties": {
+          "retention_days": {
+            "maximum": 180.0,
+            "minimum": 30.0,
+            "title": "Retention Days",
+            "type": "integer"
+          },
+          "schema_version": {
+            "default": 1,
+            "minimum": 1.0,
+            "title": "Schema Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "retention_days"
+        ],
+        "title": "HistorySettingsUpdate",
         "type": "object"
       },
       "IntentTag": {
@@ -1503,6 +1726,16 @@
         "additionalProperties": false,
         "description": "The user's own report after an outing. The note is free text: excluded from telemetry.",
         "properties": {
+          "intent_tag": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/IntentTag"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "kind": {
             "const": "outcome_checkin",
             "default": "outcome_checkin",
@@ -1534,6 +1767,19 @@
             "minimum": 1.0,
             "title": "Schema Version",
             "type": "integer"
+          },
+          "user_label": {
+            "anyOf": [
+              {
+                "maxLength": 80,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "User Label"
           }
         },
         "required": [
@@ -2241,6 +2487,16 @@
             "title": "Plan Version",
             "type": "integer"
           },
+          "position": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RoundedPosition"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "schema_version": {
             "default": 1,
             "minimum": 1.0,
@@ -2626,6 +2882,55 @@
         "title": "SavedPlaceList",
         "type": "object"
       },
+      "SavedPlacePrompt": {
+        "additionalProperties": false,
+        "description": "Tells the client to show a FIXED question. ``question`` is server text, never model text.",
+        "properties": {
+          "ask": {
+            "title": "Ask",
+            "type": "boolean"
+          },
+          "kind": {
+            "const": "saved_place_prompt",
+            "default": "saved_place_prompt",
+            "title": "Kind",
+            "type": "string"
+          },
+          "label_kind": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SavedPlaceKind"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "question": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Question"
+          },
+          "schema_version": {
+            "default": 1,
+            "minimum": 1.0,
+            "title": "Schema Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "ask"
+        ],
+        "title": "SavedPlacePrompt",
+        "type": "object"
+      },
       "SavedPlaceUpsert": {
         "additionalProperties": false,
         "properties": {
@@ -2833,6 +3138,16 @@
             "maxLength": 5000,
             "title": "Reply",
             "type": "string"
+          },
+          "saved_place_prompt": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SavedPlacePrompt"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "schema_version": {
             "default": 1,
@@ -4584,6 +4899,7 @@
     },
     "/v1/history/records": {
       "delete": {
+        "description": "Clear all of the caller's history.",
         "operationId": "delete_history_v1_history_records_delete",
         "parameters": [
           {
@@ -4642,7 +4958,7 @@
                 }
               }
             },
-            "description": "DISABLED"
+            "description": "DISABLED or NOT_FOUND"
           },
           "409": {
             "content": {
@@ -4682,16 +4998,6 @@
                 }
               }
             }
-          },
-          "501": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": "NOT_IMPLEMENTED"
           },
           "502": {
             "content": {
@@ -4785,7 +5091,7 @@
                 }
               }
             },
-            "description": "DISABLED"
+            "description": "DISABLED or NOT_FOUND"
           },
           "409": {
             "content": {
@@ -4826,16 +5132,6 @@
               }
             }
           },
-          "501": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": "NOT_IMPLEMENTED"
-          },
           "502": {
             "content": {
               "application/json": {
@@ -4870,8 +5166,20 @@
         "summary": "List History"
       },
       "post": {
+        "description": "The user's explicit save of an outing (idempotent by ``Idempotency-Key``).",
         "operationId": "write_history_v1_history_records_post",
         "parameters": [
+          {
+            "in": "header",
+            "name": "idempotency-key",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 8,
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          },
           {
             "in": "header",
             "name": "authorization",
@@ -4938,7 +5246,7 @@
                 }
               }
             },
-            "description": "DISABLED"
+            "description": "DISABLED or NOT_FOUND"
           },
           "409": {
             "content": {
@@ -4979,16 +5287,6 @@
               }
             }
           },
-          "501": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": "NOT_IMPLEMENTED"
-          },
           "502": {
             "content": {
               "application/json": {
@@ -5021,6 +5319,583 @@
           }
         },
         "summary": "Write History"
+      }
+    },
+    "/v1/history/records/{id}": {
+      "delete": {
+        "operationId": "delete_history_record_v1_history_records__id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "pattern": "^[A-Za-z0-9_.:-]{1,128}$",
+              "title": "Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": true,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HistoryDeleteResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "POLICY"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "POLICY"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "DISABLED or NOT_FOUND"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "CONFLICT"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "VALIDATION"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "QUOTA",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds to wait before retrying.",
+                "schema": {
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "VALIDATION"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "PROVIDER"
+          },
+          "504": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "PROVIDER"
+          }
+        },
+        "summary": "Delete History Record"
+      },
+      "patch": {
+        "operationId": "edit_history_record_v1_history_records__id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "pattern": "^[A-Za-z0-9_.:-]{1,128}$",
+              "title": "Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": true,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HistoryRecordEdit"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OutingRecord"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "POLICY"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "POLICY"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "DISABLED or NOT_FOUND"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "CONFLICT"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "VALIDATION"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "QUOTA",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds to wait before retrying.",
+                "schema": {
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "VALIDATION"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "PROVIDER"
+          },
+          "504": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "PROVIDER"
+          }
+        },
+        "summary": "Edit History Record"
+      }
+    },
+    "/v1/history/settings": {
+      "get": {
+        "operationId": "get_history_settings_v1_history_settings_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": true,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HistorySettings"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "POLICY"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "POLICY"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "DISABLED or NOT_FOUND"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "CONFLICT"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "VALIDATION"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "QUOTA",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds to wait before retrying.",
+                "schema": {
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "VALIDATION"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "PROVIDER"
+          },
+          "504": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "PROVIDER"
+          }
+        },
+        "summary": "Get History Settings"
+      },
+      "put": {
+        "description": "Choose 30 to 180 days. Shortening purges what is already past the new period, at once.",
+        "operationId": "put_history_settings_v1_history_settings_put",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": true,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HistorySettingsUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HistorySettings"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "POLICY"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "POLICY"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "DISABLED or NOT_FOUND"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "CONFLICT"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "VALIDATION"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "QUOTA",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds to wait before retrying.",
+                "schema": {
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "VALIDATION"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "PROVIDER"
+          },
+          "504": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "PROVIDER"
+          }
+        },
+        "summary": "Put History Settings"
       }
     },
     "/v1/me/capabilities": {
@@ -6384,6 +7259,7 @@
     },
     "/v1/saved-places": {
       "delete": {
+        "description": "One saved place (``place_id``) or, without it, all of them.",
         "operationId": "delete_saved_places_v1_saved_places_delete",
         "parameters": [
           {
@@ -6459,7 +7335,7 @@
                 }
               }
             },
-            "description": "DISABLED"
+            "description": "DISABLED or NOT_FOUND"
           },
           "409": {
             "content": {
@@ -6499,16 +7375,6 @@
                 }
               }
             }
-          },
-          "501": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": "NOT_IMPLEMENTED"
           },
           "502": {
             "content": {
@@ -6602,7 +7468,7 @@
                 }
               }
             },
-            "description": "DISABLED"
+            "description": "DISABLED or NOT_FOUND"
           },
           "409": {
             "content": {
@@ -6643,16 +7509,6 @@
               }
             }
           },
-          "501": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": "NOT_IMPLEMENTED"
-          },
           "502": {
             "content": {
               "application/json": {
@@ -6687,6 +7543,7 @@
         "summary": "List Saved Places"
       },
       "put": {
+        "description": "Edit the label of an EXISTING saved place. Creating or moving one needs a confirmed\nSAVE_PLACE action, so an unknown place ID is a 404 and a different kind or position a 422.",
         "operationId": "put_saved_place_v1_saved_places_put",
         "parameters": [
           {
@@ -6755,7 +7612,7 @@
                 }
               }
             },
-            "description": "DISABLED"
+            "description": "DISABLED or NOT_FOUND"
           },
           "409": {
             "content": {
@@ -6796,16 +7653,6 @@
               }
             }
           },
-          "501": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
-                }
-              }
-            },
-            "description": "NOT_IMPLEMENTED"
-          },
           "502": {
             "content": {
               "application/json": {
@@ -6838,6 +7685,298 @@
           }
         },
         "summary": "Put Saved Place"
+      }
+    },
+    "/v1/saved-places/ask-check": {
+      "post": {
+        "description": "Whether to show the FIXED \"Is where you are now your home? Save it as Home?\" question for\nthis message. The text is server-authored; the message is neither stored nor logged.",
+        "operationId": "check_saved_place_ask_v1_saved_places_ask_check_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": true,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AskCheckRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SavedPlacePrompt"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "POLICY"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "POLICY"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "DISABLED or NOT_FOUND"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "CONFLICT"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "VALIDATION"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "QUOTA",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds to wait before retrying.",
+                "schema": {
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "VALIDATION"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "PROVIDER"
+          },
+          "504": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "PROVIDER"
+          }
+        },
+        "summary": "Check Saved Place Ask"
+      }
+    },
+    "/v1/saved-places/ask-state": {
+      "put": {
+        "description": "Record a decline (30-day cooldown), \"don't ask again\", or clear them. ``recorded`` is False\nwhen the server stored nothing (no SAVED_PLACE consent): the client keeps it on the device.",
+        "operationId": "put_saved_place_ask_state_v1_saved_places_ask_state_put",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": true,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AskStateUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AskStateView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "POLICY"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "POLICY"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "DISABLED or NOT_FOUND"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "CONFLICT"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "VALIDATION"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "QUOTA",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds to wait before retrying.",
+                "schema": {
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "VALIDATION"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "PROVIDER"
+          },
+          "504": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "PROVIDER"
+          }
+        },
+        "summary": "Put Saved Place Ask State"
       }
     },
     "/v1/session:bootstrap": {

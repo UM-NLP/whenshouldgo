@@ -34,14 +34,27 @@ The production image installs the `auth` extra (PyJWT, cryptography) and the `gc
       watch for a "requires an index" error in the emulator run.
 - [ ] TTL policies on the `expires_at` field of: `workspaces`, `idempotency` (turn replay),
       `display_cache`, `plan_heads`, `plan_versions` (guest rows only carry it), `edit_receipts`,
-      `pending_actions` (record expiry = action expiry + 24 hours), `account_link_intents`.
+      `pending_actions` (record expiry = action expiry + 24 hours; a SAVE_PLACE record that still
+      holds the user's position expires with its action, no grace), `account_link_intents`, and
+      the Phase 1 collection `history_records` (`expires_at` = the record's retention expiry:
+      90 days by default, 180 at most). Create the `history_records` policy BEFORE history is
+      enabled; TTL deletion is late, the adapters also hide expired records on read.
 - [ ] No TTL on: `quota_usage`, `consent_ledgers`, `outcome_ledgers` (pruned at write to the 180-day
-      ceiling), `accounts`, `account_link_keys`, `account_migrations`, `account_migration_keys`,
+      ceiling), the Phase 1 collections `history_settings` (the user's retention choice, deleted on
+      consent withdrawal), `saved_places` and `saved_place_asks` (kept until the user deletes them,
+      withdraws SAVED_PLACE or deletes the account), `accounts`, `account_link_keys`, `account_migrations`, `account_migration_keys`,
       `account_tombstones`, `cost_totals`, `kill_switch`.
+- [ ] Phase 1 collections (code only, DARK until `history_enabled` and an approved notice):
+      `history_records` (one doc per OutingRecord: place ID, the user's label, tag, timestamps,
+      outcome, feedback; no Maps content), `history_settings`, `saved_places` (place ID, label,
+      kind, position rounded to 3 decimals), `saved_place_asks` (when a Home/Work question was
+      declined, "don't ask again"). Indexes: automatic single-field only (equality on `owner_id`,
+      range on `expires_at` for `history_records`); no composite index is declared. Every
+      document has `schema_version`, `kind`, `owner_id` and a hashed id.
 - [ ] Security rules: deny all client access (only the backend's service account reads or writes).
 - [ ] Load-test `cost_totals/pilot` (one hot document; shard the counter if it contends).
-- [ ] Retention sweep: `Runtime.purge_expired()` deletes expired pending actions and display-cache
-      entries early. Nothing calls it yet. Either rely on the TTL policies above or add a Cloud
+- [ ] Retention sweep: `Runtime.purge_expired()` deletes expired pending actions, display-cache
+      entries and history records early. Nothing calls it yet. Either rely on the TTL policies above or add a Cloud
       Scheduler job and an internal, OIDC-authenticated trigger (not built; it must not be a public
       route).
 

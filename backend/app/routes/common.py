@@ -1,12 +1,11 @@
 """Helpers shared by the route modules: typed errors, the limiter guard, stub and flag guards."""
 from __future__ import annotations
 
-from typing import NoReturn
-
 from fastapi import Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 
 from ..consent import OperationLimiter
+from ..feature_errors import FeatureError, FeatureFailure
 from ..domain import (
     ErrorBody,
     ErrorCode,
@@ -32,15 +31,6 @@ ERROR_RESPONSES: dict[int | str, dict[str, object]] = {
     )
 }
 ERROR_RESPONSES[429]["headers"] = _RETRY_AFTER_HEADER
-
-
-def stub_responses(history_gated: bool = False) -> dict[int | str, dict[str, object]]:
-    """Error responses of a planned route: the shared set plus the typed 501 (and 404 DISABLED)."""
-    responses = dict(ERROR_RESPONSES)
-    responses[501] = {"model": ErrorBody, "description": "NOT_IMPLEMENTED"}
-    if history_gated:
-        responses[404] = {"model": ErrorBody, "description": "DISABLED"}
-    return responses
 
 
 APP_CHECK_HEADER = "X-Firebase-AppCheck"
@@ -99,10 +89,33 @@ def require_history_active(
         raise error(404, ErrorCode.VALIDATION, "feature disabled", ErrorReason.DISABLED)
 
 
-def not_implemented(request: Request, principal: Principal) -> NoReturn:
-    """Handler body of a planned route: authenticated, rate limited, then a typed 501.
+# failure -> (status, code, message, reason). Static, server-authored text.
+_FEATURE_ERRORS: dict[FeatureFailure, tuple[int, ErrorCode, str, ErrorReason | None]] = {
+    FeatureFailure.DISABLED: (404, ErrorCode.VALIDATION, "feature disabled", ErrorReason.DISABLED),
+    FeatureFailure.GUEST: (403, ErrorCode.POLICY, "not available for guest accounts",
+                           ErrorReason.GUEST_NOT_ALLOWED),
+    FeatureFailure.CONSENT_REQUIRED: (403, ErrorCode.POLICY, "consent required",
+                                      ErrorReason.CONSENT_REQUIRED),
+    FeatureFailure.NOT_FOUND: (404, ErrorCode.VALIDATION, "not found", None),
+    FeatureFailure.INVALID: (422, ErrorCode.VALIDATION, "request failed validation", None),
+    FeatureFailure.CONFLICT: (409, ErrorCode.CONFLICT,
+                              "idempotency key reused with a different request", None),
+    FeatureFailure.LIMIT: (409, ErrorCode.CONFLICT, "limit reached", None),
+    FeatureFailure.UNAVAILABLE: (403, ErrorCode.POLICY, "account unavailable", None),
+}
 
-    The tenant is the verified principal; nothing from the request is read or stored. Replace the
-    call in the route's own module when the route is built."""
-    access_principal(request, principal, request.app.state.access_limiter)
-    raise error(501, ErrorCode.PROVIDER, "not implemented", ErrorReason.NOT_IMPLEMENTED)
+
+def feature_error(failure: FeatureError) -> HTTPException:
+    """The typed HTTP answer of a history or saved-place refusal (static text)."""
+    status, code, message, reason = _FEATURE_ERRORS[failure.failure]
+    return error(status, code, message, reason)
+
+
+def history_responses() -> dict[int | str, dict[str, object]]:
+    """Error responses of a built, history-gated route: the shared set plus 404 (DISABLED or
+    NOT_FOUND). The route can also answer a typed 503 until its service is attached."""
+    responses = dict(ERROR_RESPONSES)
+    responses[404] = {"model": ErrorBody, "description": "DISABLED or NOT_FOUND"}
+    return responses
+
+

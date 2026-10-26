@@ -7,8 +7,8 @@ from typing import Any
 
 from app.actions import ActionService
 from app.domain import (
-    Principal, PrincipalKind, ProposeActionRequest, TripWorkspace, PendingActionEffect as E,
-    SavedPlaceKind,
+    Principal, PrincipalKind, ProposeActionRequest, RoundedPosition, TripWorkspace,
+    PendingActionEffect as E, SavedPlaceKind,
 )
 from app.entitlements import Allowance, EntitlementPolicy, Period, PolicyRegistry
 from app.quota import QuotaService
@@ -51,10 +51,13 @@ class CountingSink:
     def __init__(self) -> None:
         self.calls: list[dict[str, Any]] = []
 
+    def precheck(self, principal: Principal) -> None:
+        return None
+
     def save_place(self, principal: Principal, *, place_id: str, user_label: str,
-                   label_kind: SavedPlaceKind, action_id: str) -> None:
+                   label_kind: SavedPlaceKind, action_id: str, position: Any) -> None:
         self.calls.append(dict(uid=principal.uid, place_id=place_id, user_label=user_label,
-                               label_kind=label_kind, action_id=action_id))
+                               label_kind=label_kind, action_id=action_id, position=position))
 
 
 def make_store(kind: str):
@@ -100,6 +103,7 @@ class Env:
         if effect == E.SAVE_PLACE:
             base["user_label"] = "Home"
             base["label_kind"] = SavedPlaceKind.HOME
+            base["position"] = RoundedPosition(latitude=43.653226, longitude=-79.383184)
         base.update(kw)
         return ProposeActionRequest(**base)
 

@@ -22,7 +22,13 @@ from typing import Any, Protocol, TypeVar, runtime_checkable
 
 from pydantic import ValidationError
 
-from ..domain import SCHEMA_VERSION, PendingAction, SavedPlaceKind
+from ..domain import (
+    SCHEMA_VERSION,
+    PendingAction,
+    PendingActionEffect,
+    RoundedPosition,
+    SavedPlaceKind,
+)
 from .firestore import StoredDataError, _Base, doc_id
 
 T = TypeVar("T")
@@ -48,11 +54,17 @@ class ActionRecord:
     label_kind: SavedPlaceKind | None = None
     due_at: datetime | None = None
     failed_attempts: int = 0
+    # SAVE_PLACE only: the user's consented position, rounded on parse. Held ONLY until confirm
+    # (then it lives in the saved place and is scrubbed here), cancel or expiry. A record that
+    # holds one gets no grace period: it expires with its action.
+    position: RoundedPosition | None = None
     schema_version: int = SCHEMA_VERSION
     kind: str = "pending_action_record"
 
     @property
     def expires_at(self) -> datetime:
+        if self.position is not None:
+            return self.action.expires_at
         return self.action.expires_at + RECORD_GRACE
 
     def __repr__(self) -> str:  # never the label, place ID or nonce
@@ -74,6 +86,11 @@ class PendingActionStore(Protocol):
     def purge(self, now: datetime) -> int: ...
 
     def delete_owner(self, owner_id: str) -> int: ...
+
+    def delete_save_place_records(self, owner_id: str) -> int:
+        """Delete the owner's SAVE_PLACE records (they hold the user's label and, until confirm,
+        position): the SAVED_PLACE consent was withdrawn. Returns how many were deleted."""
+        ...
 
 
 def _check(owner_id: str, record: ActionRecord | None, action_id: str) -> None:
@@ -115,6 +132,14 @@ class MemoryPendingActionStore:
                 del self.items[key]
             return len(mine)
 
+    def delete_save_place_records(self, owner_id: str) -> int:
+        with self._lock:
+            mine = [k for k, r in self.items.items()
+                    if k[0] == owner_id and r.action.effect == PendingActionEffect.SAVE_PLACE]
+            for key in mine:
+                del self.items[key]
+            return len(mine)
+
 
 class FirestorePendingActionStore(_Base):
     def _ref(self, owner_id: str, action_id: str) -> Any:
@@ -133,7 +158,8 @@ class FirestorePendingActionStore(_Base):
                 user_label=doc.get("user_label"),
                 label_kind=SavedPlaceKind(doc["label_kind"]) if doc.get("label_kind") else None,
                 due_at=datetime.fromisoformat(due) if due else None,
-                failed_attempts=int(doc.get("failed_attempts", 0)))
+                failed_attempts=int(doc.get("failed_attempts", 0)),
+                position=(RoundedPosition(**doc["position"]) if doc.get("position") else None))
         except (ValidationError, KeyError, ValueError, TypeError):
             raise StoredDataError("action record does not match the schema") from None
 
@@ -148,6 +174,9 @@ class FirestorePendingActionStore(_Base):
             "due_at": record.due_at.isoformat() if record.due_at else None,
             "failed_attempts": record.failed_attempts, "expires_at": record.expires_at,
             "updated_at": record.action.confirmed_at or record.action.created_at}
+        if record.position is not None:  # only a SAVE_PLACE proposal, until confirm/cancel/expiry
+            doc["position"] = {"latitude": record.position.latitude,
+                               "longitude": record.position.longitude}
         return doc
 
     def get(self, owner_id: str, action_id: str) -> ActionRecord | None:
@@ -183,4 +212,12 @@ class FirestorePendingActionStore(_Base):
         for snap in self._col(PENDING_ACTIONS).where("owner_id", "==", owner_id).stream():
             snap.reference.delete()
             count += 1
+        return count
+
+    def delete_save_place_records(self, owner_id: str) -> int:
+        count = 0
+        for snap in self._col(PENDING_ACTIONS).where("owner_id", "==", owner_id).stream():
+            if snap.to_dict().get("action", {}).get("effect") == PendingActionEffect.SAVE_PLACE.value:
+                snap.reference.delete()
+                count += 1
         return count

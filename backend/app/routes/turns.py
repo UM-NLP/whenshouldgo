@@ -14,9 +14,11 @@ from ..domain import (
     MeterState,
     Principal,
     PrincipalKind,
+    SavedPlacePrompt,
     TurnResponse,
     UsagePeriod,
     UsageView,
+    history_active,
 )
 from ..failures import TurnFailure
 from ..location import LocationInput
@@ -36,6 +38,23 @@ class TurnRequest(BaseModel):
     # Optional, foreground, consented: see app/location.py. Rounded on parse; hidden from repr and
     # from validation errors; never part of the idempotency fingerprint.
     location: LocationInput | None = Field(default=None, repr=False)
+
+
+def _saved_place_prompt(request: Request, principal: Principal, message: str) -> SavedPlacePrompt | None:
+    """The server-authored home/work question (decision 24) for a registered user while history is
+    active; None otherwise. It can never fail a turn that already succeeded."""
+    if principal.kind != PrincipalKind.REGISTERED_FREE:
+        return None
+    if not history_active(getattr(request.app.state, "runtime_config", None)):
+        return None
+    service = getattr(request.app.state, "saved_place_service", None)
+    if service is None:
+        return None
+    try:
+        prompt = service.prompt(principal, message)
+    except Exception:  # noqa: BLE001 - a prompt is a courtesy: never an error on the turn
+        return None
+    return prompt if prompt.ask else None
 
 
 @router.post("/v1/agent/turns", response_model=TurnResponse, responses=ERROR_RESPONSES)
@@ -88,6 +107,7 @@ def agent_turn(
             usage=usage,
             discovery=result.discovery,
             warnings=result.warnings,
+            saved_place_prompt=_saved_place_prompt(request, principal, body.message),
         )
     except ValidationError as exc:
         raise error(500, ErrorCode.VALIDATION, "turn result violated the response contract") from exc

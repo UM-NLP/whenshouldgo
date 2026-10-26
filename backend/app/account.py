@@ -624,6 +624,20 @@ def register_plan_state(
     service.register_export("plans_outcomes", contribute)
 
 
+def register_history_state(service: AccountService, *, history: Any, saved_places: Any) -> None:
+    """Deleters and export contributors for the dark Phase 1 stores (decision 25). The deleters
+    always run on account deletion (they delete data that exists whatever the flag says now); the
+    export contributors are read only while history is active, and fill the export bundle's
+    ``outings`` and ``saved_places``."""
+    service.deleters.register("history", history.delete_all)
+    service.deleters.register("saved_places", saved_places.delete_all)
+    service.register_export(
+        "history", lambda uid: ExportPart(outings=history.export(uid)), requires_history=True)
+    service.register_export(
+        "saved_places", lambda uid: ExportPart(saved_places=saved_places.export(uid)),
+        requires_history=True)
+
+
 # --- composition -------------------------------------------------------------------------------
 def build_account_service(
     *, stores: StateStores, quotas: QuotaService, consents: ConsentStore,
@@ -660,6 +674,7 @@ __all__ = [
     "AccountError", "AccountErrorKind", "AccountExportBundle", "AccountLimits", "AccountOp",
     "AccountService", "AdminAccount", "DeleteReport", "Deleter", "DeleterRegistry",
     "ExportPart", "ExportUsage", "ExportWorkspace", "FirebaseAdmin", "build_account_service",
-    "export_workspace_of", "register_owner_collection", "register_plan_state",
+    "export_workspace_of", "register_history_state", "register_owner_collection",
+    "register_plan_state",
     "register_state_deleters",
 ]

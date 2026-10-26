@@ -7,7 +7,6 @@ import pytest
 
 from app.main import create_app
 
-DARK_501 = {"/v1/history/records", "/v1/saved-places"}
 
 
 @pytest.fixture(scope="module")
@@ -23,10 +22,11 @@ def test_no_operation_id_is_duplicated(schema: dict) -> None:
     assert len([p for p in schema["paths"] if p.endswith(":activate")]) == 1
 
 
-def test_only_the_dark_routes_still_document_a_501(schema: dict) -> None:
+def test_no_route_documents_a_501_any_more(schema: dict) -> None:
+    # The history and saved-place routes are built (dark behind history_active, decision 25).
     stubs = {path for path, ops in schema["paths"].items()
              for op in ops.values() if "501" in op["responses"]}
-    assert stubs == DARK_501
+    assert stubs == set()
 
 
 def test_places_and_workspace_routes_document_real_errors(schema: dict) -> None:

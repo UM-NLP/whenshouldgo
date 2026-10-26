@@ -22,7 +22,7 @@ from collections.abc import Callable
 from contextlib import AbstractContextManager, contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import Any, Protocol
 from uuid import uuid4
 
 from pydantic import ValidationError
@@ -51,6 +51,7 @@ from .domain import (
     history_active,
 )
 from .entitlements import PolicyRegistry
+from .feature_errors import FeatureError
 from .patching import (
     SELECTED_LABEL_KEY,
     SELECTED_PLACE_KEY,
@@ -198,6 +199,13 @@ class _KeyedLocks:
 LockFactory = Callable[[tuple[str, str]], AbstractContextManager[None]]
 
 
+class HistoryRecorder(Protocol):
+    """``history.HistoryService``: turns a stored check-in into an opt-in OutingRecord."""
+
+    def record_outcome(self, principal: Principal, checkin: OutcomeCheckin,
+                       idempotency_key: str) -> bool: ...
+
+
 # --- helpers ---------------------------------------------------------------------------------
 def _fact_value(workspace: TripWorkspace, key: str) -> object | None:
     for fact in workspace.facts:
@@ -240,8 +248,10 @@ class WorkspaceService:
         runtime_config: RuntimeConfig | Callable[[], RuntimeConfig | None] | None = None,
         clock: Callable[[], datetime] | None = None, sink: TraceSink | None = None,
         lock: LockFactory | None = None, account_guard: Callable[[str], None] | None = None,
+        history: HistoryRecorder | None = None,
     ) -> None:
         self._account_guard = account_guard  # raises once the account is deleted
+        self._history = history
         self._workspaces = workspaces
         self._stores = stores
         self._policies = policies
@@ -450,6 +460,8 @@ class WorkspaceService:
             if len(checkin.note) > MAX_NOTE_CHARS or plain_text_problem(
                     checkin.note, allow_joiners=True):
                 raise NoteRejected()
+        if checkin.user_label is not None and plain_text_problem(checkin.user_label):
+            raise NoteRejected()  # the label is the user's own plain text: no link, markup, address
         stored = self._may_store(principal)
         if stored:
             self._assert_active(principal.uid)
@@ -457,6 +469,11 @@ class WorkspaceService:
                 f"{checkin.place_id}\x1f{checkin.outcome.value}\x1f{checkin.note or ''}"
                 .encode()).hexdigest()
             self._stores.outcomes.record(principal.uid, key, checkin, self._clock())
+            if self._history is not None:
+                try:  # the opt-in history record (decision 19); idempotent by the same key
+                    self._history.record_outcome(principal, checkin, key)
+                except FeatureError:
+                    pass  # a full or conflicting history never fails a stored check-in
         self._trace(OutcomeCheckinEvent, outcome=checkin.outcome, has_note=checkin.note is not None)
         return OutcomeAck(recorded=stored)
 
@@ -475,13 +492,14 @@ def build_workspace_service(
     runtime_config: RuntimeConfig | Callable[[], RuntimeConfig | None] | None = None,
     clock: Callable[[], datetime] | None = None, sink: TraceSink | None = None,
     lock: LockFactory | None = None, account_guard: Callable[[str], None] | None = None,
+    history: HistoryRecorder | None = None,
 ) -> WorkspaceService:
     """The service over the SAME ``WorkspaceStore`` the orchestrator uses (one workspace per
     tenant) and the plan/outcome/receipt stores. Pass ``lock`` = the orchestrator's per-tenant
     workspace lock so a user edit and a turn never interleave."""
     return WorkspaceService(workspaces, stores, policies=policies, consents=consents,
                             runtime_config=runtime_config, clock=clock, sink=sink, lock=lock,
-                            account_guard=account_guard)
+                            account_guard=account_guard, history=history)
 
 
 __all__ = [
