@@ -9,6 +9,8 @@ import { startingAreaLabel } from "./SavedStartingArea";
 type List = { status: "loading" } | { status: "ok"; entries: SavedEntry[] } | { status: "failed"; failure: HistoryFailure };
 
 const MAX_LABEL = 60;
+const SAVED_CONSENT_HINT =
+  "Saving places to your account needs your OK first. Tap save Home or Work below to read the notice and agree.";
 
 function Row({
   entry,
@@ -113,7 +115,6 @@ export function SavedPlaces({
 }) {
   const [list, setList] = useState<List>({ status: "loading" });
   const [problem, setProblem] = useState<HistoryFailure | null>(null);
-  const [customName, setCustomName] = useState("");
 
   const load = useCallback(async () => {
     const outcome = await repo.list();
@@ -144,7 +145,7 @@ export function SavedPlaces({
       ) : null}
       {list.status === "failed" ? (
         <p className="notice notice-error" role="alert">
-          {historyFailureText(list.failure)}
+          {list.failure.kind === "history_consent_required" ? SAVED_CONSENT_HINT : historyFailureText(list.failure)}
         </p>
       ) : null}
       {list.status === "ok" && entries.length === 0 ? <p className="muted">{SAVED_EMPTY}</p> : null}
@@ -171,21 +172,6 @@ export function SavedPlaces({
           Export saved places
         </button>
       </div>
-      <form
-        className="add-fact"
-        onSubmit={(e) => {
-          e.preventDefault();
-          if (customName.trim()) flow.start("CUSTOM", customName.trim());
-        }}
-      >
-        <label>
-          Another place{" "}
-          <input type="text" maxLength={MAX_LABEL} value={customName} placeholder="Name, for example Gym" onChange={(e) => setCustomName(e.target.value)} />
-        </label>
-        <button type="submit" className="secondary" disabled={!customName.trim()}>
-          Save where I am now under this name
-        </button>
-      </form>
     </div>
   );
 }

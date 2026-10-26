@@ -8,11 +8,14 @@ import { QUESTION_TEXT } from "./SavedAskPolicy";
  */
 export function SavedHomeQuestion({
   kind,
+  text,
   onYes,
   onLater,
   onNever,
 }: {
   kind: AskKind;
+  /** The server's fixed question text for a registered user; the same constant for a guest. */
+  text?: string;
   onYes(): void;
   onLater(): void;
   onNever(): void;
@@ -20,7 +23,7 @@ export function SavedHomeQuestion({
   const label = kind === "HOME" ? "Home" : "Work";
   return (
     <section className="notice" role="group" aria-label={`Save ${label}?`}>
-      <p>{QUESTION_TEXT[kind]}</p>
+      <p>{text ?? QUESTION_TEXT[kind]}</p>
       <div className="notice-actions">
         <button type="button" onClick={onYes}>
           Yes, save as {label}

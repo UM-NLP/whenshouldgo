@@ -195,7 +195,8 @@ export function Chat({
 
       {p1?.question ? (
         <SavedHomeQuestion
-          kind={p1.question}
+          kind={p1.question.kind}
+          text={p1.question.text}
           onYes={() => p1.answer("yes")}
           onLater={() => p1.answer("later")}
           onNever={() => p1.answer("never")}

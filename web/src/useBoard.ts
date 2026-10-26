@@ -14,7 +14,7 @@ import { logOutcomeLocally, saveReminder } from "./board/reminders";
 import { handoffUrlFrom, MAX_CANDIDATES, planVersionOf, secondsLeft } from "./board/viewModels";
 import { GeoError, geoErrorText, type Coordinates } from "./lib/geo";
 import { newIdempotencyKey } from "./lib/idempotency";
-import type { OutcomeValue } from "./board/boardApi";
+import type { IntentTag, OutcomeValue } from "./board/boardApi";
 import type { LocalSession } from "./useLocalSession";
 import type { LocationConsent } from "./useLocationConsent";
 
@@ -53,6 +53,8 @@ export interface ActionState {
 export interface FollowUp {
   placeId: string;
   label: string;
+  /** The board's activity tag, if it has one. The Phase 0 board has none, so the server derives it. */
+  intentTag?: IntentTag;
 }
 interface PendingEdit {
   key: string;

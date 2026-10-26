@@ -15,7 +15,10 @@ function ServerHistory({ p1, api, boardApi }: { p1: Phase1; api: Phase1Api; boar
   const consent = useConsent(api, "HISTORY_STORE", true);
   return (
     <ConsentGate purpose="HISTORY_STORE" control={consent}>
-      {p1.history ? <HistoryView repo={p1.history} boardApi={boardApi} version={p1.version} onChanged={p1.bump} /> : null}
+      <RetentionPicker mode="server" store={null} api={api} onChanged={p1.bump} onConsentLost={consent.lost} />
+      {p1.history ? (
+        <HistoryView repo={p1.history} boardApi={boardApi} version={p1.version} onChanged={p1.bump} onConsentRequired={consent.lost} />
+      ) : null}
       <div className="notice-actions">
         <button type="button" className="secondary" onClick={consent.withdraw}>
           Stop saving my history
@@ -41,7 +44,7 @@ export function Phase1Panel({ p1, api, boardApi, store }: { p1: Phase1; api: Pha
       )}
       {open ? (
         <>
-          <RetentionPicker mode={p1.mode} store={store} onChanged={p1.bump} />
+          {p1.mode === "device" ? <RetentionPicker mode="device" store={store} onChanged={p1.bump} /> : null}
           {p1.mode === "server" ? (
             <ServerHistory p1={p1} api={api} boardApi={boardApi} />
           ) : p1.history ? (

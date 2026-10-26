@@ -17,6 +17,7 @@ export type PendingActionEffect = S["PendingActionEffect"];
 export type PlaceCard = S["PlaceCard"];
 export type RouteCheck = S["RouteCheck"];
 export type OutcomeValue = S["OutcomeValue"];
+export type IntentTag = S["IntentTag"];
 export type OutcomeAck = S["OutcomeAck"];
 export type ConfirmActionResponse = S["ConfirmActionResponse"];
 export type ReminderItem = S["ReminderItem"];
@@ -26,6 +27,8 @@ export type BoardFailure =
   | { kind: "unavailable" }
   | { kind: "conflict" }
   | { kind: "consent_required" }
+  | { kind: "guest_not_allowed" }
+  | { kind: "history_consent_required" }
   | { kind: "quota" }
   | { kind: "rate_limited"; retryAfterSeconds: number | null }
   | { kind: "auth" }
@@ -46,6 +49,9 @@ export function classifyBoardFailure(
   if (status === 409) return { kind: "conflict" };
   const base = classifyFailure(status, body, retryAfter);
   switch (base.kind) {
+    case "guest_not_allowed":
+    case "history_consent_required":
+      return { kind: base.kind };
     case "unavailable":
       return { kind: "unavailable" };
     case "rate_limited":
@@ -89,12 +95,18 @@ export interface ProposeInput {
   dueAt?: string;
   /** SAVE_PLACE only: HOME, WORK or CUSTOM (the server requires it for that effect and refuses it for others). */
   labelKind?: S["SavedPlaceKind"];
+  /** SAVE_PLACE only (required by the server): the consented foreground position, rounded to 3 decimals. */
+  position?: { latitude: number; longitude: number };
 }
 export interface OutcomeInput {
   placeId: string;
   outcome: OutcomeValue;
   note: string | null;
   idempotencyKey: string;
+  /** The user's own label for the place, when they gave one. Never a Maps name. */
+  userLabel?: string | null;
+  /** The board's activity tag, when the board has one (the server derives one from the goal otherwise). */
+  intentTag?: IntentTag | null;
 }
 
 export interface BoardApi {
@@ -181,7 +193,7 @@ export function createBoardApi({ auth, fetchImpl, baseUrl }: BoardApiOptions): B
       );
       return outcome.ok ? { ok: true, data: outcome.data.route } : outcome;
     },
-    propose: ({ effect, target, userLabel, workspaceId, planVersion, idempotencyKey, dueAt, labelKind }) =>
+    propose: ({ effect, target, userLabel, workspaceId, planVersion, idempotencyKey, dueAt, labelKind, position }) =>
       call((authorization) =>
         client.POST("/v1/actions/propose", {
           params: { header: { authorization, "idempotency-key": idempotencyKey } },
@@ -194,6 +206,7 @@ export function createBoardApi({ auth, fetchImpl, baseUrl }: BoardApiOptions): B
             plan_version: planVersion,
             ...(dueAt ? { due_at: dueAt } : {}),
             ...(labelKind ? { label_kind: labelKind } : {}),
+            ...(position ? { position: { latitude: position.latitude, longitude: position.longitude } } : {}),
           },
         }),
       ),
@@ -211,11 +224,15 @@ export function createBoardApi({ auth, fetchImpl, baseUrl }: BoardApiOptions): B
       );
       return outcome.ok ? { ok: true, data: null } : outcome;
     },
-    recordOutcome: ({ placeId, outcome, note, idempotencyKey }) =>
+    recordOutcome: ({ placeId, outcome, note, idempotencyKey, userLabel, intentTag }) =>
       call((authorization) =>
         client.POST("/v1/outcomes", {
           params: { header: { authorization, "idempotency-key": idempotencyKey } },
-          body: { schema_version: 1, kind: "outcome_checkin", place_id: placeId, outcome, ...(note ? { note } : {}) },
+          body: { schema_version: 1, kind: "outcome_checkin", place_id: placeId, outcome,
+            ...(note ? { note } : {}),
+            ...(userLabel ? { user_label: userLabel } : {}),
+            ...(intentTag ? { intent_tag: intentTag } : {}),
+          },
         }),
       ),
     activateTrip: (workspaceId, planVersion) =>

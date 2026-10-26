@@ -91,7 +91,9 @@ describe("outcome check-in", () => {
     await user.click(checkin.getByRole("button", { name: "Send" }));
     await waitFor(() => expect(screen.queryByLabelText("Did you go?", { selector: "section" })).toBeNull());
     const [post] = backend.calls("POST", "/v1/outcomes");
-    expect(post!.body).toMatchObject({ place_id: PLACE_A, outcome: "WENT", note: "SECRETNOTE lovely" });
+    expect(post!.body).toMatchObject({ place_id: PLACE_A, outcome: "WENT", note: "SECRETNOTE lovely", user_label: "Dinner spot" });
+    // The Phase 0 board has no activity tag, so none is sent (the server derives one from the goal).
+    expect(post!.body).not.toHaveProperty("intent_tag");
     expect(post!.headers.get("idempotency-key")).toBeTruthy();
     const logged = await store.getAll("outing_log");
     expect(logged).toHaveLength(1);

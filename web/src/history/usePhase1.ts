@@ -4,7 +4,7 @@ import type { TurnResponse } from "../api/client";
 import type { AccountApi } from "../account/accountApi";
 import type { BoardApi, BoardFailure } from "../board/boardApi";
 import type { Coordinates } from "../lib/geo";
-import { createAskStore, detectNearKind, shouldAsk } from "../places/SavedAskPolicy";
+import { createAskStore, detectNearKind, QUESTION_TEXT, shouldAsk } from "../places/SavedAskPolicy";
 import { useSaveFlow, type SaveFlow } from "../places/SavedPlaceFlow";
 import type { LocalSession } from "../useLocalSession";
 import type { LocationConsent } from "../useLocationConsent";
@@ -20,6 +20,12 @@ export interface Phase1Deps {
 
 export type AskAnswer = "yes" | "later" | "never";
 
+/** The fixed question on screen: the label it is about and its text (server text for registered users). */
+export interface AskPrompt {
+  kind: AskKind;
+  text: string;
+}
+
 export interface Phase1 {
   mode: RepoMode;
   history: HistoryRepo | null;
@@ -28,8 +34,8 @@ export interface Phase1 {
   version: number;
   bump(): void;
   /** The fixed Home/Work question to show now, or null. */
-  question: AskKind | null;
-  /** Guests: the local keyword rule over the user's own message. Registered: a no-op (the server decides). */
+  question: AskPrompt | null;
+  /** Guests: the local keyword rule over the user's own message. Registered: a no-op (the turn carries the server's prompt). */
   observeMessage(text: string): void;
   observeTurn(turn: TurnResponse): void;
   answer(choice: AskAnswer): void;
@@ -65,7 +71,7 @@ export function usePhase1(opts: {
   const mode: RepoMode = tier === "registered" ? "server" : "device";
   const store = session?.store ?? null;
   const [version, setVersion] = useState(0);
-  const [question, setQuestion] = useState<AskKind | null>(null);
+  const [question, setQuestion] = useState<AskPrompt | null>(null);
   const [startingArea, setStartingArea] = useState<SavedEntry | null>(null);
   const [needsLocation, setNeedsLocation] = useState(false);
   const serverDeclined = useRef(new Set<AskKind>());
@@ -109,34 +115,48 @@ export function usePhase1(opts: {
         const list = await saved.list();
         const hasSaved = list.ok && list.data.some((e) => e.kind === kind);
         const state = await askStore.get(kind);
-        if (shouldAsk(state, hasSaved, Date.now())) setQuestion((current) => current ?? kind);
+        if (shouldAsk(state, hasSaved, Date.now())) setQuestion((current) => current ?? { kind, text: QUESTION_TEXT[kind] });
       })();
     },
     [enabled, mode, saved, askStore],
   );
 
+  // Registered users: the server decides from its own ask-state and puts its fixed question on the turn.
+  // If it could not store a past answer (no SAVED_PLACE consent) the answer is kept on this device, so
+  // it is honoured here too.
   const observeTurn = useCallback(
     (turn: TurnResponse) => {
       if (!enabled || mode !== "server") return;
-      const kind = askSignalFromTurn(turn);
-      if (kind && !serverDeclined.current.has(kind)) setQuestion((current) => current ?? kind);
+      const signal = askSignalFromTurn(turn);
+      if (!signal || serverDeclined.current.has(signal.kind)) return;
+      void (async () => {
+        if (!shouldAsk(await askStore.get(signal.kind), false, Date.now())) return;
+        setQuestion((current) => current ?? { kind: signal.kind, text: signal.question ?? QUESTION_TEXT[signal.kind] });
+      })();
     },
-    [enabled, mode],
+    [enabled, mode, askStore],
   );
 
   const answer = useCallback(
     (choice: AskAnswer) => {
-      const kind = question;
-      if (!kind) return;
+      const asked = question;
+      if (!asked) return;
+      const kind = asked.kind;
       setQuestion(null);
       if (choice === "yes") return flow.start(kind);
-      if (mode === "server") {
-        serverDeclined.current.add(kind); // the server owns the cooldown; this visit is honoured
+      if (mode === "server" && deps) {
+        serverDeclined.current.add(kind); // this visit is honoured whatever the server says
+        void (async () => {
+          const o = await deps.api.putAskState(kind, choice === "later" ? "DECLINED" : "DONT_ASK_AGAIN");
+          if (o.ok && o.data.recorded) return;
+          // Not stored on the server (no consent, or an error): keep the choice on the device.
+          await (choice === "later" ? askStore.decline(kind, Date.now()) : askStore.dontAskAgain(kind));
+        })();
         return;
       }
       void (choice === "later" ? askStore.decline(kind, Date.now()) : askStore.dontAskAgain(kind));
     },
-    [question, flow, mode, askStore],
+    [question, flow, mode, askStore, deps],
   );
 
   const armStartingArea = useCallback(

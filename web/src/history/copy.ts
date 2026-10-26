@@ -43,9 +43,12 @@ export function guestRetentionText(days: number): string {
   );
 }
 
-export const SERVER_RETENTION_TEXT =
-  `Your synced history is kept for up to ${SERVER_RETENTION_CEILING_DAYS} days. ` +
-  "Choosing a shorter period is not available yet; you can delete entries or turn history off.";
+export function serverRetentionText(days: number, defaultDays: number, maxDays: number): string {
+  return (
+    `Your synced history is kept for ${days} days ` +
+    `(the default is ${defaultDays} and the longest is ${maxDays}). Choose a shorter period any time; older entries are removed at once.`
+  );
+}
 
 export const RETENTION_CHOICES: number[] = [MIN_RETENTION_DAYS, 60, DEFAULT_RETENTION_DAYS, 120, 150, MAX_RETENTION_DAYS];
 

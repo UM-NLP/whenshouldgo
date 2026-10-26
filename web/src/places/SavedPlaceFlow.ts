@@ -1,13 +1,14 @@
 // Saving Home, Work or a custom place. This is a side effect, so it always goes through the server's
-// PendingAction protocol: propose (preview, nonce, expiry, key), then an explicit Confirm. Only after
-// the server confirms does the client finish the save (device store for guests, server upsert for
-// registered users). The position is read inside the user's tap, rounded to 3 decimals, and held in
-// memory until then; it never goes in a URL, a log or a key.
+// PendingAction protocol: propose (preview, nonce, expiry, key, and the rounded position), then an
+// explicit Confirm; the server writes the place itself when it confirms. A guest's save never touches the
+// server (the server refuses guests with GUEST_NOT_ALLOWED): the same preview and an explicit Confirm are
+// shown locally and the place is written to the device store. The position is read inside the user's tap,
+// rounded to 3 decimals, and held in memory until then; it never goes in a URL, a log or a key.
 import { useCallback, useRef, useState } from "react";
 
 import type { BoardApi, BoardFailure } from "../board/boardApi";
 import { planVersionOf, secondsLeft } from "../board/viewModels";
-import { positionTargetId, SAVED_PLACE_NOTICE_VERSION } from "../history/contractAdapter";
+import { saveTargetId, SAVED_PLACE_NOTICE_VERSION } from "../history/contractAdapter";
 import type { Phase1Api } from "../history/historyApi";
 import type { Position, RepoMode, SavedRepo } from "../history/types";
 import { GeoError, geoErrorText } from "../lib/geo";
@@ -25,8 +26,10 @@ export type SaveStep =
   | { step: "geo"; text: string }
   | { step: "needs_notice" }
   | { step: "needs_consent" }
+  | { step: "needs_place" }
   | { step: "unsaveable" }
   | { step: "working" }
+  | { step: "local_confirm"; kind: SavedPlaceKind; label: string }
   | { step: "action"; state: ActionState }
   | { step: "saved"; kind: SavedPlaceKind }
   | { step: "finish_failed" }
@@ -35,7 +38,7 @@ export type SaveStep =
 export interface SaveFlow {
   state: SaveStep;
   /** Called from a user's tap. `label` defaults to Home or Work. */
-  start(kind: SavedPlaceKind, label?: string): void;
+  start(kind: SavedPlaceKind, label?: string, placeId?: string): void;
   acceptNotice(): void;
   declineNotice(): void;
   grantConsent(): void;
@@ -66,13 +69,19 @@ export function useSaveFlow(opts: {
   const optsRef = useRef(opts);
   optsRef.current = opts;
 
+  // A missing HISTORY_STORE/SAVED_PLACE consent is recovered by the consent prompt, not an error message.
+  const failed = useCallback((failure: BoardFailure) => {
+    setState(failure.kind === "history_consent_required" ? { step: "needs_consent" } : { step: "failed", failure });
+  }, []);
+
   const propose = useCallback(async () => {
     const h = held.current;
     if (!h) return;
-    const { boardApi } = optsRef.current;
+    const { boardApi, mode } = optsRef.current;
+    if (mode === "device") return setState({ step: "local_confirm", kind: h.kind, label: h.label });
     setState({ step: "working" });
     const ws = await boardApi.getWorkspace();
-    if (!ws.ok) return setState({ step: "failed", failure: ws.failure });
+    if (!ws.ok) return failed(ws.failure);
     const outcome = await boardApi.propose({
       effect: "SAVE_PLACE",
       target: h.placeId,
@@ -81,10 +90,11 @@ export function useSaveFlow(opts: {
       planVersion: planVersionOf(ws.data),
       idempotencyKey: newIdempotencyKey(),
       labelKind: h.kind,
+      position: h.position,
     });
-    if (!outcome.ok) return setState({ step: "failed", failure: outcome.failure });
+    if (!outcome.ok) return failed(outcome.failure);
     setState({ step: "action", state: { action: outcome.data, label: h.label, phase: "preview" } });
-  }, []);
+  }, [failed]);
 
   // Prerequisites in order: where it is stored must be agreed first (guest notice, or the SAVED_PLACE consent).
   const advance = useCallback(async () => {
@@ -103,9 +113,11 @@ export function useSaveFlow(opts: {
   }, [propose]);
 
   const start = useCallback(
-    (kind: SavedPlaceKind, label?: string) => {
+    (kind: SavedPlaceKind, label?: string, placeId?: string) => {
       const { location } = optsRef.current;
       held.current = null;
+      const target = saveTargetId(kind, placeId);
+      if (!target) return setState({ step: "needs_place" });
       if (location.phase !== "on") {
         location.start(); // the existing consent flow; the user taps again once it is on
         return setState({ step: "needs_location" });
@@ -118,7 +130,7 @@ export function useSaveFlow(opts: {
             kind,
             label: (label?.trim() || DEFAULT_LABEL[kind]).slice(0, 60),
             position: { latitude: round3(raw.latitude), longitude: round3(raw.longitude) },
-            placeId: positionTargetId(),
+            placeId: target,
           };
           void advance();
         },
@@ -131,7 +143,7 @@ export function useSaveFlow(opts: {
   const finish = useCallback(async () => {
     const h = held.current;
     const { saved, onSaved } = optsRef.current;
-    if (!h || !saved) return setState({ step: "finish_failed" });
+    if (!h || !saved?.saveConfirmed) return setState({ step: "finish_failed" });
     const done = await saved.saveConfirmed({ placeId: h.placeId, label: h.label, kind: h.kind, position: h.position });
     if (!done.ok) return setState({ step: "finish_failed" });
     held.current = null;
@@ -166,24 +178,36 @@ export function useSaveFlow(opts: {
       void (async () => {
         setState({ step: "working" });
         const granted = await optsRef.current.api.grantConsent("SAVED_PLACE", SAVED_PLACE_NOTICE_VERSION);
-        if (!granted.ok) return setState({ step: "failed", failure: granted.failure });
+        if (!granted.ok) return failed(granted.failure);
         await propose();
       })();
     },
     confirm: () => {
       const s = state;
+      if (s.step === "local_confirm") return void finish();
       if (s.step !== "action" || s.state.phase === "confirming") return;
       if (secondsLeft(s.state.action.expires_at, Date.now()) <= 0) return;
       updateAction({ phase: "confirming", failure: undefined });
       void (async () => {
         const outcome = await optsRef.current.boardApi.confirm(s.state.action);
-        if (!outcome.ok) return updateAction({ phase: "failed", failure: outcome.failure });
+        if (!outcome.ok) {
+          if (outcome.failure.kind === "history_consent_required") return failed(outcome.failure);
+          return updateAction({ phase: "failed", failure: outcome.failure });
+        }
         updateAction({ phase: "done" });
-        await finish();
+        // The server wrote the place when it confirmed. Nothing else is stored from here.
+        const kind = held.current?.kind ?? "HOME";
+        held.current = null;
+        optsRef.current.onSaved();
+        setState({ step: "saved", kind });
       })();
     },
     cancel: () => {
       const s = state;
+      if (s.step === "local_confirm") {
+        held.current = null;
+        return setState({ step: "idle" });
+      }
       if (s.step !== "action") return;
       void (async () => {
         const outcome = await optsRef.current.boardApi.cancel(s.state.action.id);

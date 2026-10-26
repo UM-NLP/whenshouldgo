@@ -59,6 +59,24 @@ export function SavedPlaceFlowView({ flow, mode }: { flow: SaveFlow; mode: "devi
           </div>
         </div>
       ) : null}
+      {state.step === "needs_place" ? (
+        <p className="notice notice-warning" role="status">
+          Another place can only be saved from a place you picked. Save Home or Work from where you are now.
+        </p>
+      ) : null}
+      {state.step === "local_confirm" ? (
+        <div className="notice" role="dialog" aria-label="Confirm saving this place">
+          <p>{`Save this place as ${state.label} on this device. It is kept here only and is never sent anywhere.`}</p>
+          <div className="notice-actions">
+            <button type="button" onClick={flow.confirm}>
+              Confirm
+            </button>
+            <button type="button" className="secondary" onClick={flow.cancel}>
+              Cancel
+            </button>
+          </div>
+        </div>
+      ) : null}
       {state.step === "unsaveable" ? (
         <p className="notice notice-warning" role="status">
           This browser is not saving anything on this device, so a place cannot be saved here.
@@ -83,7 +101,7 @@ export function SavedPlaceFlowView({ flow, mode }: { flow: SaveFlow; mode: "devi
           {boardFailureText(state.failure, "action")}
         </p>
       ) : null}
-      {state.step !== "action" && state.step !== "working" ? (
+      {state.step !== "action" && state.step !== "working" && state.step !== "local_confirm" ? (
         <button type="button" className="secondary" onClick={flow.dismiss}>
           Close
         </button>

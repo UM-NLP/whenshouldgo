@@ -53,6 +53,9 @@ export interface SavedRepo {
   list(): Promise<HistoryOutcome<SavedEntry[]>>;
   rename(entry: SavedEntry, label: string): Promise<HistoryOutcome<null>>;
   remove(entry: SavedEntry): Promise<HistoryOutcome<null>>;
-  /** Called only AFTER a server-confirmed SAVE_PLACE action. Home and Work are created nowhere else. */
-  saveConfirmed(input: { placeId: string; label: string; kind: SavedPlaceKind; position: Position }): Promise<HistoryOutcome<null>>;
+  /**
+   * Device only (guests): called after the user's explicit local confirmation. The server repo has no
+   * such method: for a registered user the server writes the place itself when the action is confirmed.
+   */
+  saveConfirmed?(input: { placeId: string; label: string; kind: SavedPlaceKind; position: Position }): Promise<HistoryOutcome<null>>;
 }

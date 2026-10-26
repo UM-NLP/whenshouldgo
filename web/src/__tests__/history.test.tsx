@@ -22,7 +22,7 @@ async function addOuting(store: LocalStore, id: string, over: Record<string, unk
   await store.put("outing_log", { schema_version: SCHEMA_VERSION, id, place_id: `ChIJ${id}`, label: "Date night spot", activity_tag: "FOOD_DRINK", at: iso(-2 * DAY), outcome: "WENT", ...over } as never);
 }
 async function addHome(store: LocalStore) {
-  await store.put("saved_places", { schema_version: SCHEMA_VERSION, id: "home", place_id: "here-abc", label: "Home", kind: "HOME", position: { lat: 48.858, lng: 2.294 }, updated_at: iso(0) });
+  await store.put("saved_places", { schema_version: SCHEMA_VERSION, id: "home", place_id: "saved-home", label: "Home", kind: "HOME", position: { lat: 48.858, lng: 2.294 }, updated_at: iso(0) });
 }
 const openPanel = async (user: ReturnType<typeof renderApp>["user"]) => user.click(await screen.findByRole("button", { name: "Show my history and saved places" }));
 
@@ -50,8 +50,17 @@ function serverOuting(over: Record<string, unknown> = {}) {
   };
 }
 function serverSaved(over: Record<string, unknown> = {}) {
-  return { schema_version: 1, kind: "saved_place", place_id: "here-srv", user_label: "Home", label_kind: "HOME", position: { latitude: 48.858, longitude: 2.294 }, created_at: iso(-DAY), ...over };
+  return { schema_version: 1, kind: "saved_place", place_id: "saved-home", user_label: "Home", label_kind: "HOME", position: { latitude: 48.858, longitude: 2.294 }, created_at: iso(-DAY), ...over };
 }
+
+const SETTINGS = (days = 90) => ({
+  schema_version: 1,
+  kind: "history_settings",
+  retention_days: days,
+  default_retention_days: 90,
+  min_retention_days: 30,
+  max_retention_days: 180,
+});
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -228,6 +237,7 @@ describe("registered history (on the server) with consent", () => {
       local: store,
       routes: {
         "POST /v1/me/consents": json(CONSENT("HISTORY_STORE", "history-notice-1")),
+        "GET /v1/history/settings": json(SETTINGS()),
         "GET /v1/history/records": json({ schema_version: 1, kind: "history_record_list", records: [serverOuting()] }),
         "GET /v1/saved-places": json({ schema_version: 1, kind: "saved_place_list", places: [] }),
       },
@@ -236,16 +246,17 @@ describe("registered history (on the server) with consent", () => {
     expect(await screen.findByText(/PLACEHOLDER NOTICE \(history-notice-1\), pending counsel review \(issue #27\)/)).toBeInTheDocument();
     expect(app.calls("GET", "/v1/history/records")).toHaveLength(0); // nothing is read before consent
     expect(screen.getAllByText(/kept for up to 180 days/).length).toBeGreaterThan(0);
+    expect(app.calls("GET", "/v1/history/settings")).toHaveLength(0); // settings are consent-gated too
     expect(screen.queryByLabelText("Keep my history for")).toBeNull();
 
     await app.user.click(screen.getByRole("button", { name: "Agree and save my history" }));
     expect(await screen.findByText("Server dinner")).toBeInTheDocument();
     expect(app.calls("POST", "/v1/me/consents").at(-1)?.body).toEqual({ purpose: "HISTORY_STORE", notice_version: "history-notice-1" });
     expect(screen.getByText(/Went \(you confirmed\)/)).toBeInTheDocument();
-    // Editing or removing ONE record has no endpoint yet, so those controls are not offered.
-    expect(screen.queryByRole("button", { name: "Edit label" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Delete entry" })).toBeNull();
-    expect(screen.getByText(/not available yet for synced history/)).toBeInTheDocument();
+    // The server can now edit and delete ONE record, so those controls are offered.
+    expect(screen.getByRole("button", { name: "Edit label" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Delete entry" })).toBeInTheDocument();
+    expect(screen.queryByText(/not available yet for synced history/)).toBeNull();
     expect(await store.getAll("outing_log")).toEqual([]);
   });
 
@@ -257,6 +268,7 @@ describe("registered history (on the server) with consent", () => {
       local: await seededStore(),
       routes: {
         "GET /v1/me/consents": json({ consents: [CONSENT("HISTORY_STORE")] }),
+        "GET /v1/history/settings": json(SETTINGS()),
         "GET /v1/history/records": () => json({ schema_version: 1, kind: "history_record_list", records }),
         "DELETE /v1/history/records": () => {
           records = [];
@@ -290,6 +302,97 @@ describe("registered history (on the server) with consent", () => {
     await openPanel(off.user);
     expect((await screen.findAllByText(/not available yet/)).length).toBeGreaterThan(0);
     expect(screen.queryByText(/raw secret/)).toBeNull();
+  });
+});
+
+describe("registered history: edit one, delete one, retention (server)", () => {
+  const baseRoutes = (records: () => unknown[], extra: Record<string, Handler | Response> = {}): Record<string, Handler | Response> => ({
+    "GET /v1/me/consents": json({ consents: [CONSENT("HISTORY_STORE")] }),
+    "GET /v1/history/settings": json(SETTINGS()),
+    "GET /v1/history/records": () => json({ schema_version: 1, kind: "history_record_list", records: records() }),
+    "GET /v1/saved-places": json({ schema_version: 1, kind: "saved_place_list", places: [] }),
+    ...extra,
+  });
+
+  it("edits a label with PATCH, clears it when emptied, and deletes one record with DELETE by id", async () => {
+    let records: Array<Record<string, unknown>> = [serverOuting(), serverOuting({ id: "o-2", user_label: "Second", occurred_at: iso(-2 * DAY) })];
+    const app = renderApp({
+      historyEnabled: true,
+      tier: "registered",
+      local: await seededStore(),
+      routes: baseRoutes(() => records, {
+        "PATCH /v1/history/records/o-1": (r) => {
+          const body = r.body as { user_label?: string };
+          records = records.map((x) => (x.id === "o-1" ? { ...x, user_label: body.user_label ?? null } : x));
+          return json(records[0]);
+        },
+        "DELETE /v1/history/records/o-2": () => {
+          records = records.filter((x) => x.id !== "o-2");
+          return json({ schema_version: 1, kind: "history_delete_result", deleted: 1 });
+        },
+      }),
+    });
+    await openPanel(app.user);
+    const first = (await screen.findByText("Server dinner")).closest("li")!;
+    await app.user.click(within(first).getByRole("button", { name: "Edit label" }));
+    const input = within(first).getByLabelText("Your label");
+    await app.user.clear(input);
+    await app.user.type(input, "Renamed dinner");
+    await app.user.click(within(first).getByRole("button", { name: "Save label" }));
+    expect(await screen.findByText("Renamed dinner")).toBeInTheDocument();
+    expect(app.calls("PATCH", "/v1/history/records/o-1")[0]?.body).toEqual({ schema_version: 1, clear_label: false, user_label: "Renamed dinner" });
+
+    const second = screen.getByText("Second").closest("li")!;
+    await app.user.click(within(second).getByRole("button", { name: "Delete entry" }));
+    expect(app.calls("DELETE", "/v1/history/records/o-2")).toHaveLength(0); // confirm first
+    await app.user.click(within(second).getByRole("button", { name: "Yes, delete this entry" }));
+    await waitFor(() => expect(screen.queryByText("Second")).toBeNull());
+    expect(app.calls("DELETE", "/v1/history/records/o-2")).toHaveLength(1);
+
+    const row = screen.getByText("Renamed dinner").closest("li")!;
+    await app.user.click(within(row).getByRole("button", { name: "Edit label" }));
+    await app.user.clear(within(row).getByLabelText("Your label"));
+    await app.user.click(within(row).getByRole("button", { name: "Save label" }));
+    await waitFor(() => expect(app.calls("PATCH", "/v1/history/records/o-1")).toHaveLength(2));
+    expect(app.calls("PATCH", "/v1/history/records/o-1")[1]?.body).toEqual({ schema_version: 1, clear_label: true });
+  });
+
+  it("shows the server's retention period and shortens it with PUT /v1/history/settings", async () => {
+    let days = 90;
+    const app = renderApp({
+      historyEnabled: true,
+      tier: "registered",
+      local: await seededStore(),
+      routes: baseRoutes(() => [serverOuting()], {
+        "GET /v1/history/settings": () => json(SETTINGS(days)),
+        "PUT /v1/history/settings": (r) => {
+          days = (r.body as { retention_days: number }).retention_days;
+          return json(SETTINGS(days));
+        },
+      }),
+    });
+    await openPanel(app.user);
+    await screen.findByText("Server dinner");
+    expect(await screen.findByText(/synced history is kept for 90 days/)).toBeInTheDocument();
+    const picker = screen.getByLabelText("Keep my history for") as HTMLSelectElement;
+    expect([...picker.options].map((o) => o.value)).toEqual(["30", "60", "90", "120", "150", "180"]);
+    await app.user.selectOptions(picker, "30");
+    await waitFor(() => expect(app.calls("PUT", "/v1/history/settings")).toHaveLength(1));
+    expect(app.calls("PUT", "/v1/history/settings")[0]?.body).toEqual({ schema_version: 1, retention_days: 30 });
+    expect(await screen.findByText(/synced history is kept for 30 days/)).toBeInTheDocument();
+  });
+
+  it("a 403 CONSENT_REQUIRED while listing brings back the history consent prompt", async () => {
+    const app = renderApp({
+      historyEnabled: true,
+      tier: "registered",
+      local: await seededStore(),
+      routes: baseRoutes(() => [], {
+        "GET /v1/history/records": json(errorBody("POLICY", "CONSENT_REQUIRED"), 403),
+      }),
+    });
+    await openPanel(app.user);
+    expect(await screen.findByRole("button", { name: "Agree and save my history" })).toBeInTheDocument();
   });
 });
 
@@ -341,7 +444,7 @@ describe("saved places", () => {
     expect(await screen.findByText("Flat", { selector: ".place-name" })).toBeInTheDocument();
     expect(app.calls("PUT", "/v1/saved-places")[0]?.body).toEqual({
       schema_version: 1,
-      place_id: "here-srv",
+      place_id: "saved-home",
       label_kind: "HOME",
       user_label: "Flat",
       position: { latitude: 48.858, longitude: 2.294 },
@@ -349,15 +452,15 @@ describe("saved places", () => {
     await app.user.click(screen.getByRole("button", { name: "Delete" }));
     await app.user.click(screen.getByRole("button", { name: "Yes, delete Flat" }));
     await waitFor(() => expect(app.calls("DELETE", "/v1/saved-places")).toHaveLength(1));
-    expect(app.calls("DELETE", "/v1/saved-places")[0]?.url).toContain("place_id=here-srv");
+    expect(app.calls("DELETE", "/v1/saved-places")[0]?.url).toContain("place_id=saved-home");
     expect(await screen.findByText(/No saved places yet/)).toBeInTheDocument();
   });
 });
 
-describe("saving Home goes through the confirmed SAVE_PLACE action", () => {
+describe("saving Home: a guest confirms locally, a registered user confirms the server action", () => {
   const proposeRoutes = (extra: Record<string, Handler | Response> = {}): Record<string, Handler | Response> => ({
     "POST /v1/me/consents": json(CONSENT("LOCATION_FOREGROUND", "location-notice-1")),
-    "POST /v1/actions/propose": () => json(pendingAction({ id: "act-save", effect: "SAVE_PLACE", target: "here-whatever", preview: "Save this place as Home on this device.", idempotency_key: "key-act-save" })),
+    "POST /v1/actions/propose": () => json(pendingAction({ id: "act-save", effect: "SAVE_PLACE", target: "saved-home", preview: "Save this place as Home on this device.", idempotency_key: "key-act-save" })),
     "POST /v1/actions/act-save/confirm": json({ schema_version: 1, kind: "confirm_action_response", action: pendingAction({ id: "act-save", effect: "SAVE_PLACE", confirmed_at: iso(0) }) }),
     ...extra,
   });
@@ -372,17 +475,14 @@ describe("saving Home goes through the confirmed SAVE_PLACE action", () => {
     expect(app.calls("POST", "/v1/actions/propose")).toHaveLength(0); // asking proposes nothing
 
     await app.user.click(screen.getByRole("button", { name: "Yes, save as Home" }));
-    expect(await screen.findByText("Save this place as Home on this device.")).toBeInTheDocument();
-    const [propose] = app.calls("POST", "/v1/actions/propose");
-    expect(propose?.body).toMatchObject({ effect: "SAVE_PLACE", label_kind: "HOME", user_label: "Home", workspace_id: "ws-1" });
-    expect((propose?.body as { target: string }).target).toMatch(/^here-[0-9a-f]+$/);
-    expect(JSON.stringify(propose?.body)).not.toMatch(/48\.85|2\.29|latitude|longitude/);
-    expect(propose?.headers.get("idempotency-key")).toMatch(/^web-/);
+    expect(await screen.findByText(/Save this place as Home on this device\./)).toBeInTheDocument();
+    // The server refuses guests (GUEST_NOT_ALLOWED), so a guest's save never calls it.
+    expect(app.calls("POST", "/v1/actions/propose")).toHaveLength(0);
     expect(await store.getAll("saved_places")).toEqual([]); // preview only: nothing saved yet
 
     await app.user.click(screen.getByRole("button", { name: "Confirm" }));
     expect(await screen.findByText(/Home is saved on this device/)).toBeInTheDocument();
-    expect(app.calls("POST", "/v1/actions/act-save/confirm")[0]?.headers.get("idempotency-key")).toBe("key-act-save");
+    expect(app.calls("POST", "/v1/actions/propose")).toHaveLength(0);
     const [home] = await store.getAll("saved_places");
     expect(home).toMatchObject({ id: "home", kind: "HOME", label: "Home", position: { lat: round3(48.8584), lng: round3(2.2945) } });
 
@@ -396,18 +496,15 @@ describe("saving Home goes through the confirmed SAVE_PLACE action", () => {
   it("Cancel saves nothing", async () => {
     mockGeolocation("ok");
     const store = await seededStore();
-    const app = renderApp({
-      historyEnabled: true,
-      local: store,
-      routes: proposeRoutes({ "POST /v1/actions/act-save/cancel": json({ schema_version: 1, kind: "cancel_action_response", action_id: "act-save", cancelled: true }) }),
-    });
+    const app = renderApp({ historyEnabled: true, local: store, routes: proposeRoutes() });
     await turnOnLocation(app.user);
     await sendText(app.user, "lunch near home");
     await app.user.click(await screen.findByRole("button", { name: "Yes, save as Home" }));
-    await screen.findByText("Save this place as Home on this device.");
+    await screen.findByText(/Save this place as Home on this device\./);
     await app.user.click(screen.getByRole("button", { name: "Cancel" }));
-    expect(await screen.findByText(/Cancelled\. Nothing was done/)).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByText(/Save this place as Home on this device\./)).toBeNull());
     expect(await store.getAll("saved_places")).toEqual([]);
+    expect(app.calls("POST", "/v1/actions/propose")).toHaveLength(0);
   });
 
   it("needs the location consent first and does not save without it", async () => {
@@ -432,7 +529,7 @@ describe("saving Home goes through the confirmed SAVE_PLACE action", () => {
     expect((await screen.findAllByText(/Your browser blocked location access/)).length).toBeGreaterThan(0);
   });
 
-  it("guest without the on-device notice is asked to accept it before anything is proposed", async () => {
+  it("guest without the on-device notice is asked to accept it before anything is confirmed", async () => {
     mockGeolocation("ok");
     const store = freshStore(); // notice unset
     const app = renderApp({ historyEnabled: true, local: store, routes: proposeRoutes() });
@@ -440,22 +537,29 @@ describe("saving Home goes through the confirmed SAVE_PLACE action", () => {
     await sendText(app.user, "lunch near home");
     await app.user.click(await screen.findByRole("button", { name: "Yes, save as Home" }));
     const dialog = await screen.findByRole("dialog", { name: "Saved on this device" });
-    expect(app.calls("POST", "/v1/actions/propose")).toHaveLength(0);
+    expect(await store.getAll("saved_places")).toEqual([]);
     await app.user.click(within(dialog).getByRole("button", { name: "OK, save on this device" }));
-    expect(await screen.findByText("Save this place as Home on this device.")).toBeInTheDocument();
+    expect(await screen.findByText(/Save this place as Home on this device\./)).toBeInTheDocument();
+    expect(app.calls("POST", "/v1/actions/propose")).toHaveLength(0);
   });
 
-  it("registered: asks for SAVED_PLACE consent (placeholder), proposes, confirms, then finishes the save on the server with the rounded position", async () => {
+  it("registered: asks for SAVED_PLACE consent (placeholder), proposes WITH the rounded position, confirms, and the server writes it (no second PUT)", async () => {
     mockGeolocation("ok");
+    let places: unknown[] = [];
     const app = renderApp({
       historyEnabled: true,
       tier: "registered",
       local: await seededStore(),
       routes: proposeRoutes({
         "POST /v1/me/consents": (r) => json(CONSENT((r.body as { purpose: string }).purpose, (r.body as { notice_version: string }).notice_version)),
+        "GET /v1/history/settings": json(SETTINGS()),
         "GET /v1/history/records": json({ schema_version: 1, kind: "history_record_list", records: [] }),
-        "GET /v1/saved-places": json({ schema_version: 1, kind: "saved_place_list", places: [] }),
-        "PUT /v1/saved-places": (r) => json(serverSaved({ place_id: (r.body as { place_id: string }).place_id })),
+        "GET /v1/saved-places": () => json({ schema_version: 1, kind: "saved_place_list", places }),
+        "POST /v1/actions/propose": () => json(pendingAction({ id: "act-save", effect: "SAVE_PLACE", target: "saved-home", preview: "Save this place as Home to your account.", idempotency_key: "key-act-save" })),
+        "POST /v1/actions/act-save/confirm": () => {
+          places = [serverSaved({ place_id: "saved-home" })];
+          return json({ schema_version: 1, kind: "confirm_action_response", action: pendingAction({ id: "act-save", effect: "SAVE_PLACE", confirmed_at: iso(0) }) });
+        },
       }),
     });
     await turnOnLocation(app.user);
@@ -463,17 +567,111 @@ describe("saving Home goes through the confirmed SAVE_PLACE action", () => {
     await app.user.click(await screen.findByRole("button", { name: "Agree and save my history" }));
     await screen.findByText(/No outings are saved yet/);
     await app.user.click(screen.getByRole("button", { name: "Save where I am now as Home" }));
-    expect(await screen.findByText(/PLACEHOLDER NOTICE \(saved-place-notice-1\), pending counsel review \(issue #27\)/)).toBeInTheDocument();
+    expect(await screen.findByText(/PLACEHOLDER NOTICE \(history-notice-1\), pending counsel review \(issue #27\)/)).toBeInTheDocument();
     expect(app.calls("POST", "/v1/actions/propose")).toHaveLength(0);
     await app.user.click(screen.getByRole("button", { name: "Agree and continue" }));
-    expect(app.calls("POST", "/v1/me/consents").at(-1)?.body).toEqual({ purpose: "SAVED_PLACE", notice_version: "saved-place-notice-1" });
-    await screen.findByText("Save this place as Home on this device.");
+    // The server accepts one notice version for both history purposes.
+    expect(app.calls("POST", "/v1/me/consents").at(-1)?.body).toEqual({ purpose: "SAVED_PLACE", notice_version: "history-notice-1" });
+    await screen.findByText("Save this place as Home to your account.");
+    const [propose] = app.calls("POST", "/v1/actions/propose");
+    expect(propose?.body).toMatchObject({
+      effect: "SAVE_PLACE",
+      label_kind: "HOME",
+      user_label: "Home",
+      target: "saved-home",
+      position: { latitude: round3(48.8584), longitude: round3(2.2945) },
+    });
+    expect(JSON.stringify(propose?.body)).not.toMatch(/48\.8584|2\.2945/);
+    expect(app.requests.every((r) => !/48\.85|2\.29/.test(r.url))).toBe(true);
     await app.user.click(screen.getByRole("button", { name: "Confirm" }));
     expect(await screen.findByText(/Home is saved to your account/)).toBeInTheDocument();
-    const put = app.calls("PUT", "/v1/saved-places")[0]?.body as { position: unknown; label_kind: string };
-    expect(put.label_kind).toBe("HOME");
-    expect(put.position).toEqual({ latitude: round3(48.8584), longitude: round3(2.2945) });
-    expect(app.requests.every((r) => !/48\.85|2\.29/.test(r.url))).toBe(true);
+    expect(app.calls("PUT", "/v1/saved-places")).toHaveLength(0); // the server wrote it at confirm
+    expect(await screen.findByText("Home", { selector: ".place-name" })).toBeInTheDocument(); // the list reloaded
+  });
+
+  it("registered: a 403 CONSENT_REQUIRED on propose brings back the consent prompt; GUEST_NOT_ALLOWED says to sign in", async () => {
+    mockGeolocation("ok");
+    const consentRoutes = {
+      "GET /v1/me/consents": json({ consents: [CONSENT("HISTORY_STORE"), CONSENT("SAVED_PLACE")] }),
+      "GET /v1/history/settings": json(SETTINGS()),
+      "GET /v1/history/records": json({ schema_version: 1, kind: "history_record_list", records: [] }),
+      "GET /v1/saved-places": json({ schema_version: 1, kind: "saved_place_list", places: [] }),
+    };
+    const lost = renderApp({
+      historyEnabled: true,
+      tier: "registered",
+      local: await seededStore(),
+      routes: proposeRoutes({ ...consentRoutes, "POST /v1/actions/propose": json(errorBody("POLICY", "CONSENT_REQUIRED", "raw detail"), 403) }),
+    });
+    await turnOnLocation(lost.user);
+    await openPanel(lost.user);
+    await lost.user.click(await screen.findByRole("button", { name: "Save where I am now as Home" }));
+    expect(await screen.findByRole("dialog", { name: "Save places to my account" })).toBeInTheDocument();
+    expect(screen.queryByText(/raw detail/)).toBeNull();
+    lost.view.unmount();
+
+    const guestOnly = renderApp({
+      historyEnabled: true,
+      tier: "registered",
+      local: await seededStore(),
+      routes: proposeRoutes({ ...consentRoutes, "POST /v1/actions/propose": json(errorBody("POLICY", "GUEST_NOT_ALLOWED"), 403) }),
+    });
+    await turnOnLocation(guestOnly.user);
+    await openPanel(guestOnly.user);
+    await guestOnly.user.click(await screen.findByRole("button", { name: "Save where I am now as Home" }));
+    expect(await screen.findByText(/Sign in with a free account to use this/)).toBeInTheDocument();
+    expect(screen.queryByText(/Reload the page and try again/)).toBeNull(); // not the generic "auth" copy
+  });
+
+  it("registered: the server's near-home question on a turn is shown with the server's fixed text; answers go to PUT ask-state", async () => {
+    const withPrompt = {
+      ...turnResponse(),
+      saved_place_prompt: { schema_version: 1, kind: "saved_place_prompt", ask: true, label_kind: "HOME", question: HOME_QUESTION },
+    };
+    const app = renderApp({
+      historyEnabled: true,
+      tier: "registered",
+      local: await seededStore(),
+      routes: {
+        "POST /v1/agent/turns": json(withPrompt),
+        "PUT /v1/saved-places/ask-state": json({ schema_version: 1, kind: "saved_place_ask_state", label_kind: "HOME", recorded: true }),
+      },
+    });
+    await screen.findByText(HEADING);
+    await sendText(app.user, "pizza near home");
+    expect(await screen.findByText(HOME_QUESTION)).toBeInTheDocument();
+    expect(app.calls("POST", "/v1/saved-places/ask-check")).toHaveLength(0); // the turn already carried the prompt
+    await app.user.click(screen.getByRole("button", { name: "Not now" }));
+    await waitFor(() => expect(app.calls("PUT", "/v1/saved-places/ask-state")).toHaveLength(1));
+    expect(app.calls("PUT", "/v1/saved-places/ask-state")[0]?.body).toEqual({ schema_version: 1, label_kind: "HOME", decision: "DECLINED" });
+    expect(screen.queryByText(HOME_QUESTION)).toBeNull();
+  });
+
+  it("registered: when the server could not record the answer (no consent), it is kept on the device and honoured later", async () => {
+    const store = await seededStore();
+    const withPrompt = {
+      ...turnResponse(),
+      saved_place_prompt: { schema_version: 1, kind: "saved_place_prompt", ask: true, label_kind: "WORK", question: WORK_QUESTION },
+    };
+    const routes = {
+      "POST /v1/agent/turns": json(withPrompt),
+      "PUT /v1/saved-places/ask-state": json({ schema_version: 1, kind: "saved_place_ask_state", label_kind: "WORK", recorded: false }),
+    };
+    const first = renderApp({ historyEnabled: true, tier: "registered", local: store, routes });
+    await screen.findByText(HEADING);
+    await sendText(first.user, "dinner near work");
+    await first.user.click(await screen.findByRole("button", { name: "Don't ask again" }));
+    await waitFor(() => expect(first.calls("PUT", "/v1/saved-places/ask-state")).toHaveLength(1));
+    expect(first.calls("PUT", "/v1/saved-places/ask-state")[0]?.body).toMatchObject({ decision: "DONT_ASK_AGAIN" });
+    await waitFor(async () => expect((await store.get("ask_state", "WORK"))?.dont_ask_again).toBe(true));
+    first.view.unmount();
+
+    const second = renderApp({ historyEnabled: true, tier: "registered", local: store, routes });
+    await screen.findByText(HEADING);
+    await sendText(second.user, "lunch near work");
+    await screen.findAllByText("Here is what I found nearby.");
+    await new Promise((r) => setTimeout(r, 40));
+    expect(screen.queryByText(WORK_QUESTION)).toBeNull();
   });
 
   it("registered users are never asked on a client-side keyword (the server decides)", async () => {
@@ -488,6 +686,10 @@ describe("saving Home goes through the confirmed SAVE_PLACE action", () => {
     await screen.findByText("Here is what I found nearby.");
     expect(screen.queryByText(HOME_QUESTION)).toBeNull();
     expect(askSignalFromTurn(turnResponse())).toBeNull();
+    expect(askSignalFromTurn({ ...turnResponse(), saved_place_prompt: { schema_version: 1, kind: "saved_place_prompt", ask: false } })).toBeNull();
+    expect(
+      askSignalFromTurn({ ...turnResponse(), saved_place_prompt: { schema_version: 1, kind: "saved_place_prompt", ask: true, label_kind: "WORK", question: "q" } }),
+    ).toEqual({ kind: "WORK", question: "q" });
   });
 });
 
@@ -651,8 +853,6 @@ describe("canary: nothing sensitive reaches storage or the screen's persisted st
       routes: {
         "POST /v1/me/consents": json(CONSENT("LOCATION_FOREGROUND", "location-notice-1")),
         "POST /v1/places/details": json({ schema_version: 1, kind: "place_details", places: [placeCard({ place_id: "ChIJa1" })] }),
-        "POST /v1/actions/propose": json(pendingAction({ id: "act-save", effect: "SAVE_PLACE", target: "here-z", preview: "Save Home." })),
-        "POST /v1/actions/act-save/confirm": json({ schema_version: 1, kind: "confirm_action_response", action: pendingAction({ id: "act-save", effect: "SAVE_PLACE" }) }),
       },
     });
     await turnOnLocation(app.user);
@@ -660,7 +860,7 @@ describe("canary: nothing sensitive reaches storage or the screen's persisted st
     await app.user.click(await screen.findByRole("button", { name: "Show place details" }));
     await screen.findByText(/Canary Cafe/);
     await app.user.click(screen.getByRole("button", { name: "Save where I am now as Home" }));
-    await screen.findByText("Save Home.");
+    await screen.findByText(/Save this place as Home on this device\./);
     await app.user.click(screen.getByRole("button", { name: "Confirm" }));
     await screen.findByText(/Home is saved on this device/);
 

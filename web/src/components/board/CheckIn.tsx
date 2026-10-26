@@ -1,7 +1,7 @@
 import { useRef, useState } from "react";
 
 import type { BoardApi, OutcomeValue } from "../../board/boardApi";
-import { boardFailureText, canRetry, OUTCOME_LABEL } from "../../board/viewModels";
+import { boardFailureText, canRetry, ownLabelOf, OUTCOME_LABEL } from "../../board/viewModels";
 import { newIdempotencyKey } from "../../lib/idempotency";
 import type { BoardFailure } from "../../board/boardApi";
 import type { FollowUp } from "../../useBoard";
@@ -33,6 +33,8 @@ export function CheckIn({ api, followUp, onFinish }: Props) {
       outcome: choice,
       note: note.trim() ? note.trim() : null,
       idempotencyKey: key.current,
+      userLabel: ownLabelOf(followUp.label),
+      intentTag: followUp.intentTag ?? null,
     });
     setSending(false);
     if (outcome.ok) {

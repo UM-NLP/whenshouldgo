@@ -1,6 +1,7 @@
 // Pure view-models for the Trip Board: fixed copy and formatting, no I/O. Every string a user sees
 // from a failure is chosen here by kind; server message text never reaches the screen.
 import type { DiscoveryPlace } from "../api/client";
+import { GUEST_NOT_ALLOWED_TEXT, HISTORY_CONSENT_TEXT } from "../api/failures";
 import type { BoardFailure, ConfirmActionResponse, Fact, OutcomeValue, RouteCheck, Workspace } from "./boardApi";
 import type { OutingOutcome } from "../storage";
 
@@ -48,6 +49,10 @@ export function boardFailureText(failure: BoardFailure, area: BoardArea): string
         : "The board changed somewhere else. Reload it to see the latest version, then redo your change.";
     case "consent_required":
       return "Checking the drive needs your OK to use your location first.";
+    case "guest_not_allowed":
+      return GUEST_NOT_ALLOWED_TEXT;
+    case "history_consent_required":
+      return HISTORY_CONSENT_TEXT;
     case "quota":
       return "You have reached a usage limit for now. What is already here stays available.";
     case "rate_limited":
@@ -167,3 +172,11 @@ export const REMINDER_CHOICES: { label: string; minutes: number }[] = [
   { label: "In 1 hour", minutes: 60 },
   { label: "In 2 hours", minutes: 120 },
 ];
+
+/** The board names an unnamed pick "My pick N" and a fallback "My place": those are not the user's words. */
+const GENERATED_LABEL = /^My (pick \d+|place)$/;
+/** The label to send as the user's own, or null when it is only the board's placeholder. */
+export function ownLabelOf(label: string | null | undefined): string | null {
+  const text = (label ?? "").trim();
+  return text && !GENERATED_LABEL.test(text) ? text.slice(0, 60) : null;
+}

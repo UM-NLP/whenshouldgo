@@ -129,7 +129,20 @@ function Entry({
 }
 
 /** Entries by the user's own label and activity tag; place details only on request, in memory. */
-export function HistoryView({ repo, boardApi, version, onChanged }: { repo: HistoryRepo; boardApi: BoardApi; version: number; onChanged(): void }) {
+export function HistoryView({
+  repo,
+  boardApi,
+  version,
+  onChanged,
+  onConsentRequired,
+}: {
+  repo: HistoryRepo;
+  boardApi: BoardApi;
+  version: number;
+  onChanged(): void;
+  /** Registered users: the server says the history consent is not held, so the consent prompt comes back. */
+  onConsentRequired?(): void;
+}) {
   const [list, setList] = useState<List>({ status: "loading" });
   const [problem, setProblem] = useState<HistoryFailure | null>(null);
   const [clearing, setClearing] = useState(false);
@@ -137,8 +150,9 @@ export function HistoryView({ repo, boardApi, version, onChanged }: { repo: Hist
 
   const load = useCallback(async () => {
     const outcome = await repo.list();
+    if (!outcome.ok && outcome.failure.kind === "history_consent_required" && onConsentRequired) return onConsentRequired();
     setList(outcome.ok ? { status: "ok", entries: outcome.data } : { status: "failed", failure: outcome.failure });
-  }, [repo]);
+  }, [repo, onConsentRequired]);
 
   useEffect(() => {
     setList({ status: "loading" });
@@ -161,6 +175,10 @@ export function HistoryView({ repo, boardApi, version, onChanged }: { repo: Hist
     setExported(true);
   }
 
+  const report = (failure: HistoryFailure) => {
+    if (failure.kind === "history_consent_required" && onConsentRequired) onConsentRequired();
+    else setProblem(failure);
+  };
   const entries = list.status === "ok" ? list.entries : [];
   return (
     <div className="history" aria-label="History">
@@ -179,12 +197,9 @@ export function HistoryView({ repo, boardApi, version, onChanged }: { repo: Hist
       {entries.length > 0 ? (
         <ul className="candidates">
           {entries.map((entry) => (
-            <Entry key={entry.id} entry={entry} repo={repo} boardApi={boardApi} onChanged={onChanged} onProblem={setProblem} />
+            <Entry key={entry.id} entry={entry} repo={repo} boardApi={boardApi} onChanged={onChanged} onProblem={report} />
           ))}
         </ul>
-      ) : null}
-      {!repo.canEditLabel || !repo.canDeleteOne ? (
-        <p className="muted">Changing or removing a single entry is not available yet for synced history. You can clear it all.</p>
       ) : null}
       {problem ? (
         <p className="notice notice-error" role="alert">

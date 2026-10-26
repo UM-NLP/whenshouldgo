@@ -147,21 +147,44 @@ typed fields only:
 
 Nothing renders, and nothing is requested, unless the server's `Capabilities.history_enabled` is true
 (taken from `session:bootstrap`; never from client state or env) and the app wires `phase1` (`main.tsx` does).
+The client is reconciled with the final backend contract (2026-10-26).
 
 - Guests (decision 19/27): history, saved places and the ask-state live in the existing `outing_log`,
   `saved_places` and `ask_state` stores. The retention notice states the period (default 90, ceiling 180)
   and `RetentionPicker` shortens it through `store.setRetentionDays` (purges at once). Registered users:
-  `/v1/history/records` and `/v1/saved-places`, each behind a consent prompt (`HISTORY_STORE`, `SAVED_PLACE`)
-  with a PLACEHOLDER notice clearly marked pending counsel (issue #27).
+  `/v1/history/records`, `/v1/saved-places` and `/v1/history/settings`, each behind a consent prompt
+  (`HISTORY_STORE`, `SAVED_PLACE`) with a PLACEHOLDER notice clearly marked pending counsel (issue #27).
+- Registered history: edit the label (`PATCH /v1/history/records/{id}`; an emptied label sends
+  `clear_label`), delete one (`DELETE /v1/history/records/{id}`), clear all, export, and the retention
+  picker (`GET/PUT /v1/history/settings`, 30 to 180 days, shortening purges at once).
 - History view: the user's label and activity tag; "Show place details" fetches `POST /v1/places/details` by
-  place ID into memory only ("Details unavailable" on a miss); edit label, delete one, clear all, export.
-- Saved places: list, rename, delete, export. Home, Work and custom places are created ONLY by the confirmed
-  `SAVE_PLACE` PendingAction (the board's `ActionCard`): the position is read inside the tap, rounded to 3
-  decimals, held in memory, and written (device store or server upsert) only after the server confirms.
-- The fixed question "Is where you are now your home? Save it as Home?" shows only when the guest's local
-  deterministic rule fires (`places/SavedAskPolicy.ts`: a "near home/work" phrase in the user's own message,
-  no saved label, no don't-ask-again, no decline in the last 30 days) or, for registered users, when the
-  server signals it (not in the contract yet, so never today).
+  place ID into memory only ("Details unavailable" on a miss).
+- Saved places: list, rename, delete, export. Home and Work are created ONLY by a confirmed save:
+  - Registered: the board's `SAVE_PLACE` PendingAction. The proposal carries the consented position (read
+    inside the tap, rounded to 3 decimals, in memory only); the server writes the place when the action is
+    confirmed. There is no second `PUT /v1/saved-places` step.
+  - Guests: the server refuses `SAVE_PLACE` for guests (`GUEST_NOT_ALLOWED`), so the same preview and an
+    explicit Confirm are shown locally and the place is written to the device store. No server call.
+  - The server needs a `PlaceId`-shaped `target` (`[A-Za-z0-9_-]{1,300}`) and keeps one Home and one Work
+    per user whatever the key is. A position has no Google place ID, so Home and Work use the fixed keys
+    `saved-home` / `saved-work` (`saveTargetId`). A custom place would need the ID of a place the user picked
+    AND that place's own position; the app has neither in this flow, so the "another place" form was removed.
+- The near-home question: for registered users the server's `TurnResponse.saved_place_prompt` carries the
+  fixed text and the label; it is rendered through the same ask UI. "Not now" / "Don't ask again" go to
+  `PUT /v1/saved-places/ask-state`; if the server answers `recorded: false` (no `SAVED_PLACE` consent) the choice
+  is kept in the device `ask_state` store and honoured next time. The turn already runs the server's ask
+  policy, so `POST /v1/saved-places/ask-check` (in `historyApi.ts`, tested at the API level) is not called from
+  the UI: it would send the same message twice. Guests keep the local deterministic rule
+  (`places/SavedAskPolicy.ts`) and the same fixed text.
+- Failures: `403 GUEST_NOT_ALLOWED` shows "Sign in with a free account to use this" (no retry);
+  `403 CONSENT_REQUIRED` (history or saved places, not the location consent) brings back the consent
+  prompt for that purpose. Both are distinct from the generic "not signed in" copy.
+- Check-in sends `user_label` (only when it is the user's own words, not the board's "My pick N"
+  placeholder) and `intent_tag` when the follow-up has one. The Phase 0 board has no activity tag, so the server
+  derives it from the goal.
 - A saved Home/Work is never applied silently: "Use my saved Home as the starting area" is an explicit tap that
   arms ONE next message to carry the rounded saved position through the existing consented `location` path.
-- Everything that depends on a still-moving backend contract is in `src/history/contractAdapter.ts`.
+- Everything that depends on backend contract details lives in `src/history/contractAdapter.ts`. The one
+  open item there is the notice version: the server accepts exactly its configured `history_notice_version`
+  (and only once the owner adds it to `APPROVED_HISTORY_NOTICE_VERSIONS`), and publishes it nowhere, so the
+  client's `history-notice-1` is a placeholder that must change in step with that config and counsel's text.

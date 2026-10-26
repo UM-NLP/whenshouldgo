@@ -1,55 +1,54 @@
-// THE ONE FILE THAT DEPENDS ON BACKEND CONTRACT DETAILS THAT ARE STILL MOVING (Phase 1, decisions 24-25).
+// Where the web client meets the backend's Phase 1 contract (history, saved places, ask-state, notices).
+// Reconciled with the final backend contract (2026-10-26); what is still a client-side assumption is
+// listed here so it is easy to find:
 //
-// Everything the UI needs from the server's history, saved-place and ask-state contracts goes through
-// here, so reconciling with the backend's final contract is an edit to this file. Known gaps in the
-// schema as of this writing (each marked RECONCILE):
-//
-//   1. SAVE_PLACE propose carries no position. The client keeps the rounded position in memory and,
-//      after the server CONFIRMS the action, finishes the save (PUT /v1/saved-places). When the
-//      backend adds the position to the propose request, set SERVER_SAVE_PLACE_CARRIES_POSITION and
-//      add the field in `proposalExtras` / boardApi.propose.
-//   2. There is no ask-state or "near home" signal in any response. `askSignalFromTurn` returns null,
-//      so registered users are never asked until the server provides one. (Guests use the local
-//      deterministic rule in places/SavedAskPolicy.ts.)
-//   3. There is no endpoint to edit or delete ONE history record, or to set a shorter server
-//      retention. The server repo reports those as unavailable.
-//   4. A position-only Home has no Google place ID. `positionTargetId()` makes an opaque ID that matches
-//      the server's place-ID pattern; replace it when the backend defines the target for such a save.
-//   5. Consent notice versions below are placeholders; the server must approve the real ones (#27).
+//   - Notice versions. The server accepts exactly ONE notice version for both history purposes: the
+//     `history_notice_version` in its runtime config, which must also be on the owner-approved list
+//     (domain.APPROVED_HISTORY_NOTICE_VERSIONS, empty until counsel signs off, issue #27). The server
+//     does not publish it in any response, so the string below is a PLACEHOLDER that must be changed
+//     in step with that config. Both purposes send the same string.
+//   - A position-only save has no Google place ID. The contract wants a `PlaceId`-shaped key
+//     (`[A-Za-z0-9_-]{1,300}`) and the server stores one Home and one Work per user whatever the key
+//     is, so Home and Work use a fixed per-kind key (`saveTargetId`). A custom place needs the place
+//     ID of a place the user picked; there is no other legitimate ID.
 import type { TurnResponse } from "../api/client";
 import type { SavedPlaceKind } from "../storage";
 import type { ConsentPurpose, OutingRecord, Phase1Api, SavedPlace } from "./historyApi";
 import type { HistoryOutcome, HistoryRepo, OutingEntry, SavedEntry, SavedRepo } from "./types";
 
+/** PLACEHOLDER pending counsel (issue #27). Must equal the server's configured history_notice_version. */
 export const HISTORY_NOTICE_VERSION = "history-notice-1";
-export const SAVED_PLACE_NOTICE_VERSION = "saved-place-notice-1";
+/** The server uses one notice version for both history purposes, so this is the same string. */
+export const SAVED_PLACE_NOTICE_VERSION = HISTORY_NOTICE_VERSION;
 export const NOTICE_VERSIONS: Partial<Record<ConsentPurpose, string>> = {
   HISTORY_STORE: HISTORY_NOTICE_VERSION,
   SAVED_PLACE: SAVED_PLACE_NOTICE_VERSION,
 };
 
-/** RECONCILE 3. */
-export const SERVER_HISTORY_CAN_EDIT_ONE = false;
-export const SERVER_HISTORY_CAN_DELETE_ONE = false;
-export const SERVER_RETENTION_PICKER = false;
-/** The server's rolling ceiling in days (decision 19); shown as text only. */
+/** The server's rolling ceiling in days (decision 19); the server also reports it in GET /v1/history/settings. */
 export const SERVER_RETENTION_CEILING_DAYS = 180;
-
-/** RECONCILE 1. */
-export const SERVER_SAVE_PLACE_CARRIES_POSITION = false;
 
 export type AskKind = "HOME" | "WORK";
 
-/** RECONCILE 2: a typed field on the turn (or a capability) will say "ask the Home question now". */
-export function askSignalFromTurn(_turn: TurnResponse): AskKind | null {
-  return null;
+/** The server's near-home question for this turn, if it asked one. The text is server-authored. */
+export interface AskSignal {
+  kind: AskKind;
+  question: string | null;
 }
 
-/** RECONCILE 4. */
-export function positionTargetId(): string {
-  const bytes = new Uint8Array(9);
-  globalThis.crypto.getRandomValues(bytes);
-  return `here-${Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("")}`;
+export function askSignalFromTurn(turn: TurnResponse): AskSignal | null {
+  const prompt = turn.saved_place_prompt;
+  if (!prompt || !prompt.ask) return null;
+  if (prompt.label_kind !== "HOME" && prompt.label_kind !== "WORK") return null;
+  return { kind: prompt.label_kind, question: prompt.question ?? null };
+}
+
+/** The `target` of a SAVE_PLACE action. See the header: a fixed per-kind key for a position-only save. */
+export function saveTargetId(kind: SavedPlaceKind, selectedPlaceId?: string | null): string | null {
+  if (selectedPlaceId) return selectedPlaceId;
+  if (kind === "HOME") return "saved-home";
+  if (kind === "WORK") return "saved-work";
+  return null; // CUSTOM needs the ID of a place the user picked
 }
 
 const OUTCOME_TEXT: Record<string, string> = {
@@ -82,21 +81,26 @@ function serverSaved(place: SavedPlace): SavedEntry {
   };
 }
 
-const unavailable = { ok: false, failure: { kind: "unavailable" } } as const;
-
 /** History on the server, for a registered user. */
 export function createServerHistoryRepo(api: Phase1Api, exportAccount: () => Promise<HistoryOutcome<unknown>>): HistoryRepo {
   return {
     mode: "server",
-    canEditLabel: SERVER_HISTORY_CAN_EDIT_ONE,
-    canDeleteOne: SERVER_HISTORY_CAN_DELETE_ONE,
+    canEditLabel: true,
+    canDeleteOne: true,
     list: async () => {
       const o = await api.listHistory();
       if (!o.ok) return o;
       return { ok: true, data: o.data.map(serverOuting).sort((a, b) => Date.parse(b.at) - Date.parse(a.at)) };
     },
-    editLabel: async () => unavailable,
-    deleteOne: async () => unavailable,
+    editLabel: async (id, label) => {
+      const text = label.trim();
+      const o = await api.editRecord(id, text ? { user_label: text } : { clear_label: true });
+      return o.ok ? { ok: true, data: null } : o;
+    },
+    deleteOne: async (id) => {
+      const o = await api.deleteRecord(id);
+      return o.ok ? { ok: true, data: null } : o;
+    },
     clearAll: async () => {
       const o = await api.clearHistory();
       return o.ok ? { ok: true, data: null } : o;
@@ -132,17 +136,6 @@ export function createServerSavedRepo(api: Phase1Api): SavedRepo {
     },
     remove: async (entry) => {
       const o = await api.deleteSaved(entry.placeId);
-      return o.ok ? { ok: true, data: null } : o;
-    },
-    saveConfirmed: async (input: { placeId: string; label: string; kind: SavedPlaceKind; position: { latitude: number; longitude: number } }) => {
-      if (SERVER_SAVE_PLACE_CARRIES_POSITION) return { ok: true, data: null }; // the server already wrote it at confirm
-      const o = await api.putSaved({
-        schema_version: 1,
-        place_id: input.placeId,
-        label_kind: input.kind,
-        user_label: input.label,
-        position: input.position,
-      });
       return o.ok ? { ok: true, data: null } : o;
     },
   };

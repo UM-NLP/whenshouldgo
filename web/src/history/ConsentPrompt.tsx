@@ -17,6 +17,8 @@ export interface ConsentControl {
   state: ConsentState;
   grant(): void;
   withdraw(): void;
+  /** The server said the consent is not held (for example withdrawn elsewhere): show the prompt again. */
+  lost(): void;
 }
 
 /** The server's consent ledger for one purpose. Registered users only; guests never call it. */
@@ -45,7 +47,8 @@ export function useConsent(api: Phase1Api, purpose: ConsentPurpose, enabled: boo
       setState(o.ok ? { status: "needed" } : { status: "failed", failure: o.failure });
     });
   }, [api, purpose]);
-  return { state, grant, withdraw };
+  const lost = useCallback(() => setState({ status: "needed" }), []);
+  return { state, grant, withdraw, lost };
 }
 
 const NOTICES: Partial<Record<ConsentPurpose, { flag: string; text: string; title: string; agree: string }>> = {
