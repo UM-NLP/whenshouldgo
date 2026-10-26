@@ -19,4 +19,6 @@ Updated 2026-10-11. Authoritative board: [@UM-NLP's When Should Go — Project 2
 
 Updated 2026-10-17: the roadmap places trip history, patterns and routine reminder notifications before Android, and #16 depends on NOTIFY-01 (#34) rather than #15. Issues #24 to #35 (LEGAL-01 to LEGAL-07, LLMOPS-01, HISTORY-01, ROUTINE-01, NOTIFY-01, ACCESS-02) were created and added to the board; their column state on the board is the GitHub default.
 
+Updated 2026-10-26: decisions 25 to 27 build Phase 1 (HISTORY-01, #32) ahead of its gate, dark behind `history_enabled`. The contract freeze and router split are done; the planned routes exist as typed 501 stubs for parallel implementation. Enabling history still needs Phase 0 exit and the signed legal checklist.
+
 Verified through the authenticated Projects interface on 2026-10-11: Project 2 contains only issues #11 and #13–#23. All 12 current cards are in Todo; Done, In Progress, and On Hold are empty. Repository issue state and content are maintained through the GitHub connector.

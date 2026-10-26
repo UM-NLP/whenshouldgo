@@ -14,10 +14,12 @@ from .domain import (
     MeterState,
     Principal,
     PrincipalKind,
+    RuntimeConfig,
     SessionBootstrap,
     Tier,
     UsagePeriod,
     UsageView,
+    history_active,
 )
 from .entitlements import Allowance, EntitlementPolicy
 from .quota import QuotaService
@@ -80,7 +82,9 @@ def usage_view(quotas: QuotaService, principal: Principal) -> UsageView:
     )
 
 
-def capabilities_for(principal: Principal, usage: UsageView) -> Capabilities:
+def capabilities_for(
+    principal: Principal, usage: UsageView, config: RuntimeConfig | None = None
+) -> Capabilities:
     tier = tier_of(principal)
     return Capabilities(
         can_start_turn=usage.meter_state != MeterState.GATED,
@@ -91,15 +95,19 @@ def capabilities_for(principal: Principal, usage: UsageView) -> Capabilities:
         can_export=False,
         can_delete=False,
         can_link_account=tier == Tier.GUEST,
+        # Server-owned (decision 25): false unless history_enabled and an approved notice exist.
+        history_enabled=history_active(config),
     )
 
 
-def session_bootstrap(quotas: QuotaService, principal: Principal, now: datetime) -> SessionBootstrap:
+def session_bootstrap(
+    quotas: QuotaService, principal: Principal, now: datetime, config: RuntimeConfig | None = None
+) -> SessionBootstrap:
     usage = usage_view(quotas, principal)
     return SessionBootstrap(
         tier=tier_of(principal),
         policy_version=quotas.policies.get(principal.policy_version).version,
-        capabilities=capabilities_for(principal, usage),
+        capabilities=capabilities_for(principal, usage, config),
         usage=usage,
         server_time=now,
     )

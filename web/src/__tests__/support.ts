@@ -117,6 +117,7 @@ export function bootstrapBody(usage: UsageView = usageView()): SessionBootstrap 
       can_export: false,
       can_delete: false,
       can_link_account: true,
+      history_enabled: false,
     },
     usage,
     server_time: "2026-10-22T12:00:00Z",

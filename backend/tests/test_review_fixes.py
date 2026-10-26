@@ -89,7 +89,7 @@ def test_a_counted_turn_never_returns_500_when_the_usage_view_fails(monkeypatch)
     def boom(*_a, **_k):
         raise AccountUnavailable()
 
-    monkeypatch.setattr(main_module, "usage_view", boom)
+    monkeypatch.setattr("app.routes.turns.usage_view", boom)  # the route moved out of main.py
     response = client.post("/v1/agent/turns", json={"message": "Plan a day trip"},
                            headers={"Authorization": "Bearer t", "Idempotency-Key": "k1"})
     assert response.status_code == 200, response.text

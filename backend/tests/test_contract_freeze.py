@@ -279,7 +279,8 @@ def test_runtime_config_defaults_match_decisions_and_later_phases_are_off() -> N
 
 
 def test_pending_action_effects_reject_unknown() -> None:
-    assert {e.value for e in PendingActionEffect} == {"SET_REMINDER", "LAUNCH_HANDOFF"}
+    # SAVE_PLACE: decision 25 (saved places, built dark); CREATE_ROUTINE/ENABLE_NOTIFICATIONS stay out.
+    assert {e.value for e in PendingActionEffect} == {"SET_REMINDER", "LAUNCH_HANDOFF", "SAVE_PLACE"}
     values = dict(
         id="a", workspace_id="w", plan_version=1, target="t", preview="p", nonce="n" * 16,
         idempotency_key="idem-key-1", created_at=T0, expires_at=T0 + timedelta(minutes=5),

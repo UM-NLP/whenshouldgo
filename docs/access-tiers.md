@@ -85,6 +85,8 @@ POST /v1/me:export
 POST /v1/me:delete
 ```
 
+Status 2026-10-26: `session:bootstrap`, `me/capabilities`, `me/usage` and `agent/turns` are implemented. Every other path above, plus `/v1/places/details`, `/v1/routes/check`, `/v1/actions/*`, `/v1/workspace`, `/v1/outcomes`, `/v1/history/records` and `/v1/saved-places`, exists only as a typed 501 `NOT_IMPLEMENTED` stub with its final request and response models (`backend/app/routes/`). History and saved-place routes answer a typed 404 `DISABLED` while `history_enabled` is off (decision 25). `Capabilities` gains a server-computed `history_enabled`; `can_export` and `can_delete` stay false.
+
 Response shapes implemented in Phase 0 (all strict, in the OpenAPI contract; tenant comes only from the verified token):
 
 - `POST /v1/session:bootstrap` is idempotent and rate-limited. It returns `SessionBootstrap {schema_version, kind, tier (guest|registered), policy_version, capabilities, usage, server_time}`. It issues no token and links nothing.

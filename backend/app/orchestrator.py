@@ -118,6 +118,10 @@ def discovery_cache_key(idempotency_key: str) -> str:
 class TurnOrchestrator:
     """In-memory development orchestrator; workspace and replay stores move to Firestore."""
 
+    @property
+    def runtime_config(self) -> RuntimeConfig | None:
+        return self._runtime_config
+
     def __init__(
         self,
         quotas: QuotaService | None = None,
