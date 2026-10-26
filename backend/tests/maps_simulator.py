@@ -245,3 +245,68 @@ class SyntheticMapsClient:
             travel_mode=arguments.get("travel_mode", "DRIVE") if tool == "compute_routes" else None,
             issued=mint(call_id),
         )
+
+
+# --- Places Details and Routes (direct APIs; display-only, never reaches a model) ---------------------
+# Synthetic only (decision 14): invented names, addresses and coordinates. The Place Details body
+# carries a location and a polyline-shaped field ON PURPOSE (a real server may add fields beyond the
+# mask): the tests prove none of it is retained.
+from app.places.transport import PlacesRequest, PlacesResponse  # noqa: E402
+
+PLACES_CANARY_NAME = "Synthetic Canary Teahouse"
+PLACES_CANARY_ADDRESS = "77 Invented Canary Avenue, Syntheticville"
+PLACES_CANARY_COORD = 43.987654
+PLACES_CANARY_POLYLINE = "SYNTHPOLYLINEcanary~abc123"
+PLACES_CANARY_HOURS = "Mon: 9:00 AM - 5:00 PM SYNTHHOURS"
+PLACES_CANARY_KEY = "SYNTHKEY_canary_0123456789"
+PLACES_CANARIES = (PLACES_CANARY_NAME, PLACES_CANARY_ADDRESS, str(PLACES_CANARY_COORD),
+                   PLACES_CANARY_POLYLINE, PLACES_CANARY_HOURS, PLACES_CANARY_KEY)
+
+
+def synthetic_place_details(index: int = 1, **overrides: Any) -> dict[str, Any]:
+    body = {
+        "id": synth_id(index),
+        "displayName": {"text": f"{PLACES_CANARY_NAME} {index}", "languageCode": "en"},
+        "formattedAddress": PLACES_CANARY_ADDRESS,
+        "currentOpeningHours": {"openNow": True,
+                                "weekdayDescriptions": [PLACES_CANARY_HOURS]},
+        "rating": 4.4,
+        "location": {"latitude": PLACES_CANARY_COORD, "longitude": -79.123456},
+    }
+    body.update(overrides)
+    return body
+
+
+def synthetic_compute_route(distance: int = 4321, duration: str = "905s") -> dict[str, Any]:
+    return {"routes": [{"duration": duration, "distanceMeters": distance,
+                        "polyline": {"encodedPolyline": PLACES_CANARY_POLYLINE}}]}
+
+
+def places_ok(body: Mapping[str, Any]) -> PlacesResponse:
+    return PlacesResponse(status_code=200, body=dict(body), size_bytes=len(json.dumps(body)))
+
+
+def places_status(code: int, body: Any = None) -> PlacesResponse:
+    return PlacesResponse(status_code=code, body=body, size_bytes=0)
+
+
+class FakePlacesTransport:
+    """Scripted Places/Routes transport. Records requests and key values (never the Credential)."""
+
+    def __init__(self, script: Sequence[PlacesResponse | BaseException] = ()) -> None:
+        self._script = list(script)
+        self.requests: list[PlacesRequest] = []
+        self.keys: list[str] = []
+
+    def push(self, *items: PlacesResponse | BaseException) -> None:
+        self._script.extend(items)
+
+    def send(self, request: PlacesRequest, credential: Credential) -> PlacesResponse:
+        self.requests.append(request)
+        self.keys.append(credential.reveal())
+        if not self._script:
+            raise AssertionError("FakePlacesTransport script exhausted")
+        item = self._script.pop(0)
+        if isinstance(item, BaseException):
+            raise item
+        return item

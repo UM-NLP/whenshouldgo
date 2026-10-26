@@ -1,4 +1,4 @@
-"""Item 4: every planned route exists as a typed 501 NOT_IMPLEMENTED stub with its final contract.
+"""Item 4: every planned route (places/details and routes/check are now live: test_places_details_routes) exists as a typed 501 NOT_IMPLEMENTED stub with its final contract.
 
 History and saved-place routes answer a typed 404 DISABLED first, while ``history_enabled`` is off.
 """
@@ -25,10 +25,6 @@ SAVE = {"place_id": "ChIJabc", "user_label": "Home", "label_kind": "HOME",
 
 # method, path template, request model | None, success response model, history-gated, body, query
 STUBS = [
-    ("POST", "/v1/places/details", "PlaceDetailsRequest", "PlaceDetailsResponse", False,
-     {"place_ids": ["ChIJabc"]}),
-    ("POST", "/v1/routes/check", "RouteCheckRequest", "RouteCheckResponse", False,
-     {"place_id": "ChIJabc"}),
     ("POST", "/v1/actions/propose", "ProposeActionRequest", "PendingAction", False,
      {"workspace_id": "ws1", "plan_version": 1, "effect": "SAVE_PLACE", "target": "ChIJabc"}),
     ("POST", "/v1/actions/{id}/confirm", "ConfirmActionRequest", "ConfirmActionResponse", False,
