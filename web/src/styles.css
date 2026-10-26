@@ -111,3 +111,6 @@ textarea {
   color: var(--fg);
   resize: none;
 }
+
+.queued { color: var(--muted, #666); font-size: 0.85em; }
+.data-controls { margin-top: 12px; font-size: 0.9em; }

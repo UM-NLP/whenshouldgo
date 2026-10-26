@@ -4,14 +4,16 @@ import { createRoot } from "react-dom/client";
 import { createApi } from "./api/client";
 import { defaultAuthProvider } from "./auth";
 import { Chat } from "./components/Chat";
+import { defaultLocalStore } from "./storage";
 import "./styles.css";
 
 const api = createApi({ auth: defaultAuthProvider() });
+const local = defaultLocalStore();
 const root = document.getElementById("root");
 if (root) {
   createRoot(root).render(
     <StrictMode>
-      <Chat api={api} />
+      <Chat api={api} local={local} />
     </StrictMode>,
   );
 }

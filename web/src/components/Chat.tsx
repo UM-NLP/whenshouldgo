@@ -2,21 +2,37 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 
 import type { Api } from "../api/client";
 import { useChat } from "../useChat";
+import { useLocalSession } from "../useLocalSession";
+import { useServiceWorkerUpdate } from "../sw-register";
+import type { LocalStore } from "../storage";
 import { useLocationConsent } from "../useLocationConsent";
 import { useUsage } from "../useUsage";
 import { AssistantMessage } from "./AssistantMessage";
+import { DataControls, LocalNoticeCard, OfflineBanner, OutboxStatus, UpdateBanner } from "./LocalFirst";
 import { LocationControl } from "./LocationControl";
 import { ProblemNotice } from "./ProblemNotice";
 import { UsageMeter } from "./UsageMeter";
 
-export function Chat({ api }: { api: Api }) {
+/** `local` is the on-device store; null (the default) keeps everything in memory only. */
+export function Chat({ api, local = null }: { api: Api; local?: LocalStore | null }) {
   const location = useLocationConsent(api);
   const usage = useUsage(api);
-  const chat = useChat(api, location, usage.update);
+  const session = useLocalSession(local, api);
+  const chat = useChat(api, location, usage.update, session);
+  const updateApply = useServiceWorkerUpdate();
   // The server's meter_state decides; the client computes nothing from the counters.
   const gated = usage.view?.meter_state === "GATED";
   const [draft, setDraft] = useState("");
   const endRef = useRef<HTMLDivElement>(null);
+
+  // Restore the unsent draft once.
+  const draftRestored = useRef(false);
+  useEffect(() => {
+    if (session?.restoredDraft && !draftRestored.current) {
+      draftRestored.current = true;
+      setDraft((current) => current || session.restoredDraft || "");
+    }
+  }, [session?.restoredDraft]);
 
   // After the user grants consent following LOCATION_CONSENT_REQUIRED, send the held message again.
   const waitingForConsent = chat.problem?.type === "api" && chat.problem.failure.kind === "location_consent_required";
@@ -38,6 +54,7 @@ export function Chat({ api }: { api: Api }) {
     if (!draft.trim() || chat.sending || gated) return;
     chat.send(draft);
     setDraft("");
+    session?.saveDraft("");
   }
 
   return (
@@ -47,6 +64,10 @@ export function Chat({ api }: { api: Api }) {
         <p className="tagline">Same-day outings near you.</p>
       </header>
 
+      <UpdateBanner apply={updateApply} />
+      {session ? <OfflineBanner online={session.online} /> : null}
+      {session ? <LocalNoticeCard session={session} /> : null}
+
       <div className="log" aria-live="polite" aria-label="Conversation">
         {chat.items.length === 0 && !chat.sending ? (
           <p className="empty">
@@ -54,15 +75,30 @@ export function Chat({ api }: { api: Api }) {
             neighbourhood you name.
           </p>
         ) : null}
-        {chat.items.map((item) =>
-          item.role === "user" ? (
-            <p key={item.id} className="user">
-              {item.text}
-            </p>
-          ) : (
-            <AssistantMessage key={item.id} response={item.response} />
-          ),
-        )}
+        {chat.items.map((item) => {
+          if (item.role === "user") {
+            const waiting = !!item.key && !!session?.outboxItems.some((q) => q.key === item.key && q.state === "queued");
+            return (
+              <p key={item.id} className="user">
+                {item.text}
+                {waiting ? <span className="queued"> (waiting to send)</span> : null}
+              </p>
+            );
+          }
+          if (item.role === "restored") {
+            return (
+              <div key={item.id} className="assistant">
+                <p className="reply">{item.text}</p>
+                {item.hadDiscovery ? (
+                  <p className="notice" role="status">
+                    Results are not stored; ask again. Place details are unavailable offline.
+                  </p>
+                ) : null}
+              </div>
+            );
+          }
+          return <AssistantMessage key={item.id} response={item.response} />;
+        })}
         {chat.sending ? (
           <p className="loading" role="status">
             Looking that up...
@@ -79,6 +115,8 @@ export function Chat({ api }: { api: Api }) {
         <div ref={endRef} />
       </div>
 
+      {session ? <OutboxStatus session={session} onResume={chat.resumeQueued} onDiscard={chat.discardQueued} /> : null}
+
       {usage.view ? <UsageMeter usage={usage.view} /> : null}
 
       <LocationControl location={location} />
@@ -94,7 +132,10 @@ export function Chat({ api }: { api: Api }) {
           maxLength={20000}
           disabled={gated}
           placeholder="What are you looking for?"
-          onChange={(e) => setDraft(e.target.value)}
+          onChange={(e) => {
+            setDraft(e.target.value);
+            session?.saveDraft(e.target.value);
+          }}
           onKeyDown={(e) => {
             if (e.key === "Enter" && !e.shiftKey) {
               e.preventDefault();
@@ -106,6 +147,8 @@ export function Chat({ api }: { api: Api }) {
           Send
         </button>
       </form>
+
+      {session ? <DataControls session={session} /> : null}
     </main>
   );
 }
