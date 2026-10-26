@@ -13,6 +13,7 @@
     "api:generate": "npm run api:export && npm run api:types"
   },
   "dependencies": {
+    "firebase": "13.0.0",
     "openapi-fetch": "0.17.0",
     "react": "19.3.0",
     "react-dom": "19.3.0"

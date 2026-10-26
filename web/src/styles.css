@@ -139,3 +139,14 @@ textarea {
 .action-preview { overflow-wrap: anywhere; }
 .reminder-banner { margin-top: 8px; }
 .board button { min-height: 44px; }
+
+/* Account, history and saved places */
+.account-panel { display: flex; flex-direction: column; gap: 8px; margin: 8px 0; }
+.account-panel h2, .account-merge h3 { font-size: 1.05rem; margin: 0; }
+.account-panel fieldset { border: 1px solid var(--line); border-radius: 6px; margin: 0; padding: 8px 12px; }
+.account-panel input[type="email"], .phase1 select { font: inherit; padding: 6px 8px; max-width: 100%; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--fg); }
+.phase1 { display: flex; flex-direction: column; gap: 12px; }
+.phase1 h3 { font-size: 0.95rem; margin: 0 0 4px; }
+.history-entry, .saved-place { display: flex; flex-direction: column; gap: 4px; padding-bottom: 12px; border-bottom: 1px solid var(--line); }
+.history-entry p, .saved-place p { margin: 0; }
+.starting-area, .save-flow { margin: 8px 0; }

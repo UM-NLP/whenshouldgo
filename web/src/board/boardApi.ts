@@ -87,6 +87,8 @@ export interface ProposeInput {
   idempotencyKey: string;
   /** SET_REMINDER only: ISO time, within a day of now. The server's copy is the one that counts. */
   dueAt?: string;
+  /** SAVE_PLACE only: HOME, WORK or CUSTOM (the server requires it for that effect and refuses it for others). */
+  labelKind?: S["SavedPlaceKind"];
 }
 export interface OutcomeInput {
   placeId: string;
@@ -179,7 +181,7 @@ export function createBoardApi({ auth, fetchImpl, baseUrl }: BoardApiOptions): B
       );
       return outcome.ok ? { ok: true, data: outcome.data.route } : outcome;
     },
-    propose: ({ effect, target, userLabel, workspaceId, planVersion, idempotencyKey, dueAt }) =>
+    propose: ({ effect, target, userLabel, workspaceId, planVersion, idempotencyKey, dueAt, labelKind }) =>
       call((authorization) =>
         client.POST("/v1/actions/propose", {
           params: { header: { authorization, "idempotency-key": idempotencyKey } },
@@ -191,6 +193,7 @@ export function createBoardApi({ auth, fetchImpl, baseUrl }: BoardApiOptions): B
             workspace_id: workspaceId,
             plan_version: planVersion,
             ...(dueAt ? { due_at: dueAt } : {}),
+            ...(labelKind ? { label_kind: labelKind } : {}),
           },
         }),
       ),

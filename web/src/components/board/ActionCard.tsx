@@ -14,7 +14,9 @@ const TITLE = {
 
 /** A pending action: the server's preview, explicit Confirm and Cancel, and the expiry. The nonce is
  * held in memory by the hook and never rendered. */
-export function ActionCard({ state, board, now }: { state: ActionState; board: Board; now: number }) {
+export type ActionCardBoard = Pick<Board, "confirm" | "cancel" | "setDue" | "acceptNotice" | "declineNotice">;
+
+export function ActionCard({ state, board, now }: { state: ActionState; board: ActionCardBoard; now: number }) {
   const { action, phase } = state;
   const left = secondsLeft(action.expires_at, now);
   const expired = left <= 0;

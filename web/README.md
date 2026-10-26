@@ -113,5 +113,55 @@ typed fields only:
   action's own key) and outcomes, and is sent through the typed `params.header`.
 - `classifyFailure` has an `unavailable` kind: 501, NOT_IMPLEMENTED, DISABLED and a 503 with no
   transient provider reason. A 503 PROVIDER_* reason stays a retryable provider error.
-- Still missing: Firebase sign-in and an App Check token (the production build sends no auth token),
-  and the create-account button on the gated notice.
+- Still missing: an App Check token (not sent yet) and real Firebase config (owner TODO, see below).
+
+
+## Accounts, sign-in, merge, export and delete (`src/firebase.ts`, `src/account/`)
+
+- `src/firebase.ts`: the `AuthService` interface (`signInAnonymously`, `linkWithGoogle`, `sendEmailLink` +
+  `linkWithEmailLink`, `continueAsExisting`, `getIdToken`, `signOut`). Implementations: the real
+  `FirebaseAuthService` (pinned `firebase@13.0.0`, imported lazily on first use and only when all four
+  `VITE_FIREBASE_API_KEY`, `_AUTH_DOMAIN`, `_PROJECT_ID`, `_APP_ID` are set), `NotConfiguredAuthService`
+  (a production build with no config: nothing signs in, no token is sent, and a fixed "sign-in is not
+  configured" notice shows) and `DevAuthService` in `src/firebaseDev.ts` (dev only; referenced under
+  `import.meta.env.DEV`, so it is absent from `dist/`; `firebase.test.ts` greps `dist/` for the dev token).
+  No real config is in the repository. Owner TODO: create the Firebase web app, set the four variables for
+  the production build, add App Check (docs/runbooks/firebase-setup.md).
+- The Firebase SDK keeps its own session in its own browser storage so an anonymous uid survives a reload.
+  App code never stores a token, email or intent nonce (in memory only) and never logs or puts them in a URL.
+  The email link's continue URL carries no email; the user types it again on return.
+- Flow (`useAccount`): "Create a free account" (90% notice and the gate; shown only for a guest whose
+  server `can_link_account` is not false) -> `POST /v1/account/link-intents` -> provider link ->
+  `POST .../{id}:complete` -> re-bootstrap. Cancelling at any step consumes nothing. A collision (from the
+  provider, or a 409 `ACCOUNT_COLLISION` on complete) parks the intent, signs in as the existing account and
+  opens the explicit merge screen (`useMerge`): `POST /v1/account-migrations` manifest, item checkboxes,
+  `KEEP_REGISTERED` default or `USE_GUEST`, `:run`, and "Continue copying" after a 503 `MIGRATION_INTERRUPTED`
+  (the same call resumes). The intent id and nonce live in memory only, so a page reload during a merge
+  cannot resume it (assumption; a durable resume needs a server-side lookup of the open migration).
+- `DataRights`: "Export my account data" (`POST /v1/me:export`, downloaded from the response, never stored)
+  and "Delete my account data" (confirm dialog, `POST /v1/me:delete`, then the existing `deleteAll()`/
+  `session.deleteData()` and sign-out). Neither depends on the allowance, so both work while GATED.
+  501, `DISABLED` and `SERVER_NOT_CONFIGURED` read as "not available yet".
+
+## Phase 1 UI, behind the server capability (`src/history/`, `src/places/Saved*`)
+
+Nothing renders, and nothing is requested, unless the server's `Capabilities.history_enabled` is true
+(taken from `session:bootstrap`; never from client state or env) and the app wires `phase1` (`main.tsx` does).
+
+- Guests (decision 19/27): history, saved places and the ask-state live in the existing `outing_log`,
+  `saved_places` and `ask_state` stores. The retention notice states the period (default 90, ceiling 180)
+  and `RetentionPicker` shortens it through `store.setRetentionDays` (purges at once). Registered users:
+  `/v1/history/records` and `/v1/saved-places`, each behind a consent prompt (`HISTORY_STORE`, `SAVED_PLACE`)
+  with a PLACEHOLDER notice clearly marked pending counsel (issue #27).
+- History view: the user's label and activity tag; "Show place details" fetches `POST /v1/places/details` by
+  place ID into memory only ("Details unavailable" on a miss); edit label, delete one, clear all, export.
+- Saved places: list, rename, delete, export. Home, Work and custom places are created ONLY by the confirmed
+  `SAVE_PLACE` PendingAction (the board's `ActionCard`): the position is read inside the tap, rounded to 3
+  decimals, held in memory, and written (device store or server upsert) only after the server confirms.
+- The fixed question "Is where you are now your home? Save it as Home?" shows only when the guest's local
+  deterministic rule fires (`places/SavedAskPolicy.ts`: a "near home/work" phrase in the user's own message,
+  no saved label, no don't-ask-again, no decline in the last 30 days) or, for registered users, when the
+  server signals it (not in the contract yet, so never today).
+- A saved Home/Work is never applied silently: "Use my saved Home as the starting area" is an explicit tap that
+  arms ONE next message to carry the rounded saved position through the existing consented `location` path.
+- Everything that depends on a still-moving backend contract is in `src/history/contractAdapter.ts`.

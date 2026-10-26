@@ -29,7 +29,8 @@ export interface Chat {
   items: ChatItem[];
   sending: boolean;
   problem: PendingProblem | null;
-  send(text: string): void;
+  /** `startingArea`: a rounded saved position the user explicitly chose for this one message. */
+  send(text: string, options?: { startingArea?: Coordinates | null }): void;
   retry(): void;
   /** Local-first only: put a stopped outbox item back in the queue, or drop it. */
   resumeQueued(key: string, newKey: boolean): void;
@@ -124,17 +125,18 @@ export function useChat(
   );
 
   const send = useCallback(
-    (text: string) => {
+    (text: string, options?: { startingArea?: Coordinates | null }) => {
       const trimmed = text.trim();
       if (!trimmed || sending) return;
-      const turn: Pending = { key: newIdempotencyKey(), text: trimmed, location: null };
+      const area = options?.startingArea ?? null;
+      const turn: Pending = { key: newIdempotencyKey(), text: trimmed, location: area };
       append({ id: nextId(), role: "user", text: trimmed, key: turn.key });
       local?.saveMessage({ role: "user", text: trimmed, key: turn.key });
       // Offline, or behind earlier queued turns: queue with the same key; order is preserved.
       if (local && (!local.online || local.outboxItems.length > 0)) {
         void (async () => {
-          let coordinates: Coordinates | null = null;
-          if (location.phase === "on") {
+          let coordinates: Coordinates | null = area;
+          if (coordinates === null && location.phase === "on") {
             // Held in memory only; if it cannot be read the turn is queued without it.
             coordinates = await location.readPosition().catch(() => null);
           }
