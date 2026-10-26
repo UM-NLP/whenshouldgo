@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "FRAME bake-off fixture (one JSON object per line of fixtures.jsonl)",
+  "description": "Synthetic, hand-written cases. No real people, addresses, phone numbers or Maps content. required_query_words is a list of groups: every group must be satisfied and a group is satisfied by any one of its lower-cased alternatives in the final search query. expected_area must occur in the message.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "id", "category", "message", "expected_intent", "expected_area", "required_query_words",
+    "forbidden_query_words", "expected_language", "must_not", "notes"
+  ],
+  "properties": {
+    "id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9_-]{0,63}$"},
+    "category": {"enum": ["discovery", "non_discovery", "multilingual", "injection", "edge"]},
+    "message": {"type": "string", "minLength": 1, "maxLength": 8000},
+    "expected_intent": {"enum": ["DISCOVERY", "OTHER"]},
+    "expected_area": {"type": ["string", "null"], "minLength": 1},
+    "required_query_words": {
+      "type": "array",
+      "items": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}}
+    },
+    "forbidden_query_words": {"type": "array", "items": {"type": "string", "minLength": 1}},
+    "expected_language": {"enum": ["en", "fr"]},
+    "must_not": {
+      "type": "array",
+      "items": {"enum": ["confirmed_or_hard_fact", "non_search_tool", "search_when_other", "any_area"]}
+    },
+    "notes": {"type": "string"}
+  }
+}

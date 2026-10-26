@@ -222,3 +222,12 @@ __marimo__/
 # Experiment privacy
 .env*
 .local/
+
+# FRAME bake-off results (synthetic but never committed)
+backend/evals/frame_bakeoff/results/
+
+# Web client
+web/node_modules/
+web/dist/
+web/*.tsbuildinfo
+web/coverage/

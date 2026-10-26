@@ -1,0 +1,1603 @@
+{
+  "components": {
+    "schemas": {
+      "Capabilities": {
+        "additionalProperties": false,
+        "properties": {
+          "can_delete": {
+            "title": "Can Delete",
+            "type": "boolean"
+          },
+          "can_export": {
+            "title": "Can Export",
+            "type": "boolean"
+          },
+          "can_link_account": {
+            "title": "Can Link Account",
+            "type": "boolean"
+          },
+          "can_read": {
+            "title": "Can Read",
+            "type": "boolean"
+          },
+          "can_start_turn": {
+            "title": "Can Start Turn",
+            "type": "boolean"
+          },
+          "can_use_location": {
+            "title": "Can Use Location",
+            "type": "boolean"
+          },
+          "kind": {
+            "const": "capabilities",
+            "default": "capabilities",
+            "title": "Kind",
+            "type": "string"
+          },
+          "schema_version": {
+            "default": 1,
+            "minimum": 1.0,
+            "title": "Schema Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "can_start_turn",
+          "can_use_location",
+          "can_read",
+          "can_export",
+          "can_delete",
+          "can_link_account"
+        ],
+        "title": "Capabilities",
+        "type": "object"
+      },
+      "ConsentGrantRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "notice_version": {
+            "maxLength": 40,
+            "minLength": 1,
+            "title": "Notice Version",
+            "type": "string"
+          },
+          "purpose": {
+            "$ref": "#/components/schemas/ConsentPurpose"
+          }
+        },
+        "required": [
+          "purpose",
+          "notice_version"
+        ],
+        "title": "ConsentGrantRequest",
+        "type": "object"
+      },
+      "ConsentList": {
+        "additionalProperties": false,
+        "properties": {
+          "consents": {
+            "items": {
+              "$ref": "#/components/schemas/ConsentView"
+            },
+            "title": "Consents",
+            "type": "array"
+          }
+        },
+        "required": [
+          "consents"
+        ],
+        "title": "ConsentList",
+        "type": "object"
+      },
+      "ConsentProcessor": {
+        "description": "Processors the notice must name (docs/data-and-history-design.md).",
+        "enum": [
+          "GOOGLE",
+          "OPENROUTER",
+          "UPSTREAM_MODEL_HOST"
+        ],
+        "title": "ConsentProcessor",
+        "type": "string"
+      },
+      "ConsentPurpose": {
+        "enum": [
+          "LOCATION_FOREGROUND",
+          "HISTORY_STORE",
+          "PATTERN_INFERENCE",
+          "PROACTIVE_NOTIFY",
+          "CLOUD_SYNC",
+          "CALENDAR_READ"
+        ],
+        "title": "ConsentPurpose",
+        "type": "string"
+      },
+      "ConsentView": {
+        "additionalProperties": false,
+        "description": "An active consent as the client sees it (never a coordinate; withdrawn ones are not listed).",
+        "properties": {
+          "granted_at": {
+            "format": "date-time",
+            "title": "Granted At",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "notice_version": {
+            "title": "Notice Version",
+            "type": "string"
+          },
+          "processors": {
+            "items": {
+              "$ref": "#/components/schemas/ConsentProcessor"
+            },
+            "title": "Processors",
+            "type": "array"
+          },
+          "purpose": {
+            "$ref": "#/components/schemas/ConsentPurpose"
+          }
+        },
+        "required": [
+          "id",
+          "purpose",
+          "notice_version",
+          "processors",
+          "granted_at"
+        ],
+        "title": "ConsentView",
+        "type": "object"
+      },
+      "DiscoveryBlock": {
+        "additionalProperties": false,
+        "description": "Google's grounded answer, verbatim: the raw summary text, then every place's attribution\nin order. ``render_mode`` \"text\" means a client inserts each field with textContent, never as\nHTML or Markdown. The server framing sits OUTSIDE this block (``TurnResponse.reply``).",
+        "properties": {
+          "branding": {
+            "const": "Google Maps",
+            "default": "Google Maps",
+            "title": "Branding",
+            "type": "string"
+          },
+          "cache_expires_at": {
+            "format": "date-time",
+            "title": "Cache Expires At",
+            "type": "string"
+          },
+          "framing": {
+            "$ref": "#/components/schemas/FramingKind"
+          },
+          "places": {
+            "items": {
+              "$ref": "#/components/schemas/DiscoveryPlace"
+            },
+            "maxItems": 20,
+            "minItems": 1,
+            "title": "Places",
+            "type": "array"
+          },
+          "render_mode": {
+            "const": "text",
+            "default": "text",
+            "title": "Render Mode",
+            "type": "string"
+          },
+          "retrieved_at": {
+            "format": "date-time",
+            "title": "Retrieved At",
+            "type": "string"
+          },
+          "text": {
+            "maxLength": 8000,
+            "minLength": 1,
+            "title": "Text",
+            "type": "string"
+          },
+          "translate_no": {
+            "const": true,
+            "default": true,
+            "title": "Translate No",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "text",
+          "places",
+          "framing",
+          "retrieved_at",
+          "cache_expires_at"
+        ],
+        "title": "DiscoveryBlock",
+        "type": "object"
+      },
+      "DiscoveryPlace": {
+        "additionalProperties": false,
+        "description": "One source, exactly as Google provided it (shown as text, linked to its urls).",
+        "properties": {
+          "attribution_url": {
+            "maxLength": 2048,
+            "title": "Attribution Url",
+            "type": "string"
+          },
+          "place_url": {
+            "maxLength": 2048,
+            "title": "Place Url",
+            "type": "string"
+          },
+          "title": {
+            "maxLength": 200,
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "title",
+          "attribution_url",
+          "place_url"
+        ],
+        "title": "DiscoveryPlace",
+        "type": "object"
+      },
+      "DomainClass": {
+        "description": "Travel-domain gate result (docs/voice-and-domain-controls.md).",
+        "enum": [
+          "TRAVEL",
+          "APP_HELP",
+          "MIXED",
+          "OUT_OF_SCOPE",
+          "SAFETY"
+        ],
+        "title": "DomainClass",
+        "type": "string"
+      },
+      "ErrorBody": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "$ref": "#/components/schemas/ErrorCode"
+          },
+          "kind": {
+            "const": "error",
+            "default": "error",
+            "title": "Kind",
+            "type": "string"
+          },
+          "message": {
+            "maxLength": 500,
+            "title": "Message",
+            "type": "string"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ErrorReason"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "schema_version": {
+            "default": 1,
+            "minimum": 1.0,
+            "title": "Schema Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "code",
+          "message"
+        ],
+        "title": "ErrorBody",
+        "type": "object"
+      },
+      "ErrorCode": {
+        "enum": [
+          "QUOTA",
+          "POLICY",
+          "PROVIDER",
+          "VALIDATION",
+          "CONFLICT"
+        ],
+        "title": "ErrorCode",
+        "type": "string"
+      },
+      "ErrorReason": {
+        "description": "Stable machine-readable refinement of an ``ErrorCode``. Clients switch on this, never on\nthe message. Additive: a client must treat an unknown reason like its ``ErrorCode``.",
+        "enum": [
+          "RESULT_EXPIRED",
+          "TURN_IN_PROGRESS",
+          "SERVER_NOT_CONFIGURED",
+          "PROVIDER_RATE_LIMITED",
+          "PROVIDER_TIMEOUT",
+          "PROVIDER_UNAVAILABLE",
+          "OUTPUT_TRUNCATED",
+          "OUTPUT_REJECTED",
+          "OVER_BUDGET",
+          "RATE_LIMITED",
+          "DISCOVERY_UNAVAILABLE",
+          "LOCATION_CONSENT_REQUIRED"
+        ],
+        "title": "ErrorReason",
+        "type": "string"
+      },
+      "FramingKind": {
+        "description": "Fixed server copy shown above a grounded block, selected by enum: free text can never be\nframing. Lives here (not in discovery.render, which re-exports it) so the API contract can\nname it.",
+        "enum": [
+          "RESULTS_INTRO",
+          "NO_RESULTS"
+        ],
+        "title": "FramingKind",
+        "type": "string"
+      },
+      "GateReason": {
+        "enum": [
+          "TURNS_LIMIT",
+          "TRIPS_LIMIT"
+        ],
+        "title": "GateReason",
+        "type": "string"
+      },
+      "LocationInput": {
+        "additionalProperties": false,
+        "description": "``{latitude, longitude}`` and nothing else (no accuracy, altitude or timestamp).",
+        "properties": {
+          "latitude": {
+            "maximum": 90.0,
+            "minimum": -90.0,
+            "title": "Latitude",
+            "type": "number"
+          },
+          "longitude": {
+            "maximum": 180.0,
+            "minimum": -180.0,
+            "title": "Longitude",
+            "type": "number"
+          }
+        },
+        "required": [
+          "latitude",
+          "longitude"
+        ],
+        "title": "LocationInput",
+        "type": "object"
+      },
+      "MeterState": {
+        "enum": [
+          "NONE",
+          "QUIET_70",
+          "NOTICE_90",
+          "GATED"
+        ],
+        "title": "MeterState",
+        "type": "string"
+      },
+      "SessionBootstrap": {
+        "additionalProperties": false,
+        "properties": {
+          "capabilities": {
+            "$ref": "#/components/schemas/Capabilities"
+          },
+          "kind": {
+            "const": "session_bootstrap",
+            "default": "session_bootstrap",
+            "title": "Kind",
+            "type": "string"
+          },
+          "policy_version": {
+            "maxLength": 100,
+            "title": "Policy Version",
+            "type": "string"
+          },
+          "schema_version": {
+            "default": 1,
+            "minimum": 1.0,
+            "title": "Schema Version",
+            "type": "integer"
+          },
+          "server_time": {
+            "format": "date-time",
+            "title": "Server Time",
+            "type": "string"
+          },
+          "tier": {
+            "$ref": "#/components/schemas/Tier"
+          },
+          "usage": {
+            "$ref": "#/components/schemas/UsageView"
+          }
+        },
+        "required": [
+          "tier",
+          "policy_version",
+          "capabilities",
+          "usage",
+          "server_time"
+        ],
+        "title": "SessionBootstrap",
+        "type": "object"
+      },
+      "Tier": {
+        "enum": [
+          "guest",
+          "registered"
+        ],
+        "title": "Tier",
+        "type": "string"
+      },
+      "TurnRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "location": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LocationInput"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message": {
+            "maxLength": 20000,
+            "minLength": 1,
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "required": [
+          "message"
+        ],
+        "title": "TurnRequest",
+        "type": "object"
+      },
+      "TurnResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "allowance_exhausted": {
+            "title": "Allowance Exhausted",
+            "type": "boolean"
+          },
+          "allowed_tools": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Allowed Tools",
+            "type": "array"
+          },
+          "discovery": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DiscoveryBlock"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "domain": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DomainClass"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "kind": {
+            "const": "turn_response",
+            "default": "turn_response",
+            "title": "Kind",
+            "type": "string"
+          },
+          "policy_version": {
+            "maxLength": 100,
+            "title": "Policy Version",
+            "type": "string"
+          },
+          "reply": {
+            "maxLength": 5000,
+            "title": "Reply",
+            "type": "string"
+          },
+          "schema_version": {
+            "default": 1,
+            "minimum": 1.0,
+            "title": "Schema Version",
+            "type": "integer"
+          },
+          "usage": {
+            "$ref": "#/components/schemas/UsageView"
+          },
+          "warnings": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/TurnWarning"
+            },
+            "maxItems": 10,
+            "title": "Warnings",
+            "type": "array"
+          },
+          "workspace_id": {
+            "anyOf": [
+              {
+                "pattern": "^[A-Za-z0-9_.:-]{1,128}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workspace Id"
+          }
+        },
+        "required": [
+          "reply",
+          "domain",
+          "allowed_tools",
+          "workspace_id",
+          "allowance_exhausted",
+          "policy_version",
+          "usage"
+        ],
+        "title": "TurnResponse",
+        "type": "object"
+      },
+      "TurnWarning": {
+        "description": "Typed, content-free warnings on a partial result.",
+        "enum": [
+          "TOOL_BUDGET_EXHAUSTED",
+          "FACT_DROPPED",
+          "AREA_DROPPED",
+          "QUERY_REJECTED",
+          "NEEDS_AREA"
+        ],
+        "title": "TurnWarning",
+        "type": "string"
+      },
+      "UsagePeriod": {
+        "enum": [
+          "LIFETIME",
+          "ROLLING_30_DAYS"
+        ],
+        "title": "UsagePeriod",
+        "type": "string"
+      },
+      "UsageView": {
+        "additionalProperties": false,
+        "properties": {
+          "activated_trips_limit": {
+            "minimum": 0.0,
+            "title": "Activated Trips Limit",
+            "type": "integer"
+          },
+          "activated_trips_used": {
+            "minimum": 0.0,
+            "title": "Activated Trips Used",
+            "type": "integer"
+          },
+          "gate_reason": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/GateReason"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "kind": {
+            "const": "usage",
+            "default": "usage",
+            "title": "Kind",
+            "type": "string"
+          },
+          "meter_state": {
+            "$ref": "#/components/schemas/MeterState"
+          },
+          "period": {
+            "$ref": "#/components/schemas/UsagePeriod"
+          },
+          "registered_trip_limit": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Registered Trip Limit"
+          },
+          "registered_turn_limit": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Registered Turn Limit"
+          },
+          "resets_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resets At"
+          },
+          "schema_version": {
+            "default": 1,
+            "minimum": 1.0,
+            "title": "Schema Version",
+            "type": "integer"
+          },
+          "user_turns_limit": {
+            "minimum": 0.0,
+            "title": "User Turns Limit",
+            "type": "integer"
+          },
+          "user_turns_used": {
+            "minimum": 0.0,
+            "title": "User Turns Used",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "period",
+          "user_turns_used",
+          "user_turns_limit",
+          "activated_trips_used",
+          "activated_trips_limit",
+          "meter_state"
+        ],
+        "title": "UsageView",
+        "type": "object"
+      }
+    }
+  },
+  "info": {
+    "title": "WhenShouldGo API",
+    "version": "0.1.0"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/healthz": {
+      "get": {
+        "operationId": "healthz_healthz_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "title": "Response Healthz Healthz Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Healthz"
+      }
+    },
+    "/v1/agent/turns": {
+      "post": {
+        "operationId": "agent_turn_v1_agent_turns_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "idempotency-key",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": true,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TurnRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TurnResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "POLICY"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "POLICY"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "CONFLICT"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "VALIDATION"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "QUOTA",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds to wait before retrying.",
+                "schema": {
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "VALIDATION"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "PROVIDER"
+          },
+          "504": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "PROVIDER"
+          }
+        },
+        "summary": "Agent Turn"
+      }
+    },
+    "/v1/me/capabilities": {
+      "get": {
+        "operationId": "my_capabilities_v1_me_capabilities_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": true,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Capabilities"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "POLICY"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "POLICY"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "CONFLICT"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "VALIDATION"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "QUOTA",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds to wait before retrying.",
+                "schema": {
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "VALIDATION"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "PROVIDER"
+          },
+          "504": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "PROVIDER"
+          }
+        },
+        "summary": "My Capabilities"
+      }
+    },
+    "/v1/me/consents": {
+      "get": {
+        "operationId": "list_consents_v1_me_consents_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": true,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConsentList"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "POLICY"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "POLICY"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "CONFLICT"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "VALIDATION"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "QUOTA",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds to wait before retrying.",
+                "schema": {
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "VALIDATION"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "PROVIDER"
+          },
+          "504": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "PROVIDER"
+          }
+        },
+        "summary": "List Consents"
+      },
+      "post": {
+        "operationId": "grant_consent_v1_me_consents_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": true,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConsentGrantRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConsentView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "POLICY"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "POLICY"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "CONFLICT"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "VALIDATION"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "QUOTA",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds to wait before retrying.",
+                "schema": {
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "VALIDATION"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "PROVIDER"
+          },
+          "504": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "PROVIDER"
+          }
+        },
+        "summary": "Grant Consent"
+      }
+    },
+    "/v1/me/consents/{purpose}": {
+      "delete": {
+        "operationId": "withdraw_consent_v1_me_consents__purpose__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "purpose",
+            "required": true,
+            "schema": {
+              "title": "Purpose",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": true,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "POLICY"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "POLICY"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "CONFLICT"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "VALIDATION"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "QUOTA",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds to wait before retrying.",
+                "schema": {
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "VALIDATION"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "PROVIDER"
+          },
+          "504": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "PROVIDER"
+          }
+        },
+        "summary": "Withdraw Consent"
+      }
+    },
+    "/v1/me/usage": {
+      "get": {
+        "operationId": "my_usage_v1_me_usage_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": true,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UsageView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "POLICY"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "POLICY"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "CONFLICT"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "VALIDATION"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "QUOTA",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds to wait before retrying.",
+                "schema": {
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "VALIDATION"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "PROVIDER"
+          },
+          "504": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "PROVIDER"
+          }
+        },
+        "summary": "My Usage"
+      }
+    },
+    "/v1/session:bootstrap": {
+      "post": {
+        "operationId": "bootstrap_v1_session_bootstrap_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": true,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionBootstrap"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "POLICY"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "POLICY"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "CONFLICT"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "VALIDATION"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "QUOTA",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds to wait before retrying.",
+                "schema": {
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "VALIDATION"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "PROVIDER"
+          },
+          "504": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "PROVIDER"
+          }
+        },
+        "summary": "Bootstrap"
+      }
+    }
+  }
+}

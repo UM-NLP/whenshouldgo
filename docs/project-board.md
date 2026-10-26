@@ -12,9 +12,11 @@ Updated 2026-10-11. Authoritative board: [@UM-NLP's When Should Go — Project 2
 | 3 | [#21 Quality, safety, cost, and pilot](https://github.com/UM-NLP/whenshouldgo/issues/21) | Queued | #20 |
 | 4 | [#11 Android product gate and MVP](https://github.com/UM-NLP/whenshouldgo/issues/11) | Gated | #21 exit decision |
 | 5 | [#15 Calendar and explicit routines](https://github.com/UM-NLP/whenshouldgo/issues/15) | Future | Android/account/privacy gates |
-| 5 | [#16 Event-driven monitoring and reminders](https://github.com/UM-NLP/whenshouldgo/issues/16) | Future | #15 plus notification and cost gates |
+| 5 | [#16 Event-driven monitoring and reminders](https://github.com/UM-NLP/whenshouldgo/issues/16) | Future | NOTIFY-01 (#34) plus cost gates |
 | 5 | [#17 Same-day multi-stop optimizer](https://github.com/UM-NLP/whenshouldgo/issues/17) | Future | Demand evidence |
 | 5 | [#18 Multi-day trip builder](https://github.com/UM-NLP/whenshouldgo/issues/18) | Future | Separate validation |
 | 5 | [#19 Android voice entry](https://github.com/UM-NLP/whenshouldgo/issues/19) | Future | #23 and Android retention |
+
+Updated 2026-10-17: the roadmap places trip history, patterns and routine reminder notifications before Android, and #16 depends on NOTIFY-01 (#34) rather than #15. Issues #24 to #35 (LEGAL-01 to LEGAL-07, LLMOPS-01, HISTORY-01, ROUTINE-01, NOTIFY-01, ACCESS-02) were created and added to the board; their column state on the board is the GitHub default.
 
 Verified through the authenticated Projects interface on 2026-10-11: Project 2 contains only issues #11 and #13–#23. All 12 current cards are in Todo; Done, In Progress, and On Hold are empty. Repository issue state and content are maintained through the GitHub connector.

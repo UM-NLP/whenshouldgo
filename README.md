@@ -24,3 +24,30 @@ The assistant is limited to trip and outing planning plus app help. The server o
 - [Active decisions](docs/decisions.md)
 
 Credentials, private trip data, provider responses, precise locations, and route geometry must remain outside Git. No client may call model or travel providers directly; the backend enforces identity, authorization, quotas, token budgets, and provider kill switches.
+
+## Development workspace
+
+The Phase 0 backend foundation lives in `backend/`: a FastAPI modular monolith with
+server-derived identity (failing closed without a verifier), versioned entitlement
+and token policy, an atomic in-memory quota ledger, strict domain contracts, a
+placeholder travel-domain gate and the start of the turn orchestrator. It has no
+live model, Firebase, Maps or provider credentials; those integrations must keep
+the server-side controls described in the documents above. `web/` is not started.
+
+Install the development dependencies and run the tests from `backend/`:
+
+```powershell
+cd backend
+python -m pip install -e ".[dev]"
+python -m pytest
+```
+
+`create_app()` with no identity verifier rejects every authenticated route, so the
+default `app.main:app` only serves `/healthz` until a verifier is wired in:
+
+```powershell
+python -m uvicorn app.main:app --reload
+```
+
+`AGENTS.md` is the shared source of engineering instructions. Role briefs live in
+`.codex/agents/`; `.github/` registers the same roles with GitHub Copilot.

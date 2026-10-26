@@ -1,6 +1,6 @@
 # Anonymous Access and Free Account Tiers
 
-Updated 2026-10-11. The product is free during validation. A person can receive useful trip help before creating an account; registration is requested only after demonstrated use or when the person asks for an account-only capability.
+Updated 2026-10-14. The product is free during validation. A person can receive useful trip help before creating an account; registration is requested only after demonstrated use or when the person asks for an account-only capability.
 
 ## Product policy
 
@@ -9,9 +9,9 @@ Updated 2026-10-11. The product is free during validation. A person can receive 
 | First use | No sign-up screen | Google or email link |
 | Allowance | 50 successful user turns or 10 activated trips, lifetime, whichever is reached first | 100 successful user turns and 10 activated trips per rolling 30 days |
 | Planning | Same-day local discovery, planning, revisions, Maps handoff | Guest capabilities plus cloud history and broader saved context |
-| Reminders | Device-local | Device-local; bounded synced monitoring only after its release gate |
+| Reminders | Device-local; on web, shown when the app is next opened | Device-local; routine reminder notifications (web push) from Phase 3 after their release gate |
 | Calendar | Unavailable | Read-only connection after its separate release gate |
-| Memory and sync | Current device; no durable inferred routines | Cross-device workspaces and user-approved memory |
+| Memory and sync | Current device, including a local outing log; no durable inferred routines | Cross-device workspaces, opt-in outing history (up to 180 days, user can shorten), user-approved memory and, from Phase 2, user-confirmed routines |
 | When allowance ends | Finish the current response; require a free account before the next metered action | Show the reset date and retain read/export/delete access |
 | Payment | None | None |
 
@@ -19,7 +19,7 @@ These numbers are an initial experiment, not a promise that they are economicall
 
 ## What is counted
 
-A **user turn** is one user submission for which the service returns a completed assistant response. The assistant response, clarification question, internal reasoning, retries and tool calls never add turns. Validation failures, provider failures, safety refusals, duplicate idempotency keys and server errors do not consume a user turn.
+A **user turn** is one user submission for which the service returns a completed assistant response. A response that is only the fixed clarification (the model judged the message not to be an outing request, or its search was rejected) does not consume a turn; its cost is still recorded, and a per-user limit on such free turns applies. The assistant response, clarification question, internal reasoning, retries and tool calls never add turns. Validation failures, provider failures, safety refusals, duplicate idempotency keys and server errors do not consume a user turn.
 
 An **activated trip** is counted once when the user accepts a plan and then saves it, schedules a reminder or launches the Maps handoff. Searches, abandoned workspaces and generated plans the user does not act on are not trips. Edits within that workspace remain the same trip unless the user changes its core goal, destination or service date and accepts the resulting new plan. The interface explains before an edit will create another trip.
 
@@ -44,7 +44,7 @@ The registration message states the exact limit and the free-account benefit. It
 
 Guest state is local-first in Room or IndexedDB: messages, drafts, accepted plans and local reminders. The server keeps the anonymous principal, entitlement and cost ledgers, idempotency records, and the minimum structured workspace summary needed for an active request. Guest workspace summaries expire after seven inactive days. Raw chat, exact-location history, Calendar tokens, durable preferences, embeddings and proactive server jobs are excluded.
 
-Registered-free storage may contain opted-in workspaces, confirmed profile memory, devices and later Calendar connections or scheduled actions. Registration is not consent to upload all local history. After linking, the user chooses which local trips to copy. Exact location and provider-content restrictions in the security plan still apply.
+Registered-free storage may contain opted-in workspaces, outing history, confirmed profile memory and routines, push subscriptions, devices and later Calendar connections or scheduled actions, each under its own consent. Registration is not consent to upload all local history. After linking, the user chooses which local trips to copy. Exact location and provider-content restrictions in the security plan still apply. Stored history contains place IDs and user data only; saved plans re-fetch place details when viewed, and grounded content expires with its display cache, so exports contain IDs, labels, timestamps and feedback but not Maps content ([data-and-history-design.md](data-and-history-design.md)).
 
 Firebase's optional automatic cleanup deletes anonymous accounts older than 30 days. Do not enable it in the first validation release because it would create a time-based registration gate that the product has not chosen. Local plans remain readable after a server workspace expires, but losing browser/app data or reinstalling can make an unregistered identity unrecoverable; the product states this plainly and does not fingerprint the device to recreate it.
 
@@ -84,6 +84,13 @@ POST /v1/account-migrations
 POST /v1/me:export
 POST /v1/me:delete
 ```
+
+Response shapes implemented in Phase 0 (all strict, in the OpenAPI contract; tenant comes only from the verified token):
+
+- `POST /v1/session:bootstrap` is idempotent and rate-limited. It returns `SessionBootstrap {schema_version, kind, tier (guest|registered), policy_version, capabilities, usage, server_time}`. It issues no token and links nothing.
+- `GET /v1/me/usage` returns `UsageView {period, user_turns_used, user_turns_limit, activated_trips_used, activated_trips_limit, resets_at, meter_state, gate_reason?, registered_turn_limit?, registered_trip_limit?}`. The server computes `meter_state` from the larger of the turn and trip ratios against the policy thresholds (NONE, QUIET_70, NOTICE_90, GATED at the limit). Free turns are never counted. `resets_at` is null for guests and until the rolling window is enforced (#22). The registered limits are the public numbers a guest receives on registering, so the client can show the gate wording without hard-coding them. No cost, token or internal-ceiling field exists in any of these.
+- `GET /v1/me/capabilities` returns `Capabilities {can_start_turn, can_use_location, can_read, can_export, can_delete, can_link_account}` derived from tier and allowance only (read stays true after the gate). `can_export` and `can_delete` are false until `POST /v1/me:export` and `POST /v1/me:delete` exist; clients must not depend on them.
+- `TurnResponse.usage` carries the same `UsageView` after every turn, so the client updates the meter without another call; `allowance_exhausted` is unchanged.
 
 For a new Google or email identity, Firebase `linkWithCredential` preserves the anonymous UID. The backend uses a one-time link intent, verifies that the refreshed token still has the same UID and now has a permanent provider, then changes the principal atomically.
 

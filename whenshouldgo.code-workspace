@@ -1,0 +1,65 @@
+{
+  "folders": [
+    { "name": "root (AGENTS.md, README)", "path": "." },
+    { "name": "docs (product source of truth)", "path": "docs" },
+    { "name": "codex agents", "path": ".codex/agents" },
+    { "name": "backend", "path": "backend" },
+    { "name": "web", "path": "web" }
+  ],
+  "settings": {
+    "python.testing.pytestEnabled": true,
+    "python.testing.unittestEnabled": false,
+    "python.testing.cwd": "${workspaceFolder:backend}",
+    "python.testing.pytestArgs": ["tests"],
+    "files.exclude": {
+      "**/__pycache__": true,
+      "**/.pytest_cache": true,
+      "**/.ruff_cache": true
+    },
+    "files.associations": { "AGENTS.md": "markdown" },
+    "markdown.validate.enabled": true,
+    "[markdown]": {
+      "editor.wordWrap": "on",
+      "editor.quickSuggestions": { "comments": "off", "strings": "off", "other": "off" }
+    },
+    "[python]": { "editor.rulers": [100] }
+  },
+  "tasks": {
+    "version": "2.0.0",
+    "tasks": [
+      {
+        "label": "install dev dependencies",
+        "type": "shell",
+        "command": "python -m pip install -e \".[dev]\"",
+        "options": { "cwd": "${workspaceFolder:backend}" },
+        "problemMatcher": []
+      },
+      {
+        "label": "run tests",
+        "type": "shell",
+        "command": "python -m pytest",
+        "options": { "cwd": "${workspaceFolder:backend}" },
+        "group": { "kind": "test", "isDefault": true },
+        "problemMatcher": []
+      },
+      {
+        "label": "run local API",
+        "type": "shell",
+        "command": "python -m uvicorn app.main:app --reload",
+        "options": { "cwd": "${workspaceFolder:backend}" },
+        "isBackground": true,
+        "problemMatcher": []
+      }
+    ]
+  },
+  "extensions": {
+    "recommendations": [
+      "ms-python.python",
+      "ms-python.vscode-pylance",
+      "charliermarsh.ruff",
+      "yzhang.markdown-all-in-one",
+      "bierner.markdown-mermaid",
+      "dbaeumer.vscode-eslint"
+    ]
+  }
+}
