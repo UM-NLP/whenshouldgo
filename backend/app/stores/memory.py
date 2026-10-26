@@ -23,6 +23,7 @@ from .protocols import (
     PENDING_REPLAY_TTL,
     REPLAY_RETENTION,
     CostEntryDelta,
+    KILL_PATH_GLOBAL,
     KillSwitchReason,
     KillSwitchState,
     QuotaLimits,
@@ -31,6 +32,7 @@ from .protocols import (
     SpendTotals,
     StoredReplay,
     Usage,
+    known_kill_path,
     over_budget,
 )
 
@@ -183,6 +185,16 @@ class MemoryWorkspaceStore:
             self.items.pop(key, None)
             self._expires.pop(key, None)
 
+    def delete_if_version(self, owner_id: str, name: str, *, expected_version: int) -> bool:
+        key = (owner_id, name)
+        with self._lock:
+            current = self.items.get(key)
+            if current is None or current.version != expected_version:
+                return False
+            del self.items[key]
+            self._expires.pop(key, None)
+            return True
+
 
 class MemoryIdempotencyStore:
     def __init__(self) -> None:
@@ -237,7 +249,7 @@ class MemoryIdempotencyStore:
 class MemoryCostStore:
     def __init__(self) -> None:
         self._totals = SpendTotals()
-        self._switch = KillSwitchState()
+        self._switches: dict[str, KillSwitchState] = {}
         self._lock = threading.Lock()
 
     def add_spend(self, delta: CostEntryDelta, budget: SpendBudget | None, now: datetime) -> SpendTotals:
@@ -256,25 +268,30 @@ class MemoryCostStore:
                     provider_usd_micros=t.provider_usd_micros + delta.usd_micros)
             over = over_budget(t, budget)
             self._totals = replace(t, over_budget=False)
-            if over and not self._switch.tripped:
-                self._switch = KillSwitchState(True, KillSwitchReason.SPEND_CAP, now)
+            if over and not self._switches.get(KILL_PATH_GLOBAL, KillSwitchState()).tripped:
+                self._switches[KILL_PATH_GLOBAL] = KillSwitchState(
+                    True, KillSwitchReason.SPEND_CAP, now)
             return replace(t, over_budget=over)
 
     def totals(self) -> SpendTotals:
         with self._lock:
             return self._totals
 
-    def kill_switch(self) -> KillSwitchState:
+    def kill_switch(self, path: str = KILL_PATH_GLOBAL) -> KillSwitchState:
+        known_kill_path(path)
         with self._lock:
-            return self._switch
+            return self._switches.get(path, KillSwitchState())
 
-    def trip_kill_switch(self, reason: KillSwitchReason, now: datetime) -> bool:
+    def trip_kill_switch(self, reason: KillSwitchReason, now: datetime,
+                         path: str = KILL_PATH_GLOBAL) -> bool:
+        known_kill_path(path)
         with self._lock:
-            if self._switch.tripped:
+            if self._switches.get(path, KillSwitchState()).tripped:
                 return False
-            self._switch = KillSwitchState(True, reason, now)
+            self._switches[path] = KillSwitchState(True, reason, now)
             return True
 
-    def reset_kill_switch(self, now: datetime) -> None:
+    def reset_kill_switch(self, now: datetime, path: str = KILL_PATH_GLOBAL) -> None:
+        known_kill_path(path)
         with self._lock:
-            self._switch = KillSwitchState()
+            self._switches[path] = KillSwitchState()

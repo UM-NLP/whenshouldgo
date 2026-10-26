@@ -27,6 +27,10 @@ class InvalidToken(Exception):
 class VerifiedIdentity:
     uid: str
     sign_in_provider: str
+    # Set by a verifier whose revocation check found this token's account disabled or revoked.
+    # Resolved PER REQUEST from the token itself: no shared mutable state, so one token's success
+    # can never un-disable another's.
+    revoked: bool = False
 
 
 class IdentityVerifier(Protocol):
@@ -60,7 +64,7 @@ class PrincipalResolver:
     disabled_uids: set[str] = field(default_factory=set)
 
     def resolve(self, identity: VerifiedIdentity) -> Principal:
-        if identity.uid in self.disabled_uids:
+        if identity.revoked or identity.uid in self.disabled_uids:
             kind = PrincipalKind.DISABLED
         elif identity.sign_in_provider == ANONYMOUS_PROVIDER:
             kind = PrincipalKind.GUEST

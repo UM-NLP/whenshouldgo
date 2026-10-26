@@ -154,6 +154,17 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
+class DevAdmin:
+    """Dev only: the dev token has no Firebase login, so there is nothing to remove (production has
+    none until the owner supplies credentials; ``me:delete`` then reports ``login_not_removed``)."""
+
+    def get_account(self, uid: str) -> None:
+        return None
+
+    def delete_user(self, uid: str) -> None:
+        return None
+
+
 def build_dev_app(
     args: argparse.Namespace, environ: Mapping[str, str]
 ) -> tuple[Any, Runtime]:
@@ -181,7 +192,7 @@ def build_dev_app(
             except live_smoke.SmokeRefused as refusal:
                 raise DevRefused(f"refusing to start: {refusal}") from None
         runtime = build_runtime(
-            keys, identity_verifier=DevVerifier(), model_transport=model_transport,
+            keys, identity_verifier=DevVerifier(), firebase_admin=DevAdmin(), model_transport=model_transport,
             discovery_transport=discovery_transport, clock=lambda: datetime.now(UTC),
             allow_in_memory_state=True)
     except ConfigurationError as refusal:

@@ -36,6 +36,10 @@ class DisplayCacheStore(Protocol):
     def get(self, owner_id: str, key: str) -> ValidatedAnswer | None: ...
     def purge(self) -> int: ...
     def delete_owner(self, owner_id: str) -> int: ...
+    def place_ids(self, owner_id: str) -> frozenset[str]:
+        """Place IDs in this owner's CURRENT, unexpired, intact cached discovery answers (what
+        the user was actually shown). Read-only; never another owner's."""
+        ...
 
 
 class DisplayCache:
@@ -167,6 +171,18 @@ class DisplayCache:
                     del self._entries[owner_id]
                 return None
             return validated
+
+    def place_ids(self, owner_id: str) -> frozenset[str]:
+        if not (isinstance(owner_id, str) and _ID.fullmatch(owner_id)):
+            return frozenset()
+        now = self._now()
+        with self._lock:
+            bucket = self._entries.get(owner_id)
+            rows = list(bucket.values()) if bucket else []
+        return frozenset(
+            place.place_id for v in rows
+            if is_validated(v) and not self._expired(v.answer, now) and self._intact(v)
+            for place in v.answer.places)
 
     def purge(self) -> int:
         now = self._now()

@@ -24,7 +24,7 @@ from ..failures import TurnFailure
 from ..location import LocationInput
 from ..orchestrator import IdempotencyKeyReused, TurnOrchestrator
 from ..quota import ReservationConflict
-from .common import ERROR_RESPONSES, error
+from .common import ERROR_RESPONSES, error, paid_route_gate
 
 router = APIRouter()
 
@@ -66,6 +66,7 @@ def agent_turn(
 ) -> TurnResponse:
     if principal.kind == PrincipalKind.DISABLED:
         raise error(403, ErrorCode.POLICY, "account unavailable")
+    paid_route_gate(request, principal, general=False)
     turn_orchestrator: TurnOrchestrator = request.app.state.orchestrator
     if body.location is not None and not request.app.state.consents.has_active(
         principal.uid, ConsentPurpose.LOCATION_FOREGROUND

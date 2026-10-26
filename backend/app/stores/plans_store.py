@@ -16,7 +16,7 @@ from __future__ import annotations
 import hashlib
 import threading
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
 from typing import Any, Protocol, runtime_checkable
 
@@ -250,6 +250,14 @@ class StoredOutcome:
     outcome: OutcomeValue
     recorded_at: datetime
     note: str | None = field(default=None, repr=False)
+    # When this entry must be gone: the user's history retention at write time (default: the
+    # 180-day ceiling). Shortening the retention brings it forward; ``purge`` deletes it.
+    expires_at: datetime | None = None
+
+    def alive(self, now: datetime) -> bool:
+        limit = self.expires_at if self.expires_at is not None else (
+            self.recorded_at + MAX_OUTING_RETENTION)
+        return now < limit
 
 
 @runtime_checkable
@@ -258,14 +266,47 @@ class OutcomeStore(Protocol):
     stored a new entry. Entries older than the 180-day ceiling and beyond ``MAX_OUTCOMES`` are
     dropped on write."""
 
-    def record(self, owner_id: str, key: str, checkin: OutcomeCheckin, now: datetime) -> bool: ...
+    def record(self, owner_id: str, key: str, checkin: OutcomeCheckin, now: datetime,
+               retention_days: int | None = None) -> bool: ...
     def entries(self, owner_id: str, now: datetime) -> tuple[StoredOutcome, ...]: ...
     def delete_all(self, owner_id: str) -> None: ...
+    def delete_place(self, owner_id: str, place_id: str) -> int:
+        """The user deleted history for this place: drop its entries. Returns a count."""
+        ...
+    def clear_notes(self, owner_id: str, place_id: str) -> int:
+        """Drop the free-text note of this place's entries (the user edited their feedback)."""
+        ...
+    def apply_retention(self, owner_id: str, days: int, now: datetime) -> int:
+        """The user shortened their retention: bring every entry's expiry forward to at most
+        ``days`` after it was recorded and delete what is already past. Never extends."""
+        ...
+    def purge(self, now: datetime) -> int:
+        """Delete every owner's expired entries early (the TTL policy is the primary mechanism)."""
+        ...
 
 
 def _prune(entries: list[StoredOutcome], now: datetime) -> list[StoredOutcome]:
-    kept = [e for e in entries if now - e.recorded_at < MAX_OUTING_RETENTION]
+    kept = [e for e in entries if e.alive(now)]
     return kept[-MAX_OUTCOMES:]
+
+
+def _new_entry(digest: str, checkin: OutcomeCheckin, now: datetime,
+               retention_days: int | None) -> StoredOutcome:
+    span = MAX_OUTING_RETENTION if retention_days is None else min(
+        timedelta(days=max(1, retention_days)), MAX_OUTING_RETENTION)
+    return StoredOutcome(digest, checkin.place_id, checkin.outcome, now, checkin.note, now + span)
+
+
+def _shorten(entries: list[StoredOutcome], days: int, now: datetime) -> list[StoredOutcome]:
+    cap = timedelta(days=max(1, days))
+    out = []
+    for e in entries:
+        limit = e.recorded_at + cap
+        if e.expires_at is None or limit < e.expires_at:
+            e = replace(e, expires_at=limit)
+        if e.alive(now):
+            out.append(e)
+    return out
 
 
 class MemoryOutcomeStore:
@@ -273,15 +314,15 @@ class MemoryOutcomeStore:
         self.items: dict[str, list[StoredOutcome]] = {}
         self._lock = threading.Lock()
 
-    def record(self, owner_id: str, key: str, checkin: OutcomeCheckin, now: datetime) -> bool:
+    def record(self, owner_id: str, key: str, checkin: OutcomeCheckin, now: datetime,
+               retention_days: int | None = None) -> bool:
         digest = key_digest(key)
         with self._lock:
             entries = _prune(self.items.get(owner_id, []), now)
             if any(e.key == digest for e in entries):
                 self.items[owner_id] = entries
                 return False
-            entries.append(StoredOutcome(digest, checkin.place_id, checkin.outcome, now,
-                                         checkin.note))
+            entries.append(_new_entry(digest, checkin, now, retention_days))
             self.items[owner_id] = _prune(entries, now)
             return True
 
@@ -292,6 +333,37 @@ class MemoryOutcomeStore:
     def delete_all(self, owner_id: str) -> None:
         with self._lock:
             self.items.pop(owner_id, None)
+
+    def delete_place(self, owner_id: str, place_id: str) -> int:
+        with self._lock:
+            rows = self.items.get(owner_id, [])
+            kept = [e for e in rows if e.place_id != place_id]
+            self.items[owner_id] = kept
+            return len(rows) - len(kept)
+
+    def clear_notes(self, owner_id: str, place_id: str) -> int:
+        with self._lock:
+            rows = self.items.get(owner_id, [])
+            changed = sum(1 for e in rows if e.place_id == place_id and e.note is not None)
+            self.items[owner_id] = [replace(e, note=None) if e.place_id == place_id else e
+                                    for e in rows]
+            return changed
+
+    def apply_retention(self, owner_id: str, days: int, now: datetime) -> int:
+        with self._lock:
+            rows = self.items.get(owner_id, [])
+            kept = _shorten(rows, days, now)
+            self.items[owner_id] = kept
+            return len(rows) - len(kept)
+
+    def purge(self, now: datetime) -> int:
+        with self._lock:
+            removed = 0
+            for owner, rows in list(self.items.items()):
+                kept = [e for e in rows if e.alive(now)]
+                removed += len(rows) - len(kept)
+                self.items[owner] = kept
+            return removed
 
 
 class FirestoreOutcomeStore(_Base):
@@ -304,7 +376,7 @@ class FirestoreOutcomeStore(_Base):
             raise StoredDataError("outcome ledger does not belong to this tenant")
         try:
             return [StoredOutcome(e["key"], e["place_id"], OutcomeValue(e["outcome"]),
-                                  e["recorded_at"], e.get("note"))
+                                  e["recorded_at"], e.get("note"), e.get("expires_at"))
                     for e in doc.get("entries", [])]
         except (KeyError, ValueError, TypeError):
             raise StoredDataError("outcome ledger entry does not match the schema") from None
@@ -317,11 +389,39 @@ class FirestoreOutcomeStore(_Base):
                                    "outcome": e.outcome.value, "recorded_at": e.recorded_at}
             if e.note is not None:
                 row["note"] = e.note
+            if e.expires_at is not None:
+                row["expires_at"] = e.expires_at
             rows.append(row)
-        return {"schema_version": SCHEMA_VERSION, "kind": "outcome_ledger", "owner_id": owner_id,
-                "entries": rows, "updated_at": now}
+        doc: dict[str, Any] = {
+            "schema_version": SCHEMA_VERSION, "kind": "outcome_ledger", "owner_id": owner_id,
+            "entries": rows, "updated_at": now}
+        if entries:
+            # The document-level TTL target: the latest entry expiry (each entry is also pruned).
+            doc["expires_at"] = max(
+                e.expires_at if e.expires_at is not None else e.recorded_at + MAX_OUTING_RETENTION
+                for e in entries)
+        return doc
 
-    def record(self, owner_id: str, key: str, checkin: OutcomeCheckin, now: datetime) -> bool:
+    def _rewrite(self, owner_id: str, now: datetime,
+                 fn: Callable[[list[StoredOutcome]], list[StoredOutcome]]) -> int:
+        ref = self._ref(owner_id)
+
+        def body(txn: Any) -> int:
+            snap = ref.get(transaction=txn)
+            if not snap.exists:
+                return 0
+            rows = self._decode(owner_id, snap.to_dict())
+            kept = fn(rows)
+            if kept:
+                txn.set(ref, self._encode(owner_id, kept, now))
+            else:
+                txn.delete(ref)
+            return len(rows) - len(kept)
+
+        return self._transact(body)
+
+    def record(self, owner_id: str, key: str, checkin: OutcomeCheckin, now: datetime,
+               retention_days: int | None = None) -> bool:
         ref, digest = self._ref(owner_id), key_digest(key)
 
         def body(txn: Any) -> bool:
@@ -329,8 +429,7 @@ class FirestoreOutcomeStore(_Base):
             entries = _prune(self._decode(owner_id, snap.to_dict()) if snap.exists else [], now)
             if any(e.key == digest for e in entries):
                 return False
-            entries.append(StoredOutcome(digest, checkin.place_id, checkin.outcome, now,
-                                         checkin.note))
+            entries.append(_new_entry(digest, checkin, now, retention_days))
             txn.set(ref, self._encode(owner_id, _prune(entries, now), now))
             return True
 
@@ -342,6 +441,32 @@ class FirestoreOutcomeStore(_Base):
 
     def delete_all(self, owner_id: str) -> None:
         self._ref(owner_id).delete()
+
+    def delete_place(self, owner_id: str, place_id: str) -> int:
+        return self._rewrite(owner_id, _EPOCH, lambda rows: [
+            e for e in rows if e.place_id != place_id])
+
+    def clear_notes(self, owner_id: str, place_id: str) -> int:
+        changed: list[StoredOutcome] = []
+
+        def fn(rows: list[StoredOutcome]) -> list[StoredOutcome]:
+            changed.clear()
+            changed.extend(e for e in rows if e.place_id == place_id and e.note is not None)
+            return [replace(e, note=None) if e.place_id == place_id else e for e in rows]
+
+        self._rewrite(owner_id, _EPOCH, fn)
+        return len(changed)
+
+    def apply_retention(self, owner_id: str, days: int, now: datetime) -> int:
+        return self._rewrite(owner_id, now, lambda rows: _shorten(rows, days, now))
+
+    def purge(self, now: datetime) -> int:
+        removed = 0
+        for snap in self._col(OUTCOME_LEDGERS).where("expires_at", "<=", now).stream():
+            owner = snap.to_dict().get("owner_id")
+            if isinstance(owner, str):
+                removed += self._rewrite(owner, now, lambda rows: [e for e in rows if e.alive(now)])
+        return removed
 
 
 # --- edit receipts (idempotency of PATCH /v1/workspace) -----------------------------------------

@@ -26,11 +26,12 @@ from __future__ import annotations
 import hmac
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from typing import Protocol
 from uuid import uuid4
 
+from .entitlements import REGISTERED_WORKSPACE_INACTIVITY_DAYS
 from .domain import (
     MIGRATION_TITLE_MAX as TITLE_MAX,
     FactSource,
@@ -149,7 +150,8 @@ class WorkspaceSource:
         # bound to the guest): they do not travel. The copy restarts as a captured workspace.
         copied = evolve(source, owner_id=dst_uid, facts=facts, evidence=[], pending_actions=[],
                         active_plan_version=None, status=WorkspaceStatus.CAPTURED)
-        self._workspaces.put(dst_uid, target, copied, now, None)
+        self._workspaces.put(dst_uid, target, copied, now,
+                             timedelta(days=REGISTERED_WORKSPACE_INACTIVITY_DAYS))
 
 
 # --- service -----------------------------------------------------------------------------------

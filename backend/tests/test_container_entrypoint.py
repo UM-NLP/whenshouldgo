@@ -29,6 +29,17 @@ def test_cmd_runs_the_fail_closed_factory() -> None:
     assert "${PORT" in cmd
 
 
+def test_cmd_turns_the_access_log_off() -> None:
+    # Review finding 11: a request line can carry a place ID in a query string.
+    assert "--no-access-log" in _cmd()
+
+
+def test_base_images_are_pinned_by_digest() -> None:
+    # Review finding 18: a moving tag is a supply-chain risk.
+    froms = [line for line in INSTRUCTIONS if line.startswith("FROM ")]
+    assert froms and all(re.search(r"@sha256:[0-9a-f]{64}", line) for line in froms)
+
+
 def test_image_never_references_dev_or_smoke_entry_points() -> None:
     lowered = "\n".join(INSTRUCTIONS).lower()
     for banned in ("dev_server", "live_smoke", "create_app"):

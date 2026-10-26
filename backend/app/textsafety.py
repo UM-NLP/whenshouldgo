@@ -71,6 +71,11 @@ _URL = re.compile(r"(?i)(?:\b[a-z][a-z0-9+.-]*://|\bwww\.)")
 _SCHEME = re.compile(r"(?i)\b(?:mailto|tel|javascript|data|file|vbscript|sms|geo|blob|ftp):")
 _DOMAIN = re.compile(rf"(?i)\b[\w-]+(?:\.[\w-]+)*\.{_TLDS}\b")
 _EMAIL = re.compile(r"(?i)\b[\w.+-]+@[\w-]+(?:\.[\w-]+)+\b")
+# A phone number (labels only: see ``label_problem``; place IDs in fact values can hold long digit
+# runs): ten or more digits whatever the separators ("+1 (416) 555-0199", "4165550199"), or
+# the seven-digit local form with a dash or dot ("555-0199"). Durations, counts and dates ("30
+# minutes", "party of 5", "2026-10-26") have far fewer digits in a row and do not match.
+_PHONE = re.compile(r"(?<![\d])(?:\+?\d[\s().-]{0,2}){9,}\d(?!\d)|(?<!\d)\d{3}[-.]\d{4}(?!\d)")
 _MARKUP = re.compile(r"(?i)[<>]|&(?:lt|gt);|&#0*(?:60|62);|&#x0*3[ce];|%3[ce]")
 
 # --- coordinates ---------------------------------------------------------------------------------
@@ -160,3 +165,9 @@ def plain_text_problem(value: str, *, allow_joiners: bool = False) -> bool:
         or _FSA_WITH_PLACE.search(text)
         or _FSA_WITH_PROVINCE.search(text)
     )
+
+
+def label_problem(value: str) -> bool:
+    """``plain_text_problem`` plus phone numbers: the policy for a label the user types and the
+    server stores or shows back (a saved place, a reminder, an outing, a plan destination)."""
+    return plain_text_problem(value) or bool(_PHONE.search(normalize(value)))

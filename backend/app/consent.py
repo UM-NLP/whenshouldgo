@@ -61,6 +61,12 @@ _CONTEXT = {
 }
 
 
+# The ledger only ever grows, so it is bounded: past this many raw entries a new grant is refused
+# (typed, nothing written). Grants and withdrawals are rate limited per principal, so a user only
+# gets here by cycling consent for days. Export compacts to at most ``MAX_EXPORT_CONSENTS``.
+MAX_LEDGER_ENTRIES = 2_000
+MAX_EXPORT_CONSENTS = 1_000
+
 # Upper bound on principals an OperationLimiter tracks (least recently used are dropped). A dropped
 # owner simply gets a fresh window. TTLs, IP buckets and App Check are tracked under ACCESS-02 (#35).
 MAX_TRACKED_OWNERS = 50_000
@@ -68,6 +74,11 @@ MAX_TRACKED_OWNERS = 50_000
 
 class WrongNoticeVersion(Exception):
     """The grant named a notice version the server does not currently serve."""
+
+
+class ConsentLedgerFull(Exception):
+    """The owner's append-only ledger reached ``MAX_LEDGER_ENTRIES``: no further grant is written
+    (a withdrawal always works). Bounds the ledger document and the export."""
 
 
 class ConsentDisabled(Exception):
@@ -144,6 +155,8 @@ class InMemoryConsentStore:
             existing = self._active_for(records, purpose)
             if existing is not None:
                 return (), existing
+            if len(records) >= MAX_LEDGER_ENTRIES:
+                raise ConsentLedgerFull()
             record = ConsentRecord(
                 id=f"consent-{uuid.uuid4().hex[:24]}", owner_id=owner_id, purpose=purpose,
                 notice_version=notice_version, processors=PROCESSORS[purpose],
@@ -172,6 +185,22 @@ class InMemoryConsentStore:
 
     def ledger(self, owner_id: str) -> tuple[ConsentRecord, ...]:
         return self._ledger.read(owner_id)
+
+
+def compact_for_export(records: tuple[ConsentRecord, ...]) -> tuple[ConsentRecord, ...]:
+    """The ledger as the export shows it: ONE line per consent (its latest state, so a withdrawn
+    grant/withdraw pair is a single withdrawn entry), at most ``MAX_EXPORT_CONSENTS``: every ACTIVE
+    consent is kept and the oldest withdrawn ones are dropped first. Oldest first."""
+    latest: dict[str, ConsentRecord] = {}
+    for record in records:
+        latest[record.id] = record
+    rows = list(latest.values())
+    if len(rows) > MAX_EXPORT_CONSENTS:
+        withdrawn = sorted((r for r in rows if r.withdrawn_at is not None),
+                           key=lambda r: r.withdrawn_at or r.granted_at)
+        drop = {r.id for r in withdrawn[: len(rows) - MAX_EXPORT_CONSENTS]}
+        rows = [r for r in rows if r.id not in drop]
+    return tuple(sorted(rows, key=lambda r: r.granted_at))
 
 
 # The same class under a name that says what it is.

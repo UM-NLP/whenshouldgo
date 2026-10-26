@@ -95,8 +95,17 @@ def parse_jwk_public_key(raw: Any) -> RSAPublicKey:
 
 
 class TtlKeyCache:
-    """kid -> public key. Honors max-age; an unknown kid triggers at most one refresh, and
-    forged-kid floods cannot amplify fetches beyond one per `min_refresh_interval`."""
+    """kid -> public key. Honors max-age, with these abuse rules (decision 28):
+
+    * ONE refresh floor for every refresh: at most one fetch per ``min_refresh_interval`` after a
+      success, whatever caused it (an unknown kid, an expired TTL, ``max-age=0``);
+    * the fetch runs OUTSIDE the lock and is single-flight: concurrent callers neither queue behind
+      the network nor start a second fetch (a cold cache waits for the one in flight; a warm cache
+      serves its current keys);
+    * a failed fetch keeps serving the last keys (stale, for at most ``max_stale_seconds`` past
+      their expiry) and backs off exponentially up to ``max_backoff_seconds``, so an upstream
+      outage plus a flood of forged-kid tokens cannot turn into a fetch flood or an auth outage.
+    """
 
     def __init__(
         self,
@@ -104,36 +113,85 @@ class TtlKeyCache:
         parse: Callable[[Any], RSAPublicKey],
         clock: Clock = time.time,
         min_refresh_interval: float = DEFAULT_MIN_REFRESH_SECONDS,
+        *,
+        max_backoff_seconds: float = 300.0,
+        max_stale_seconds: float = 86400.0,
+        wait_seconds: float = 10.0,
     ) -> None:
         self._fetcher = fetcher
         self._parse = parse
         self._clock = clock
-        self._floor = min_refresh_interval
+        self._floor = max(0.0, float(min_refresh_interval))
+        self._max_backoff = max_backoff_seconds
+        self._max_stale = max_stale_seconds
+        self._wait = wait_seconds
         self._lock = threading.Lock()
         self._keys: dict[str, RSAPublicKey] | None = None
         self._expires = 0.0
-        self._fetched_at = 0.0
+        self._not_before = 0.0  # no fetch before this time (the floor, or a failure backoff)
+        self._failures = 0
+        self._inflight: threading.Event | None = None
 
-    def _refresh(self, now: float) -> None:
-        fetched = self._fetcher.fetch()  # may raise; caller maps to a typed rejection
+    def _fetch(self) -> tuple[dict[str, RSAPublicKey], int]:
+        fetched = self._fetcher.fetch()  # may raise; the caller maps it to a typed rejection
         keys: dict[str, RSAPublicKey] = {}
         for kid, raw in fetched.keys.items():
             try:
                 keys[str(kid)] = self._parse(raw)
             except Exception:  # unusable entry is simply absent
                 continue
-        ttl = min(max(int(fetched.max_age_seconds), 0), _MAX_CACHE_SECONDS)
-        self._keys, self._fetched_at, self._expires = keys, now, now + ttl
+        return keys, min(max(int(fetched.max_age_seconds), 0), _MAX_CACHE_SECONDS)
 
     def get(self, kid: str) -> RSAPublicKey | None:
-        with self._lock:
-            now = self._clock()
-            if self._keys is None or now >= self._expires:
-                self._refresh(now)
-            elif kid not in self._keys and now - self._fetched_at >= self._floor:
-                self._refresh(now)
-            assert self._keys is not None
-            return self._keys.get(kid)
+        while True:
+            with self._lock:
+                now = self._clock()
+                keys = self._keys
+                if keys is not None and now >= self._expires + self._max_stale:
+                    keys = self._keys = None  # too stale to trust at all
+                needs = keys is None or now >= self._expires or kid not in keys
+                if not needs:
+                    assert keys is not None
+                    return keys.get(kid)
+                if now < self._not_before:  # the floor or a backoff: no fetch
+                    if keys is None:
+                        raise KeyFetchError()
+                    return keys.get(kid)
+                if self._inflight is not None:  # single flight: someone is already fetching
+                    if keys is not None:
+                        return keys.get(kid)
+                    waiter = self._inflight
+                else:
+                    waiter = None
+                    self._inflight = flight = threading.Event()
+            if waiter is not None:  # cold cache: wait for the one fetch, then look again
+                waiter.wait(self._wait)
+                with self._lock:
+                    if self._keys is None:
+                        raise KeyFetchError()
+                continue
+            try:
+                fetched_keys, ttl = self._fetch()
+            except Exception:
+                with self._lock:
+                    done = self._clock()
+                    self._failures += 1
+                    backoff = min(self._max_backoff, max(self._floor, 1.0) * 2 ** (self._failures - 1))
+                    self._not_before = done + backoff
+                    self._inflight = None
+                    stale = self._keys
+                flight.set()
+                if stale is None:
+                    raise
+                return stale.get(kid)
+            with self._lock:
+                done = self._clock()
+                self._keys, self._expires = fetched_keys, done + ttl
+                self._not_before = done + self._floor
+                self._failures = 0
+                self._inflight = None
+            flight.set()
+            return fetched_keys.get(kid)
 
 
 def _is_number(value: Any) -> bool:
@@ -255,23 +313,20 @@ class FirebaseIdentityVerifier:
         provider = firebase.get("sign_in_provider") if isinstance(firebase, dict) else None
         if not isinstance(provider, str) or provider not in _ALLOWED_PROVIDERS:
             raise FirebaseTokenError("provider")
-        self._apply_revocation(uid, float(claims["iat"]))
-        return VerifiedIdentity(uid=uid, sign_in_provider=provider)
+        revoked = self._is_revoked(uid, float(claims["iat"]))
+        return VerifiedIdentity(uid=uid, sign_in_provider=provider, revoked=revoked)
 
-    def _apply_revocation(self, uid: str, issued_at: float) -> None:
+    def _is_revoked(self, uid: str, issued_at: float) -> bool:
+        """True when the revocation checker says this token's account is disabled or revoked. The
+        answer travels on the returned ``VerifiedIdentity`` (``PrincipalResolver`` maps it to
+        DISABLED): it is never written to shared state. ``disabled_uids`` is kept only so a caller
+        can still hand the resolver the same set; this class neither adds to it nor discards."""
         if self._revocation is None:
-            return
+            return False
         try:
-            revoked = bool(self._revocation.is_revoked(uid, issued_at))
+            return bool(self._revocation.is_revoked(uid, issued_at))
         except Exception:
             raise FirebaseTokenError("revocation_unavailable") from None
-        if not revoked:
-            if self._disabled is not None:
-                self._disabled.discard(uid)
-            return
-        if self._disabled is None:  # cannot express DISABLED; refuse rather than allow
-            raise FirebaseTokenError("revoked")
-        self._disabled.add(uid)  # PrincipalResolver maps this uid to PrincipalKind.DISABLED
 
 
 _MAX_AGE = re.compile(r"max-age=(\d+)", re.IGNORECASE)

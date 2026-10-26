@@ -37,6 +37,7 @@ from app.places import (
     validate_place_ids,
 )
 from app.places.errors import PlacesError, PlacesInvalidRequest
+from app.places.ownership import AllowAllPlaceReferences
 from app.places.render import describe_route
 from app.places.transport import (
     DETAILS_FIELD_MASK,
@@ -108,6 +109,7 @@ class Env:
             walk_enabled=walk, limits=limits)
         if service:
             self.app.state.places_service = self.service
+        self.app.state.place_references = AllowAllPlaceReferences()  # ownership: see test_review2_places_ownership
         self.client = TestClient(self.app, raise_server_exceptions=False)
 
     def consent(self, uid: str = "guest-a") -> None:

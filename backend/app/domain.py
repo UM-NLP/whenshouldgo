@@ -80,7 +80,20 @@ def _reject_location_text(value: str | None) -> str | None:
     return value
 
 
-UserLabel = Annotated[str, StringConstraints(max_length=80), AfterValidator(_reject_location_text)]
+def _reject_unsafe_label(value: str | None) -> str | None:
+    """The shared plain-text policy (hidden or bidi characters, markup, links, emails, phone
+    numbers, addresses, coordinates) for the text the user typed. Imported lazily: textsafety
+    imports the discovery package, which imports this module."""
+    if value is not None:
+        from .textsafety import label_problem
+
+        if label_problem(value):
+            raise ValueError("label must be plain text")
+    return value
+
+
+UserLabel = Annotated[str, StringConstraints(max_length=80), AfterValidator(_reject_location_text),
+                      AfterValidator(_reject_unsafe_label)]
 
 
 class Strict(BaseModel):
@@ -1318,6 +1331,10 @@ class DeleteReceipt(Frozen):
     kind: Literal["delete_receipt"] = "delete_receipt"
     requested_at: AwareDatetime
     completed: bool
+    # Additive (decision 28). True when the server data is deleted but the sign-in account (the
+    # Firebase login) could NOT be removed because no admin credential is configured: ``completed``
+    # is then false and the request can be repeated once one exists.
+    login_not_removed: bool = False
 
 
 class HistoryRecordCreate(Frozen):

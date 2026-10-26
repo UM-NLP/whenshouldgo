@@ -650,6 +650,11 @@
             "title": "Kind",
             "type": "string"
           },
+          "login_not_removed": {
+            "default": false,
+            "title": "Login Not Removed",
+            "type": "boolean"
+          },
           "requested_at": {
             "format": "date-time",
             "title": "Requested At",

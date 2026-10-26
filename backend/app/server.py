@@ -21,7 +21,8 @@ def create_production_app() -> FastAPI:
     # exist: until then link completion is a typed 503 and a deleted account's login is not removed.
     env = dict(os.environ)
     verifier, disabled_uids = firebase_identity_from_env(env)
-    return build_runtime(env, identity_verifier=verifier, disabled_uids=disabled_uids).app
+    return build_runtime(env, identity_verifier=verifier, disabled_uids=disabled_uids,
+                         require_app_check=True).app
 
 
 __all__ = ["ConfigurationError", "create_production_app"]

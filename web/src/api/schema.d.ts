@@ -851,6 +851,11 @@ export interface components {
              */
             kind: "delete_receipt";
             /**
+             * Login Not Removed
+             * @default false
+             */
+            login_not_removed: boolean;
+            /**
              * Requested At
              * Format: date-time
              */

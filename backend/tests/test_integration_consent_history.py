@@ -29,9 +29,9 @@ def config_with_history(monkeypatch: pytest.MonkeyPatch):
     return d.evolve(pinned_runtime_config(), history_enabled=True, history_notice_version=NOTICE)
 
 
-def client(config) -> TestClient:
+def client(config, provider: str = "anonymous") -> TestClient:
     app = create_app(
-        verifier=StaticTokenVerifier({"tok-a": VerifiedIdentity("guest-a", "anonymous")}),
+        verifier=StaticTokenVerifier({"tok-a": VerifiedIdentity("guest-a", provider)}),
         runtime_config=config, dev_scaffold=True, clock=lambda: datetime(2026, 10, 26, tzinfo=UTC))
     return TestClient(app)
 
@@ -96,7 +96,7 @@ def test_a_history_consent_goes_inactive_when_history_is_switched_off(
 def test_the_route_grants_and_withdraws_when_history_is_active(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    http = client(config_with_history(monkeypatch))
+    http = client(config_with_history(monkeypatch), provider="google.com")  # registered: finding 13
     bad = http.post("/v1/me/consents", headers=HEADERS,
                     json={"purpose": "HISTORY_STORE", "notice_version": "location-notice-1"})
     assert bad.status_code == 422

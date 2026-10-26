@@ -119,6 +119,11 @@ class WorkspaceStore(Protocol):
         first, so two instances cannot lose each other's update. Atomic in every adapter."""
         ...
     def delete(self, owner_id: str, name: str) -> None: ...
+    def delete_if_version(self, owner_id: str, name: str, *, expected_version: int) -> bool:
+        """Delete only when the live stored workspace has ``expected_version`` (the version the
+        caller itself wrote): a later writer's workspace is never removed. Atomic in every
+        adapter. True when deleted."""
+        ...
 
 
 # --- idempotency / replay --------------------------------------------------------------------------
@@ -190,7 +195,17 @@ class SpendTotals:
 class KillSwitchReason(StrEnum):
     SPEND_CAP = "SPEND_CAP"
     DISCOVERY = "DISCOVERY"  # the discovery client tripped it (repeated access denied)
+    PLACES = "PLACES"  # the Places/Routes service tripped it (repeated access denied)
     OPERATOR = "OPERATOR"
+
+
+# A kill switch has one state per provider path. "global" is the whole-pilot switch (the spend cap
+# trips it; an operator may): it stops every paid path. A provider path ("discovery", "places")
+# stops only that path, so a Places failure never switches discovery off, and the other way round.
+KILL_PATH_GLOBAL = "global"
+KILL_PATH_DISCOVERY = "discovery"
+KILL_PATH_PLACES = "places"
+KILL_PATHS = (KILL_PATH_GLOBAL, KILL_PATH_DISCOVERY, KILL_PATH_PLACES)
 
 
 @dataclass(frozen=True)
@@ -211,13 +226,21 @@ class CostStore(Protocol):
 
     def totals(self) -> SpendTotals: ...
 
-    def kill_switch(self) -> KillSwitchState: ...
+    def kill_switch(self, path: str = KILL_PATH_GLOBAL) -> KillSwitchState: ...
 
-    def trip_kill_switch(self, reason: KillSwitchReason, now: datetime) -> bool:
+    def trip_kill_switch(self, reason: KillSwitchReason, now: datetime,
+                         path: str = KILL_PATH_GLOBAL) -> bool:
         """True when this call tripped it (False: already tripped; the first reason stays)."""
         ...
 
-    def reset_kill_switch(self, now: datetime) -> None: ...
+    def reset_kill_switch(self, now: datetime, path: str = KILL_PATH_GLOBAL) -> None: ...
+
+
+def known_kill_path(path: str) -> str:
+    """A kill-switch path must be one of ``KILL_PATHS`` (never free text: it becomes a document id)."""
+    if path not in KILL_PATHS:
+        raise ValueError("unknown kill switch path")
+    return path
 
 
 def over_budget(totals: SpendTotals, budget: SpendBudget | None) -> bool:
@@ -239,7 +262,8 @@ def over_budget(totals: SpendTotals, budget: SpendBudget | None) -> bool:
 __all__ = [
     "MAX_CACHE_DAYS", "PENDING_REPLAY_TTL", "REPLAY_RETENTION", "RESERVATION_TTL",
     "ConsentLedgerStore", "CostEntryDelta", "CostStore", "DisplayCacheStore", "IdempotencyStore",
+    "KILL_PATHS", "KILL_PATH_DISCOVERY", "KILL_PATH_GLOBAL", "KILL_PATH_PLACES",
     "KillSwitchReason", "KillSwitchState", "QuotaLimits", "QuotaStore", "ReserveOutcome",
     "SpendBasis", "SpendBudget", "SpendTotals", "StoredReplay", "Usage", "WorkspaceStore",
-    "over_budget",
+    "known_kill_path", "over_budget",
 ]

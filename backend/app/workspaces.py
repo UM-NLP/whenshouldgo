@@ -50,7 +50,7 @@ from .domain import (
     evolve,
     history_active,
 )
-from .entitlements import PolicyRegistry
+from .entitlements import PolicyRegistry, workspace_ttl
 from .feature_errors import FeatureError
 from .patching import (
     SELECTED_LABEL_KEY,
@@ -263,11 +263,8 @@ class WorkspaceService:
 
     # -- internals --
     def _ttl(self, principal: Principal) -> timedelta | None:
-        """A guest's workspace (and its plan versions) expire after N inactive days (decision 27)."""
-        if principal.kind != PrincipalKind.GUEST:
-            return None
-        return timedelta(days=self._policies.get(principal.policy_version)
-                         .guest_workspace_retention_days)
+        """The workspace and its plan versions expire after N inactive days (decisions 27, 28)."""
+        return workspace_ttl(self._policies.get(principal.policy_version), principal.kind)
 
     def _trace(self, event_cls: type, **fields: object) -> None:
         trace(event_cls, self._sink or get_default_sink(), trace_id=current_trace_id(), **fields)
@@ -468,7 +465,10 @@ class WorkspaceService:
             key = idempotency_key or hashlib.sha256(
                 f"{checkin.place_id}\x1f{checkin.outcome.value}\x1f{checkin.note or ''}"
                 .encode()).hexdigest()
-            self._stores.outcomes.record(principal.uid, key, checkin, self._clock())
+            days = (self._history.retention_days(principal.uid)
+                    if self._history is not None and hasattr(self._history, "retention_days")
+                    else None)
+            self._stores.outcomes.record(principal.uid, key, checkin, self._clock(), days)
             if self._history is not None:
                 try:  # the opt-in history record (decision 19); idempotent by the same key
                     self._history.record_outcome(principal, checkin, key)

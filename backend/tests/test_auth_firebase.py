@@ -5,7 +5,7 @@ import logging
 
 import pytest
 
-from app.auth import InvalidToken, PrincipalResolver
+from app.auth import InvalidToken, PrincipalResolver, VerifiedIdentity
 from app.auth_firebase import (
     FirebaseConfigError,
     FirebaseIdentityVerifier,
@@ -304,3 +304,33 @@ def test_http_fetcher_parses_max_age_and_rejects_bad_status():
         HttpKeyFetcher("https://example.invalid/c", client=_Client(_Resp(status=500))).fetch()
     with pytest.raises(FirebaseConfigError):
         HttpKeyFetcher("http://example.invalid/c")
+
+
+# -- review finding 14: revocation travels on the identity, never through shared mutable state ----
+class PerTokenRevoker:
+    """Revoked for tokens issued before ``cutoff`` (the user signed out everywhere then)."""
+
+    def __init__(self, cutoff: float) -> None:
+        self.cutoff = cutoff
+
+    def is_revoked(self, uid, issued_at):
+        return issued_at < self.cutoff
+
+
+def test_another_tokens_success_never_re_enables_a_revoked_one():
+    disabled: set[str] = set()
+    v, _, _ = make(revocation=PerTokenRevoker(NOW - 5), disabled_uids=disabled)
+    resolver = PrincipalResolver(disabled_uids=disabled)
+    old = v.verify(mint(PAIR, firebase_claims(iat=NOW - 10, auth_time=NOW - 20)))
+    fresh = v.verify(mint(PAIR, firebase_claims(iat=NOW - 1, auth_time=NOW - 2)))
+    assert old.revoked is True and fresh.revoked is False
+    assert resolver.resolve(old).kind is PrincipalKind.DISABLED
+    assert resolver.resolve(fresh).kind is PrincipalKind.GUEST
+    assert disabled == set()  # nothing was written to the shared set, so nothing can be discarded
+    assert resolver.resolve(old).kind is PrincipalKind.DISABLED  # still, after the success
+
+
+def test_the_resolver_contract_with_a_static_disabled_set_still_works():
+    resolver = PrincipalResolver(disabled_uids={"u1"})
+    assert resolver.resolve(VerifiedIdentity("u1", "google.com")).kind is PrincipalKind.DISABLED
+    assert resolver.resolve(VerifiedIdentity("u2", "google.com")).kind is PrincipalKind.REGISTERED_FREE

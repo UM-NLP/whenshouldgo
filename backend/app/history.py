@@ -61,6 +61,7 @@ from .domain import (
 )
 from .feature_errors import FeatureError, FeatureFailure
 from .stores.history_store import HistoryStore
+from .stores.plans_store import OutcomeStore
 from .stores.protocols import WorkspaceStore
 from .telemetry import (
     HistoryRecordDeleted,
@@ -137,8 +138,12 @@ class HistoryService:
         runtime_config: RuntimeConfig | Callable[[], RuntimeConfig | None] | None = None,
         workspaces: WorkspaceStore | None = None, clock: Callable[[], datetime] | None = None,
         sink: TraceSink | None = None, account_guard: Callable[[str], None] | None = None,
+        outcomes: OutcomeStore | None = None,
     ) -> None:
         self.store = store
+        # The outcome ledger (``plans_store``) holds place IDs and notes under the same user
+        # controls: every delete, clear, edit and retention change cascades to it.
+        self._outcomes = outcomes
         self._consents = consents
         self._config = runtime_config
         self._workspaces = workspaces
@@ -180,11 +185,20 @@ class HistoryService:
         if inactive:
             raise FeatureError(FeatureFailure.UNAVAILABLE)
 
+    def _consent_ids(self, uid: str) -> frozenset[str]:
+        """Ids of the user's ACTIVE HISTORY_STORE consents (the ones records may rest on)."""
+        return frozenset(r.id for r in self._consents.active(uid)
+                         if r.purpose == ConsentPurpose.HISTORY_STORE)
+
     def _days(self, uid: str) -> int:
         config = self._runtime_config()
         ceiling = config.ttls.outing_retention_days if config else HISTORY_MAX_RETENTION_DAYS
         chosen = self.store.retention_days(uid) or HISTORY_DEFAULT_RETENTION_DAYS
         return max(1, min(chosen, ceiling, HISTORY_MAX_RETENTION_DAYS))
+
+    def retention_days(self, uid: str) -> int:
+        """The user's effective retention in days (the ledger entries use the same value)."""
+        return self._days(uid)
 
     def _workspace(self, uid: str, now: datetime):  # noqa: ANN202
         return self._workspaces.get(uid, WORKSPACE_NAME, now) if self._workspaces else None
@@ -224,6 +238,19 @@ class HistoryService:
         if outcome == "full":
             raise FeatureError(FeatureFailure.LIMIT)
         if outcome == "created":
+            # Post-write recheck: the account deletion or the consent withdrawal can have landed
+            # (and swept) between the gate and the write. Take the record back, exactly as the
+            # turn orchestrator takes back its writes.
+            problem: FeatureFailure | None = None
+            try:
+                self._assert_active(uid)
+            except FeatureError:
+                problem = FeatureFailure.UNAVAILABLE
+            if problem is None and record.consent_id not in self._consent_ids(uid):
+                problem = FeatureFailure.CONSENT_REQUIRED
+            if problem is not None:
+                self.store.delete(uid, record.id)
+                raise FeatureError(problem)
             self._trace(HistoryRecordWritten, strength=stored.strength)
         return stored
 
@@ -303,19 +330,28 @@ class HistoryService:
         updated = self.store.update(principal.uid, _checked_id(record_id), apply, self._clock())
         if updated is None:
             raise FeatureError(FeatureFailure.NOT_FOUND)
+        if edit.feedback is not None and self._outcomes is not None:
+            # The user rewrote their feedback: the ledger's older note for this place must not
+            # outlive the edit.
+            self._outcomes.clear_notes(principal.uid, updated.place_ref.place_id)
         return updated
 
     def delete(self, principal: Principal, record_id: str) -> int:
         """Delete one record. Never blocked by a missing consent (the user can always delete)."""
         self._gate(principal, consent=False)
-        if not self.store.delete(principal.uid, _checked_id(record_id)):
+        record = self.store.get(principal.uid, _checked_id(record_id), self._clock())
+        if not self.store.delete(principal.uid, record_id):
             raise FeatureError(FeatureFailure.NOT_FOUND)
+        if record is not None and self._outcomes is not None:
+            self._outcomes.delete_place(principal.uid, record.place_ref.place_id)
         self._trace(HistoryRecordDeleted, deleted_count=1)
         return 1
 
     def clear(self, principal: Principal) -> int:
         self._gate(principal, consent=False)
         count = self.store.delete_records(principal.uid)
+        if self._outcomes is not None:
+            self._outcomes.delete_all(principal.uid)
         if count:
             self._trace(HistoryRecordDeleted, deleted_count=count)
         return count
@@ -323,7 +359,10 @@ class HistoryService:
     # -- reads and settings --------------------------------------------------------------------------
     def list(self, principal: Principal) -> tuple[OutingRecord, ...]:
         self._gate(principal)
-        return self.store.list(principal.uid, self._clock())
+        live = self._consent_ids(principal.uid)
+        # A record that rests on a consent that is no longer active is never shown.
+        return tuple(r for r in self.store.list(principal.uid, self._clock())
+                     if r.consent_id in live)
 
     def settings(self, principal: Principal) -> HistorySettings:
         self._gate(principal)
@@ -339,6 +378,13 @@ class HistoryService:
             raise FeatureError(FeatureFailure.INVALID)
         self._assert_active(principal.uid)
         purged = self.store.apply_retention(principal.uid, days, self._clock())
+        if self._outcomes is not None:
+            self._outcomes.apply_retention(principal.uid, days, self._clock())
+        try:
+            self._assert_active(principal.uid)
+        except FeatureError:
+            self.delete_all(principal.uid)  # the deletion landed meanwhile: leave no setting behind
+            raise
         if purged:
             self._trace(HistoryRecordDeleted, deleted_count=purged)
         return HistorySettings(retention_days=days)
@@ -347,6 +393,8 @@ class HistoryService:
     def purge(self) -> int:
         """Delete expired records early (the TTL policy is the primary mechanism). Needs no flag:
         retention applies to data that exists whatever the flag says now."""
+        if self._outcomes is not None:
+            self._outcomes.purge(self._clock())
         return self.store.purge(self._clock())
 
     def export(self, uid: str) -> tuple[OutingRecord, ...]:
@@ -354,6 +402,8 @@ class HistoryService:
 
     def delete_all(self, uid: str) -> int:
         """Consent withdrawal and account deletion: every record and the retention choice."""
+        if self._outcomes is not None:
+            self._outcomes.delete_all(uid)
         return self.store.delete_all(uid)
 
 

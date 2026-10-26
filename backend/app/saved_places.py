@@ -102,6 +102,16 @@ class SavedPlaceService:
         if inactive:
             raise FeatureError(FeatureFailure.UNAVAILABLE)
 
+    def _late_problem(self, uid: str) -> FeatureFailure | None:
+        """After a write: why it must be taken back (account deleted, consent withdrawn), or None."""
+        try:
+            self._assert_active(uid)
+        except FeatureError:
+            return FeatureFailure.UNAVAILABLE
+        if not self._has_consent(uid):
+            return FeatureFailure.CONSENT_REQUIRED
+        return None
+
     # -- create (only called by the confirmed-action sink) --------------------------------------------
     def precheck(self, principal: Principal) -> None:
         """Before a SAVE_PLACE is proposed or committed: the same gate as every other method."""
@@ -122,6 +132,12 @@ class SavedPlaceService:
         if outcome == "full":
             raise FeatureError(FeatureFailure.LIMIT)
         if outcome == "saved":
+            # Post-write recheck: the account deletion or the SAVED_PLACE withdrawal can have
+            # landed (and swept) between the gate and the write: take the place back.
+            problem = self._late_problem(principal.uid)
+            if problem is not None:
+                self.places.delete(principal.uid, place.place_id)
+                raise FeatureError(problem)
             self._trace(SavedPlaceSaved, label_kind=label_kind)
         return place
 
@@ -193,6 +209,10 @@ class SavedPlaceService:
         else:
             record = None
         self.asks.put(principal.uid, kind, record)
+        problem = self._late_problem(principal.uid)
+        if problem is not None:
+            self.asks.delete_owner(principal.uid)
+            raise FeatureError(problem)
         return AskStateView(
             label_kind=kind, recorded=True,
             dont_ask_again=bool(record and record.dont_ask_again),

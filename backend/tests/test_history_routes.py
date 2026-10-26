@@ -122,9 +122,11 @@ def test_a_guest_gets_a_typed_403(env: HEnv, method: str, path: str, body) -> No
 
 def test_a_guest_cannot_even_hold_the_consent_data_here(env: HEnv) -> None:
     # decision 19: the guest's history stays on the device. A guest outcome stores nothing.
-    assert env.consent("g", HIST).status_code == 200  # the ledger accepts the consent...
+    # Review finding 13: the consent itself is refused for a guest, and nothing is written.
+    refused = env.consent("g", HIST)
+    assert refused.status_code == 403 and refused.json()["reason"] == "GUEST_NOT_ALLOWED"
     response = env.outcome("g")
-    assert response.json()["recorded"] is False  # ...but nothing durable is written
+    assert response.json()["recorded"] is False  # and no durable record either
     assert env.history_text().strip() == ""
 
 

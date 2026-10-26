@@ -189,14 +189,8 @@ class PlacesService:
                      if self._config is not None else DEFAULT_BUDGET_SECONDS)
 
     def _spent_today(self, uid: str) -> Decimal:
-        cutoff = self._now() - DAILY
-        total = Decimal(0)
-        for entry in self._ledger.entries():
-            if (entry.principal_id == uid and entry.kind == "tool"
-                    and entry.label in (DETAILS_LABEL, ROUTES_LABEL)
-                    and entry.at is not None and entry.at > cutoff):
-                total += entry.estimated_cost_usd or Decimal(0)
-        return total
+        # Per-principal indexed read: never a scan of every principal's entries.
+        return self._ledger.tool_usd_for(uid, (DETAILS_LABEL, ROUTES_LABEL), window=DAILY)
 
     def _paid_call(self, uid: str, run: _RunBudget, label: str, call: Callable[[], _T]) -> _T:
         if self._kill.tripped:

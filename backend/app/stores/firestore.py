@@ -43,6 +43,7 @@ from .protocols import (
     PENDING_REPLAY_TTL,
     REPLAY_RETENTION,
     CostEntryDelta,
+    KILL_PATH_GLOBAL,
     KillSwitchReason,
     KillSwitchState,
     QuotaLimits,
@@ -51,6 +52,7 @@ from .protocols import (
     SpendTotals,
     StoredReplay,
     Usage,
+    known_kill_path,
     over_budget,
 )
 
@@ -335,6 +337,27 @@ class FirestoreWorkspaceStore(_Base):
     def delete(self, owner_id: str, name: str) -> None:
         self._ref(owner_id, name).delete()
 
+    def delete_if_version(self, owner_id: str, name: str, *, expected_version: int) -> bool:
+        ref = self._ref(owner_id, name)
+
+        def body(txn: Any) -> bool:
+            snap = ref.get(transaction=txn)
+            if not snap.exists:
+                return False
+            stored = snap.to_dict()
+            if stored.get("owner_id") != owner_id or stored.get("name") != name:
+                raise StoredDataError("workspace document does not belong to this tenant")
+            try:
+                current = TripWorkspace.model_validate(stored["workspace"]).version
+            except (ValidationError, KeyError):
+                raise StoredDataError("workspace document does not match the schema") from None
+            if current != expected_version:
+                return False
+            txn.delete(ref)
+            return True
+
+        return self._transact(body)
+
 
 # --- idempotency ---------------------------------------------------------------------------------
 class FirestoreIdempotencyStore(_Base):
@@ -402,8 +425,10 @@ class FirestoreCostStore(_Base):
     def _totals_ref(self) -> Any:
         return self._col(COST_TOTALS).document(_TOTALS_ID)
 
-    def _switch_ref(self) -> Any:
-        return self._col(KILL_SWITCH).document(_SWITCH_ID)
+    def _switch_ref(self, path: str = KILL_PATH_GLOBAL) -> Any:
+        # One document per provider path; the whole-pilot switch keeps its original id "global".
+        return self._col(KILL_SWITCH).document(known_kill_path(path) if path != KILL_PATH_GLOBAL
+                                               else _SWITCH_ID)
 
     @staticmethod
     def _totals_from(doc: dict[str, Any] | None) -> SpendTotals:
@@ -456,12 +481,13 @@ class FirestoreCostStore(_Base):
         snap = self._totals_ref().get()
         return self._totals_from(snap.to_dict() if snap.exists else None)
 
-    def kill_switch(self) -> KillSwitchState:
-        snap = self._switch_ref().get()
+    def kill_switch(self, path: str = KILL_PATH_GLOBAL) -> KillSwitchState:
+        snap = self._switch_ref(path).get()
         return self._switch_from(snap.to_dict() if snap.exists else None)
 
-    def trip_kill_switch(self, reason: KillSwitchReason, now: datetime) -> bool:
-        ref = self._switch_ref()
+    def trip_kill_switch(self, reason: KillSwitchReason, now: datetime,
+                         path: str = KILL_PATH_GLOBAL) -> bool:
+        ref = self._switch_ref(path)
 
         def body(txn: Any) -> bool:
             snap = ref.get(transaction=txn)
@@ -472,8 +498,8 @@ class FirestoreCostStore(_Base):
 
         return self._transact(body)
 
-    def reset_kill_switch(self, now: datetime) -> None:
-        self._switch_ref().set(self._switch_doc(KillSwitchState(), now))
+    def reset_kill_switch(self, now: datetime, path: str = KILL_PATH_GLOBAL) -> None:
+        self._switch_ref(path).set(self._switch_doc(KillSwitchState(), now))
 
 
 # --- display cache -------------------------------------------------------------------------------
@@ -553,6 +579,27 @@ class FirestoreDisplayCache(_Base):
             ref.delete()
             return None
         return restored
+
+    def place_ids(self, owner_id: str) -> frozenset[str]:
+        try:
+            DisplayCache._key(owner_id, "k")  # noqa: SLF001
+        except CacheError:
+            return frozenset()
+        now = self._now()
+        found: set[str] = set()
+        for snap in self._col(DISPLAY_CACHE).where("owner_id", "==", owner_id).stream():
+            doc = snap.to_dict()
+            if doc.get("owner_id") != owner_id:
+                continue
+            try:
+                answer = GroundedAnswer.model_validate(doc["answer"])
+                restored = restore_validated(answer, str(doc["principal_id"]))
+            except (ValidationError, KeyError, TypeError, ValueError):
+                continue
+            if (is_validated(restored) and not DisplayCache._expired(answer, now)  # noqa: SLF001
+                    and DisplayCache._intact(restored)):  # noqa: SLF001
+                found.update(place.place_id for place in answer.places)
+        return frozenset(found)
 
     def purge(self) -> int:
         now = self._now()

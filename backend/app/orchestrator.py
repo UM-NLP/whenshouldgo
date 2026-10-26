@@ -36,6 +36,7 @@ from .gateway import ModelGateway
 from .guard import OUT_OF_SCOPE_REPLY, SAFETY_REPLY, classify, estimate_tokens, tools_for
 from .location import RoundedLocation
 from .pipeline import DiscoveryRef, TurnPipeline, to_api_block
+from .entitlements import workspace_ttl
 from .quota import QuotaService
 from .stores.memory import MemoryIdempotencyStore, MemoryWorkspaceStore
 from .stores.protocols import IdempotencyStore, WorkspaceStore
@@ -457,7 +458,7 @@ class TurnOrchestrator:
                         lost_race = True
                         self._idempotency.rollback(principal.uid, idempotency_key)
                 except BaseException:
-                    self._undo(principal, idempotency_key, current)
+                    self._undo(principal, idempotency_key, current, workspace)
                     raise
                 if lost_race:
                     raise TurnFailure(409, ErrorCode.CONFLICT, ErrorReason.TURN_IN_PROGRESS)
@@ -478,7 +479,7 @@ class TurnOrchestrator:
                 except BaseException as fault:
                     counted = idempotency_key in self.quotas.usage_for(principal.uid).committed_keys
                     if not counted:
-                        self._undo(principal, idempotency_key, current)
+                        self._undo(principal, idempotency_key, current, workspace)
                         raise
                     committed = True
                     if not isinstance(fault, Exception):
@@ -497,26 +498,28 @@ class TurnOrchestrator:
         return result
 
     def _workspace_ttl(self, principal: Principal) -> timedelta | None:
-        """A guest's server workspace expires after N inactive days (decision 27); every write
-        refreshes it. A registered user's does not expire here."""
-        if principal.kind != PrincipalKind.GUEST:
-            return None
-        policy = self.quotas.policies.get(principal.policy_version)
-        return timedelta(days=policy.guest_workspace_retention_days)
+        """A server workspace expires after N inactive days (decisions 27 and 28: 7 for a guest,
+        90 for a registered user); every write refreshes it."""
+        return workspace_ttl(self.quotas.policies.get(principal.policy_version), principal.kind)
 
     def _undo(
-        self, principal: Principal, idempotency_key: str, previous: TripWorkspace | None
+        self, principal: Principal, idempotency_key: str, previous: TripWorkspace | None,
+        written: TripWorkspace,
     ) -> None:
         """Roll back an uncommitted turn's stored state (best effort: a store fault here must not
         mask the original failure; a leftover pending record or newer workspace is harmless, it
-        expires or is overwritten, and the key stays uncounted)."""
+        expires or is overwritten, and the key stays uncounted). The workspace is restored or
+        removed ONLY while the stored version is still the one this turn wrote: a writer on
+        another instance that got in afterwards is never overwritten or deleted."""
         try:
             self._idempotency.rollback(principal.uid, idempotency_key)
             if previous is None:
-                self._workspace_store.delete(principal.uid, "default")
+                self._workspace_store.delete_if_version(
+                    principal.uid, "default", expected_version=written.version)
             else:
-                self._workspace_store.put(principal.uid, "default", previous, self._clock(),
-                                          self._workspace_ttl(principal))
+                self._workspace_store.put_if_version(
+                    principal.uid, "default", previous, self._clock(),
+                    self._workspace_ttl(principal), expected_version=written.version)
         except Exception:  # noqa: BLE001
             pass
 

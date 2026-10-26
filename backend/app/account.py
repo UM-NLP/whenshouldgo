@@ -39,7 +39,7 @@ from enum import StrEnum
 from typing import Any, Protocol
 
 
-from .consent import ConsentStore, OperationLimiter
+from .consent import ConsentStore, OperationLimiter, compact_for_export
 from .domain import (
     MAX_LINK_INTENT_TTL,
     AccountLinkIntent,
@@ -463,7 +463,7 @@ class AccountService:
         return AccountExportBundle(
             generated_at=now, tier=Tier.GUEST if principal.kind == PrincipalKind.GUEST
             else Tier.REGISTERED, history_active=history,
-            consents=tuple(self.consents.ledger(uid)), saved_places=saved, outings=outings,
+            consents=compact_for_export(tuple(self.consents.ledger(uid))), saved_places=saved, outings=outings,
             workspaces=(*workspaces, *(w for part in parts for w in part.workspaces)),
             plan_versions=tuple(p for part in parts for p in part.plan_versions),
             outcomes=tuple(o for part in parts for o in part.outcomes),
@@ -486,23 +486,43 @@ class AccountService:
         now = self._clock()
         tombstone = self.store.begin_tombstone(principal.uid, now)  # first: no late recreation
         self._remember_deleted(principal.uid)
+        login_not_removed = False
         if tombstone.completed_at is None:
-            completed = self._erase(principal.uid, frozenset())
+            completed, login_not_removed = self._erase(principal.uid, frozenset())
         else:
-            completed = True
-        return DeleteReceipt(requested_at=tombstone.requested_at, completed=completed)
+            # Already completed: a writer that was in flight while the first run swept can have
+            # landed a document afterwards, so EVERY call re-runs the sweep (idempotent). The
+            # login was already removed by the first run, so it is not deleted again.
+            completed = not self.deleters.run(principal.uid).failures
+        return DeleteReceipt(requested_at=tombstone.requested_at, completed=completed,
+                             login_not_removed=login_not_removed)
 
-    def _erase(self, uid: str, exclude: frozenset[str]) -> bool:
+    def sweep(self, uid: str) -> bool:
+        """Re-run every deleter for a uid whose account was deleted: a late writer calls this when
+        it notices, after its own write, that the tombstone now exists. True when nothing failed."""
+        return not self.deleters.run(uid).failures
+
+    @property
+    def login_deletion_available(self) -> bool:
+        """False while no ``FirebaseAdmin`` is configured: the login cannot be removed, so the
+        service reports ``can_delete`` false and a delete is never reported as completed."""
+        return self.admin is not None
+
+    def _erase(self, uid: str, exclude: frozenset[str]) -> tuple[bool, bool]:
+        """(completed, login_not_removed). The data is always deleted; without a Firebase admin the
+        login stays, the tombstone stays open (a later call with an admin completes it) and the
+        receipt says so instead of claiming success (decision 28)."""
         report = self.deleters.run(uid, exclude=exclude)
         if report.failures:
-            return False
-        if self.admin is not None:
-            try:
-                self.admin.delete_user(uid)
-            except Exception:  # noqa: BLE001 - the data is gone; a retry deletes the login
-                return False
+            return False, False
+        if self.admin is None:
+            return False, True
+        try:
+            self.admin.delete_user(uid)
+        except Exception:  # noqa: BLE001 - the data is gone; a retry deletes the login
+            return False, False
         self.store.complete_tombstone(uid, self._clock())
-        return True
+        return True, False
 
     def _erase_guest(self, uid: str) -> bool:
         """The merge's cleanup: the guest's whole cascade, but not the merge journal itself."""

@@ -96,7 +96,10 @@ def capabilities_for(
         # True only when the account service behind POST /v1/me:export and /v1/me:delete is
         # configured (``app.state.account_service``); both stay available after the usage gate.
         can_export=account_service is not None,
-        can_delete=account_service is not None,
+        # Also needs a Firebase admin credential (decision 28): without it the login cannot be
+        # removed, so a delete could never complete.
+        can_delete=account_service is not None and bool(
+            getattr(account_service, "login_deletion_available", True)),
         can_link_account=tier == Tier.GUEST,
         # Server-owned (decision 25): false unless history_enabled and an approved notice exist.
         history_enabled=history_active(config),

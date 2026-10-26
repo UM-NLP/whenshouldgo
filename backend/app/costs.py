@@ -19,7 +19,7 @@ from __future__ import annotations
 import threading
 from collections import deque
 from enum import StrEnum
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -204,6 +204,20 @@ class CostLedger:
             ]
         return Usage(input_tokens=sum(e.input_tokens for e in rows),
                      output_tokens=sum(e.output_tokens for e in rows))
+
+    def tool_usd_for(
+        self, principal_id: str, labels: Collection[str], *, window: timedelta,
+    ) -> Decimal:
+        """Estimated USD of this principal's TOOL entries with one of ``labels`` over the rolling
+        ``window`` (the Places daily ceiling). Reads only this principal's own entries: its cost
+        is the size of its own window, never of every principal's."""
+        cutoff = self._clock() - window
+        with self._lock:
+            rows = [
+                e.estimated_cost_usd for e in self._by_principal.get(principal_id, ())
+                if e.kind == "tool" and e.label in labels and e.at is not None and e.at > cutoff
+            ]
+        return sum((cost or Decimal(0) for cost in rows), Decimal(0))
 
     def total_usage_for(self, principal_id: str, *, window: timedelta | None = None) -> Usage:
         """Everything this principal's turns cost, whoever it is attributed to."""

@@ -50,3 +50,13 @@ TODO before pilot traffic (all need owner approval to create cloud resources, de
 - Load-test the `cost_totals/pilot` document; shard the counter if it contends.
 - Move the per-principal cost windows (daily ceiling, paid-failure and free-turn limiters), the operation limiters and identity-creation or per-IP limits into shared stores (still per process, #35).
 - Decide whether the whole-pilot cap counts all spend (the default here) or only provider-attributed spend (decision 23's literal wording; it would not trip under healthy traffic).
+
+## Review follow-ups (2026-10-26 security review)
+
+Not fixed in the review pass; each needs a contract change or owner input.
+
+- **Saved-place DELETE carries the place ID in the query string** (`DELETE /v1/saved-places?place_id=`): query strings reach proxies and request logs. The container now runs uvicorn with `--no-access-log`, but the real fix is an opaque path identifier (a contract change; regenerate the web client with it).
+- **Backend dependency lockfile is missing.** `pyproject.toml` pins only the auth extras; the container installs whatever resolves at build time. Add a hash-pinned lockfile (for example `pip-compile --generate-hashes`) and install from it. The base image is pinned by digest (update both `FROM` lines together).
+- **History tag provenance:** `OutingRecord.intent_tag` has no `source` field, so a tag derived from the user's own request (`derive_intent_tag`) cannot be marked as derived rather than chosen. Adding a `source` enum is an additive contract change; until then the derived tag stays as documented in decision 19 (conservative, never KIDS).
+- **Consent ledger compaction:** the ledger stays append-only and bounded (decision 28); a destructive compaction of withdrawn pairs was deliberately not built.
+- **Real Firebase Admin credentials** are still an owner TODO; until then `me:delete` reports `login_not_removed` (decision 28) and `can_delete` is false.

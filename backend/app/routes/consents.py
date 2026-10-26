@@ -12,6 +12,7 @@ from ..consent import (
     HISTORY_PURPOSES,
     SUPPORTED_PURPOSES,
     ConsentDisabled,
+    ConsentLedgerFull,
     ConsentStore,
     WrongNoticeVersion,
 )
@@ -24,6 +25,7 @@ from ..domain import (
     ErrorReason,
     Principal,
     PrincipalKind,
+    history_active,
 )
 from .common import ERROR_RESPONSES, error
 
@@ -78,12 +80,26 @@ def grant_consent(
     store = _consent_principal(request, principal)
     if body.purpose not in SUPPORTED_PURPOSES:
         raise error(422, ErrorCode.VALIDATION, "unsupported purpose or notice version")
+    if principal.kind == PrincipalKind.GUEST and body.purpose in HISTORY_PURPOSES:
+        # A guest's history and saved places stay on the device (decision 19): nothing is written.
+        if not history_active(getattr(request.app.state, "runtime_config", None)):
+            raise error(404, ErrorCode.VALIDATION, "feature disabled", ErrorReason.DISABLED)
+        raise error(403, ErrorCode.POLICY, "not available for guest accounts",
+                    ErrorReason.GUEST_NOT_ALLOWED)
     try:
-        return ConsentView.of(store.grant(principal.uid, body.purpose, body.notice_version))
+        view = ConsentView.of(store.grant(principal.uid, body.purpose, body.notice_version))
+        accounts = getattr(request.app.state, "account_service", None)
+        if accounts is not None and accounts.is_deleted(principal.uid):
+            # Post-write recheck: the deletion landed (and swept) while this grant was written.
+            accounts.sweep(principal.uid)
+            raise error(403, ErrorCode.POLICY, "account unavailable")
+        return view
     except ConsentDisabled:  # history purposes while history is not active (decision 25)
         raise error(404, ErrorCode.VALIDATION, "feature disabled", ErrorReason.DISABLED) from None
     except WrongNoticeVersion:
         raise error(422, ErrorCode.VALIDATION, "unsupported purpose or notice version") from None
+    except ConsentLedgerFull:
+        raise error(409, ErrorCode.CONFLICT, "limit reached") from None
 
 
 @router.get("/v1/me/consents", response_model=ConsentList, responses=ERROR_RESPONSES)

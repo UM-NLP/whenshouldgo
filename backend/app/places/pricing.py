@@ -19,7 +19,7 @@ from __future__ import annotations
 from decimal import Decimal
 from typing import Annotated
 
-from pydantic import ConfigDict, Field, StringConstraints
+from pydantic import ConfigDict, Field, StringConstraints, model_validator
 
 from ..domain import Frozen, Ident
 
@@ -38,6 +38,15 @@ class PlacesPriceTable(Frozen):
     routes_sku: Ident
     details_usd_per_request: UsdAmount
     routes_usd_per_request: UsdAmount
+
+    @model_validator(mode="after")
+    def _reviewed_prices_are_positive(self) -> PlacesPriceTable:
+        # A reviewed table with a zero price would make every paid call free in the daily-USD
+        # ceiling and the pilot spend budget: reviewed means real, positive prices.
+        if self.reviewed and not (
+                self.details_usd_per_request > 0 and self.routes_usd_per_request > 0):
+            raise ValueError("a reviewed price table needs positive prices")
+        return self
 
     def price_for(self, label: str) -> Decimal:
         return self.details_usd_per_request if label == DETAILS_LABEL else self.routes_usd_per_request

@@ -22,7 +22,7 @@ from ..domain import (
 )
 from ..places import PlacesError, PlacesService
 from ..places.errors import PlacesNotConfigured
-from .common import ERROR_RESPONSES, access_principal, error
+from .common import ERROR_RESPONSES, access_principal, error, paid_route_gate
 
 router = APIRouter()
 _RESPONSES: dict[int | str, dict[str, object]] = {
@@ -39,6 +39,14 @@ def _service(request: Request) -> PlacesService:
     return service
 
 
+def _require_referenced(request: Request, uid: str, place_ids: tuple[str, ...]) -> None:
+    """A place ID the caller has no legitimate reference to is a typed 404 before any Google call
+    (nothing spent, nothing recorded): the paid routes are not a generic Places proxy."""
+    references = getattr(request.app.state, "place_references", None)
+    if references is None or not references.permits(uid, place_ids):
+        raise error(404, ErrorCode.VALIDATION, "not found")
+
+
 def _typed(failure: PlacesError):
     return error(failure.status, failure.code, failure.message, failure.reason, failure.retry_after)
 
@@ -50,7 +58,9 @@ def place_details(
     principal: Principal = Depends(current_principal),
 ) -> PlaceDetailsResponse:
     access_principal(request, principal, request.app.state.access_limiter)
+    paid_route_gate(request, principal)
     service = _service(request)
+    _require_referenced(request, principal.uid, tuple(body.place_ids))
     try:
         cards = service.place_details(principal.uid, body.place_ids)
     except PlacesError as failure:
@@ -72,7 +82,9 @@ def route_check(
         # Exactly as the turn route: before any work, nothing consumed or stored.
         raise error(403, ErrorCode.POLICY, "location consent required",
                     ErrorReason.LOCATION_CONSENT_REQUIRED)
+    paid_route_gate(request, principal)
     service = _service(request)
+    _require_referenced(request, principal.uid, (body.place_id,))
     try:
         route = service.route_check(
             principal.uid, body.place_id, body.mode,

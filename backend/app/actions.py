@@ -59,6 +59,7 @@ from .stores.actions_store import (
 )
 from .stores.protocols import WorkspaceStore
 from .telemetry import ActionRejectReason, TraceSink
+from .textsafety import label_problem
 
 WORKSPACE_NAME = "default"  # Phase 0: one workspace per tenant
 # Phase 0 is same-day: a reminder falls within a day of the proposal.
@@ -141,11 +142,33 @@ class ActivationOutcome:
 
 # --- helpers --------------------------------------------------------------------------------------
 def _fingerprint(owner: str, body: ProposeActionRequest) -> str:
+    """Digest of the NON-sensitive typed request. The position and the user's label are left OUT on
+    purpose: a stored digest of a ~100 m position (or a short label) is brute-forceable, and the
+    record outlives the scrub of both. Same-key conflict detection for those two fields compares
+    the live record instead (``_same_sensitive``) for as long as the record still holds them."""
     due = body.due_at.astimezone(UTC).isoformat() if body.due_at else ""
     parts = (owner, body.effect.value, body.target, body.workspace_id, str(body.plan_version),
-             body.user_label or "", body.label_kind.value if body.label_kind else "", due,
-             f"{body.position.latitude:.3f},{body.position.longitude:.3f}" if body.position else "")
-    return hashlib.sha256("\x1f".join(parts).encode("utf-8")).hexdigest()
+             body.label_kind.value if body.label_kind else "", due)
+    return hashlib.sha256("".join(parts).encode("utf-8")).hexdigest()
+
+
+def _redacted(rec: ActionRecord, **changes: object) -> ActionRecord:
+    """The record with the user's position and label removed. The server-authored preview of a
+    SAVE_PLACE quotes the label, so it is replaced by a label-free text too."""
+    action = rec.action
+    if action.effect == PendingActionEffect.SAVE_PLACE and rec.label_kind is not None:
+        action = evolve(action, preview=f"Save this place as your {rec.label_kind.value.lower()} place")
+    return replace(rec, position=None, user_label=None, action=action, **changes)
+
+
+def _same_sensitive(rec: ActionRecord, body: ProposeActionRequest) -> bool:
+    """True when the label and position of ``body`` match what the record still holds. A SAVE_PLACE
+    record whose position was scrubbed (confirmed, cancelled or expired) holds neither, so the
+    stored digest of the remaining fields decides alone."""
+    if rec.status == ActionStatus.CANCELLED or (
+            rec.action.effect == PendingActionEffect.SAVE_PLACE and rec.position is None):
+        return True
+    return rec.position == body.position and rec.user_label == body.user_label
 
 
 def _action_id(owner: str, key: str) -> str:
@@ -228,6 +251,10 @@ class ActionService:
                 raise self._reject(exc.failure, effect) from None
         if not isinstance(idempotency_key, str) or not 8 <= len(idempotency_key) <= 200:
             raise self._reject(ActionFailure.INVALID, effect)
+        if body.user_label is not None and label_problem(body.user_label):
+            # Every effect: the label is shown back in a preview and a reminder (hidden or bidi
+            # characters, markup, links, emails, phone numbers, addresses are refused).
+            raise self._reject(ActionFailure.INVALID, effect)
         if _PLACE_ID.fullmatch(body.target) is None:
             raise self._reject(ActionFailure.INVALID, effect)
         now = self._clock()
@@ -250,7 +277,7 @@ class ActionService:
         action_id = _action_id(principal.uid, idempotency_key)
         existing = self._store.get(principal.uid, action_id)
         if existing is not None:  # the same key: the same action, or a typed conflict
-            if existing.fingerprint != fingerprint:
+            if existing.fingerprint != fingerprint or not _same_sensitive(existing, body):
                 raise self._reject(ActionFailure.IDEMPOTENCY_CONFLICT, effect)
             return existing.action
         workspace = self._workspace(principal, now)
@@ -271,11 +298,34 @@ class ActionService:
             position=body.position)
         stored = self._store.update(
             principal.uid, action_id, lambda current: (current or record, current or record))
-        if stored.fingerprint != fingerprint:  # lost a race to a different request on this key
+        if stored.fingerprint != fingerprint or not _same_sensitive(stored, body):  # lost a race to a different request on this key
             raise self._reject(ActionFailure.IDEMPOTENCY_CONFLICT, effect)
         if stored is record:
+            self._recheck_after_write(principal, effect)
             self._trace(telemetry.ActionProposed, effect=effect)
         return stored.action
+
+    def _recheck_after_write(self, principal: Principal, effect: PendingActionEffect) -> None:
+        """Post-write recheck (as the turn orchestrator does): the account deletion or the
+        SAVED_PLACE withdrawal can have landed, and swept, between the checks and the write. The
+        record this request just made is taken back and the request is refused."""
+        failure: ActionFailure | None = None
+        try:
+            self._assert_active(principal.uid, effect)
+        except ActionError:
+            failure = ActionFailure.NOT_FOUND
+        if failure is None and effect == PendingActionEffect.SAVE_PLACE:
+            try:
+                self._sink.precheck(principal)
+            except ActionError as exc:
+                failure = exc.failure
+        if failure is None:
+            return
+        if failure == ActionFailure.NOT_FOUND:
+            self._store.delete_owner(principal.uid)  # the account is gone: nothing may remain
+        else:
+            self._store.delete_save_place_records(principal.uid)
+        raise self._reject(failure, effect)
 
     # -- confirm -----------------------------------------------------------------------------------
     def confirm(
@@ -306,7 +356,7 @@ class ActionService:
             if rec.status == ActionStatus.CONFIRMED:
                 return None, ("replay", rec)
             if now > action.expires_at:  # an expired proposal keeps no position
-                return (replace(rec, position=None) if rec.position is not None else None,
+                return (_redacted(rec) if rec.position is not None else None,
                         (ActionFailure.EXPIRED, rec))
             if action.effect == PendingActionEffect.SAVE_PLACE and not history:
                 return None, (ActionFailure.DISABLED, rec)
@@ -327,6 +377,11 @@ class ActionService:
                 self._save_place(principal, rec)
         else:
             self._activate(principal, rec.action.workspace_id)  # idempotent per workspace
+            try:
+                self._assert_active(principal.uid, rec.action.effect)
+            except ActionError:
+                self._store.delete_owner(principal.uid)  # deleted meanwhile: leave nothing behind
+                raise
         self._trace(telemetry.ActionConfirmed, effect=rec.action.effect, replay=not first)
         return self._result(rec)
 
@@ -349,7 +404,7 @@ class ActionService:
     def _scrub(rec: ActionRecord | None) -> tuple[ActionRecord | None, None]:
         if rec is None or rec.position is None:
             return None, None
-        return replace(rec, position=None, user_label=None), None
+        return _redacted(rec), None
 
     @staticmethod
     def _reopen(rec: ActionRecord | None) -> tuple[ActionRecord | None, None]:
@@ -381,7 +436,7 @@ class ActionService:
                 return None, (ActionFailure.ALREADY_CONFIRMED, rec)
             if rec.status == ActionStatus.CANCELLED:
                 return None, ("cancelled", rec)
-            return replace(rec, status=ActionStatus.CANCELLED, position=None), ("cancelled", rec)
+            return _redacted(rec, status=ActionStatus.CANCELLED), ("cancelled", rec)
 
         outcome, rec = self._store.update(principal.uid, action_id, decide)
         if isinstance(outcome, ActionFailure):

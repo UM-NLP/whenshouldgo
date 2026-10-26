@@ -97,6 +97,7 @@ from .domain import (
     TokenCeilings,
     ToolSchemaVersion,
     evolve,
+    history_active,
 )
 from .entitlements import PILOT_POLICY
 from .frame import prompt_version_hashes
@@ -114,9 +115,11 @@ from .gateway.pricing import ModelPrice, PriceTable, UnitPrice
 from .main import create_app
 from .orchestrator import TurnOrchestrator
 from .places import UNREVIEWED_PRICE_TABLE, PlacesPriceTable, build_places_service
+from .places.ownership import SourcedPlaceReferences
 from .quota import QuotaService
 from .saved_places import SavedPlaceActionSink, SavedPlaceService
 from .stores import SpendBudget, StateStores, StoreKillSwitch, firestore_stores, memory_stores
+from .stores.protocols import KILL_PATH_PLACES, KillSwitchReason
 from .stores import firestore as firestore_adapters
 from .stores.actions_store import (
     FirestorePendingActionStore,
@@ -228,7 +231,9 @@ def firebase_identity_from_env(env: Mapping[str, str]) -> tuple[IdentityVerifier
     Fails closed with a static ``ConfigurationError``: without ``FIREBASE_PROJECT_ID``, or when the
     optional ``auth`` extra (PyJWT, cryptography) is not installed. Nothing here calls Google; the
     signing keys are fetched on the first verification. No revocation checker is wired (it needs
-    Firebase Admin credentials, an owner TODO), so ``disabled_uids`` stays empty until one exists."""
+    Firebase Admin credentials, an owner TODO). When one is, its answer travels on the verified
+    identity (``VerifiedIdentity.revoked``) and is never written to ``disabled_uids``, which stays
+    a static operator-supplied set (decision 28)."""
     project = env.get(FIREBASE_PROJECT_VAR)
     if not isinstance(project, str) or not project.strip():
         raise ConfigurationError(f"{FIREBASE_PROJECT_VAR} is missing or empty")
@@ -245,7 +250,7 @@ def firebase_identity_from_env(env: Mapping[str, str]) -> tuple[IdentityVerifier
     return verifier, disabled
 
 
-def _app_check_policy(env: Mapping[str, str], verifier: Any) -> Any:
+def _app_check_policy(env: Mapping[str, str], verifier: Any, *, required: bool = False) -> Any:
     """The App Check policy (None when nothing is configured: no gate at all). Enforcement is
     ``APP_CHECK_ENFORCE=true`` only (default off, monitor mode records the signal and never blocks);
     enforcing without a verifier, or a value that is neither empty, true nor false, is refused."""
@@ -254,6 +259,16 @@ def _app_check_policy(env: Mapping[str, str], verifier: Any) -> Any:
         raise ConfigurationError(f"{APP_CHECK_ENFORCE_VAR} must be true or false")
     enforce = raw == "true"
     number = env.get(FIREBASE_PROJECT_NUMBER_VAR)
+    if required:
+        # Production (``server.create_production_app``): App Check is never silently off. The
+        # project number and an explicit enforce decision are both mandatory; "false" is a
+        # deliberate monitor mode, recorded by the signal and bounded by the tighter limiter on the
+        # paid routes (decision 28), not a default.
+        if not (isinstance(number, str) and number.strip()) and verifier is None:
+            raise ConfigurationError(f"{FIREBASE_PROJECT_NUMBER_VAR} is required in production")
+        if raw == "":
+            raise ConfigurationError(
+                f"{APP_CHECK_ENFORCE_VAR} must be set to true or false in production")
     if verifier is None and number:
         try:
             from .appcheck import AppCheckVerifier, default_fetcher
@@ -276,6 +291,38 @@ def _app_check_policy(env: Mapping[str, str], verifier: Any) -> Any:
         raise ConfigurationError(
             "app check support is not installed (install the auth extra)") from None
     return AppCheckPolicy(enforce=enforce, verifier=verifier)
+
+
+def _place_references(
+    *, workspaces: Any, plans: Any, saved_places: Any, history: Any, display_cache: Any,
+    config: RuntimeConfig, now: Callable[[], datetime],
+) -> SourcedPlaceReferences:
+    """The place IDs a caller may look up on the paid Places routes (``places.ownership``): the
+    caller's workspace (selected place, candidate evidence, latest plan destination), their saved
+    places and history records while history is active, and their current display-cache answers."""
+
+    def workspace_ids(uid: str) -> list[str]:
+        workspace = workspaces.get(uid, "default", now())
+        if workspace is None:
+            return []
+        ids = [e.place_id for e in workspace.evidence if e.place_id]
+        ids += [str(f.value) for f in workspace.facts
+                if f.key.casefold() == "selected_place_id" and isinstance(f.value, str)]
+        latest = plans.latest(uid, workspace.id, now())
+        if latest is not None:
+            ids.append(latest.destination.place_id)
+        return ids
+
+    def saved_ids(uid: str) -> list[str]:
+        return [p.place_id for p in saved_places.list(uid)] if history_active(config) else []
+
+    def history_ids(uid: str) -> list[str]:
+        if not history_active(config):
+            return []
+        return [r.place_ref.place_id for r in history.list(uid, now())]
+
+    return SourcedPlaceReferences(
+        (workspace_ids, saved_ids, history_ids, display_cache.place_ids))
 
 
 def _provider(value: str) -> Callable[[], str]:
@@ -367,6 +414,9 @@ class Runtime:
     plan_stores: PlanStores | None = None
     history_service: HistoryService | None = None
     saved_place_service: SavedPlaceService | None = None
+    places_kill_switch: KillSwitchProbe | None = None
+    # Decision 28: False while no FirebaseAdmin is configured (the login cannot be removed).
+    login_deletion_available: bool = False
 
     def __repr__(self) -> str:
         return f"Runtime(model={self.config.model_id!r}, provider={self.config.provider!r})"
@@ -404,6 +454,7 @@ def build_runtime(
     firebase_admin: Any = None,
     history_enabled: bool = False,
     history_notice_version: str | None = None,
+    require_app_check: bool = False,
 ) -> Runtime:
     """Build the production app from ``env`` (a mapping the caller supplies).
 
@@ -431,7 +482,15 @@ def build_runtime(
         raise ConfigurationError("a pilot spend budget is required with durable state")
     openrouter_key = _secret(env, OPENROUTER_KEY_VAR)
     maps_key = _secret(env, GOOGLE_MAPS_KEY_VAR)
-    app_check_policy = _app_check_policy(env, app_check_verifier)
+    if getattr(places_service, "enabled", False) is True or (
+            places_service is None and places_price_table is not None
+            and places_price_table.reviewed):
+        # Places calls are priced in USD and carry no tokens: a token-only budget would never see
+        # their spend, so a dollar cap is mandatory while Places is on.
+        if budget is None or budget.max_usd is None:
+            raise ConfigurationError(
+                f"{SPEND_MAX_USD_VAR} (a dollar cap) is required while Places is enabled")
+    app_check_policy = _app_check_policy(env, app_check_verifier, required=require_app_check)
 
     config = pinned_runtime_config()
     if history_enabled or history_notice_version is not None:
@@ -439,7 +498,9 @@ def build_runtime(
                         history_notice_version=history_notice_version)
     prices = pinned_price_table()
     latch = QuotaLatch()
-    kill_switch = StoreKillSwitch(stores.costs, now)
+    kill_switch = StoreKillSwitch(stores.costs, now)  # the discovery path
+    places_kill_switch = StoreKillSwitch(
+        stores.costs, now, trip_reason=KillSwitchReason.PLACES, path=KILL_PATH_PLACES)
     try:
         inner = OpenRouterGateway(
             model_transport if model_transport is not None else HttpxTransport(),
@@ -466,7 +527,7 @@ def build_runtime(
         places_service = build_places_service(
             _provider(maps_key), ledger=ledger,
             price_table=places_price_table or UNREVIEWED_PRICE_TABLE, config=config,
-            kill_switch=kill_switch, transport=places_transport, now=now, sink=sink)
+            kill_switch=places_kill_switch, transport=places_transport, now=now, sink=sink)
 
     # State beside the turn stores: plan versions, outcomes, edit receipts and pending actions use
     # the same backend (and the same Firestore client) as the quota and workspace stores.
@@ -489,7 +550,7 @@ def build_runtime(
         places_store, asks_store = memory_saved_place_stores()
     history_service = HistoryService(
         history_store, consents, runtime_config=config, workspaces=stores.workspaces, clock=now,
-        sink=sink, account_guard=guard)
+        sink=sink, account_guard=guard, outcomes=plan_stores.outcomes)
     saved_place_service = SavedPlaceService(
         places_store, asks_store, consents, runtime_config=config, clock=now, sink=sink,
         account_guard=guard)
@@ -515,6 +576,9 @@ def build_runtime(
         runtime_config=config, clock=now, sink=sink, lock=orchestrator.workspace_lock,
         account_guard=guard, history=history_service)
     app.state.places_service = places_service
+    app.state.place_references = _place_references(
+        workspaces=stores.workspaces, plans=plan_stores.plans, saved_places=places_store,
+        history=history_store, display_cache=cache, config=config, now=now)
     app.state.app_check_verifier = app_check_verifier
     app.state.app_check_policy = app_check_policy
     app.state.action_service = action_service
@@ -534,4 +598,5 @@ def build_runtime(
         places_service=places_service, action_service=action_service,
         workspace_service=workspace_service, account_service=account_service,
         plan_stores=plan_stores, history_service=history_service,
-        saved_place_service=saved_place_service)
+        saved_place_service=saved_place_service, places_kill_switch=places_kill_switch,
+        login_deletion_available=firebase_admin is not None)

@@ -1,18 +1,25 @@
 """The user's own location, foreground only and with consent (owner decision 2026-10-17).
 
-Containment is the whole design. A coordinate pair exists in exactly two places: the in-memory
-request that carried it, and the one outbound ``search_places`` arguments dict sent to Google
-(as a location bias). It is never given to the model, and never reaches a log, a telemetry event,
-an exception text, a repr, the workspace, evidence, the cost ledger, the replay record, the
-display cache or its key, a quota or limiter record, or a consent record. Nothing is stored, so
-withdrawing consent has nothing to delete.
+Containment is the whole design. A turn's coordinate pair exists in exactly three places: the
+in-memory request that carried it, the one outbound ``search_places`` arguments dict sent to Google
+(as a location bias), and the one outbound Routes origin of ``POST /v1/routes/check`` (rounded; the
+route response is displayed and never stored). It is never given to the model, and never reaches a
+log, a telemetry event, an exception text, a repr, the workspace, evidence, the cost ledger, the
+replay record, the display cache or its key, a quota or limiter record, or a consent record.
+
+The ONE durable exception (decisions 24 and 25, dark behind ``history_enabled``): a registered
+user's explicit, confirmed SAVE_PLACE keeps the position, rounded to this precision, in the saved
+place (``saved_places.py``), and in the pending-action record only until confirm, cancel or expiry.
+That needs the separate SAVED_PLACE consent; withdrawing it deletes both. Nothing else is stored,
+so withdrawing LOCATION_FOREGROUND has nothing to delete.
 
 * ``LocationInput`` is the API model. It validates the range and finiteness, hides itself from
   repr and from validation errors, and ROUNDS to ``LOCATION_DECIMALS`` as soon as it is parsed,
   so the unrounded value is never kept on any model.
 * ``RoundedLocation`` is what the orchestrator and pipeline carry: frozen, slotted, redacted repr.
-* It is used only for a DISCOVERY proposal that ends with no usable area, and only when the
-  principal holds an active LOCATION_FOREGROUND consent (checked at the API, before any work).
+* It is used only for a DISCOVERY proposal that ends with no usable area and for the origin of a
+  route check, and only when the principal holds an active LOCATION_FOREGROUND consent (checked at
+  the API, before any work).
   It is never inferred and never taken from headers or the IP.
 """
 from __future__ import annotations

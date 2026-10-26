@@ -76,6 +76,32 @@ def access_principal(request: Request, principal: Principal, limiter: OperationL
     return request.app.state.orchestrator.quotas
 
 
+def _unverified(request: Request) -> bool:
+    """App Check ABSENT or INVALID on this request (decision 26, monitor mode). A request the
+    policy never looked at (no policy configured) is not unverified here."""
+    signal = getattr(request.state, "app_check_signal", None)
+    return signal is not None and str(getattr(signal, "value", signal)) in ("ABSENT", "INVALID")
+
+
+def paid_route_gate(request: Request, principal: Principal, *, general: bool = True) -> None:
+    """Per-process, per-principal sliding windows on the routes that spend money (Places, routes,
+    turns). ``paid_limiter`` bounds every caller; ``unverified_paid_limiter`` is a TIGHTER window
+    for requests whose App Check signal is ABSENT or INVALID. Never a ban: the caller is told when
+    to retry. Turns pass ``general=False``: their allowance is the quota meter."""
+    state = request.app.state
+    limiters = []
+    if _unverified(request):
+        limiters.append(getattr(state, "unverified_paid_limiter", None))
+    if general:
+        limiters.append(getattr(state, "paid_limiter", None))
+    for limiter in limiters:
+        if limiter is None:
+            continue
+        wait = limiter.check(principal.uid)
+        if wait is not None:
+            raise error(429, ErrorCode.QUOTA, "too many requests", ErrorReason.RATE_LIMITED, wait)
+
+
 def require_history_active(
     request: Request, principal: Principal = Depends(current_principal)
 ) -> None:

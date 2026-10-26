@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import anyio
 from fastapi import Depends, FastAPI, Request
@@ -36,6 +36,10 @@ from .telemetry import (
     get_default_sink,
     trace,
 )
+
+# OWNER-TUNABLE PLACEHOLDERS. Per principal per minute, per process.
+PAID_ROUTE_PER_MINUTE = 30
+UNVERIFIED_PAID_PER_MINUTE = 6
 
 _STATUS_CODES = {
     401: ErrorCode.POLICY,
@@ -194,6 +198,14 @@ def create_app(
     # Bootstrap is the tightest (once per page load); reads of the meter and capabilities are cheap.
     application.state.bootstrap_limiter = OperationLimiter(clock, max_operations=30)
     application.state.access_limiter = OperationLimiter(clock, max_operations=120)
+    # Paid routes (places, routes, turns): per process and per principal (docs/decisions.md 28).
+    # ``unverified_paid_limiter`` is the TIGHTER window for App Check ABSENT or INVALID requests.
+    application.state.paid_limiter = OperationLimiter(
+        clock, max_operations=PAID_ROUTE_PER_MINUTE, window=timedelta(minutes=1))
+    application.state.unverified_paid_limiter = OperationLimiter(
+        clock, max_operations=UNVERIFIED_PAID_PER_MINUTE, window=timedelta(minutes=1))
+    # Which place IDs the paid Places routes accept; None refuses all (set by the composition root).
+    application.state.place_references = None
     application.state.resolver = resolver or PrincipalResolver(
         policies=application.state.orchestrator.quotas.policies
     )
