@@ -65,3 +65,48 @@ explicitly). Google text is rendered as plain text and Google links are plain `h
   as `/sw.js` by `vite build` (second entry); registered only in production over HTTPS or localhost
   (`src/sw-register.ts`); an update shows a "Reload to update" banner. `npm run dev` registers nothing.
 - Serve `/sw.js` with `Cache-Control: no-cache` and from the site root so its scope is `/`.
+
+
+## Trip Board, place and route cards, handoff, reminders, check-in (Phase 0 journey)
+
+Code: `src/board/` (typed API layer `boardApi.ts`, view-models `viewModels.ts`, local reminders
+`reminders.ts`), `src/useBoard.ts`, `src/components/board/`. The chat gets the board only when a
+`boardApi` is passed (`main.tsx` does); otherwise nothing is requested.
+
+- Board: goal, assumptions (unconfirmed) and confirmed constraints as editable chips (edit, add, remove,
+  one-tap "Confirm" on an assumption; the server stamps the confirmation). Edits are
+  `PATCH /v1/workspace` with `base_version` and an `Idempotency-Key`; a retry reuses both; a 409 shows the
+  conflict state with "Reload the board". Up to three places (place ID plus the user's own label, in memory),
+  timeline, warnings, pending actions and the plan version. Older versions are not shown (no API yet).
+- Pick: "Check this place" appears after Google's block (never inside it) and only for a source with a typed
+  `place_id`. `POST /v1/places/details` renders name, address, open-now and rating as text with "Google Maps"
+  immediately after the fields. `POST /v1/routes/check` (DRIVE) shows "About N minutes by car" (rounded to 5)
+  only with location consent; otherwise a fixed prompt opens the existing consent flow. The position is read
+  inside the tap, sent once, never kept. Card and route data live in memory only.
+- Actions: the server's preview, Confirm / Cancel, expiry text. The nonce stays in memory and is never
+  rendered. Confirm sends the action's own `idempotency_key`, so a retry repeats the same key and nonce.
+  LAUNCH_HANDOFF opens the server-returned URL with `noopener,noreferrer` only if it is https on
+  `www.google.com/maps` (also offered as a link), and works while the meter is GATED. SET_REMINDER saves
+  place ID + the user's label + due time via the storage layer, after the first-save notice.
+- Reminders: due and upcoming (next hour) reminders show as a banner when the app is open, with Snooze 10
+  minutes, Dismiss and "Did you go?". A closed web tab cannot fire a reminder; nothing runs in the background.
+- Check-in: WENT / DID_NOT_GO / CHANGED_PLAN plus an optional note, `POST /v1/outcomes` with a per-check-in key
+  (reused on retry). If the ack says `recorded: false` (or the route is not available yet) the report is kept
+  in the local `outing_log` (place ID and the user's label only). The note is never stored or logged.
+- Every failure shows fixed copy chosen by kind; a typed 501/503 DISABLED means "not available yet".
+
+### Contract gaps found (for the backend)
+
+1. `DiscoveryPlace` has no `place_id`; the client reads `place_id` if the server adds it and shows no
+   "Check this place" button otherwise. It never parses a URL or text.
+2. `ConfirmActionResponse` has no handoff URL field; the client reads `handoff_url` (response or action),
+   pinned to `https://www.google.com/maps`, and falls back to `action.target` only if that is a pinned URL.
+3. `ProposeActionRequest` has no due time, so a reminder's time is chosen and kept on the device and the
+   server preview cannot mention it.
+4. `WorkspaceView` has no candidates, timeline, evidence freshness, warnings or plan history. Candidates are
+   in memory; timeline reads facts keyed `leave_by` / `arrive_by`; freshness comes from the place and route
+   `fetched_at`; history shows only the current version.
+5. The board routes declare no `Idempotency-Key` header in OpenAPI; the client sends it anyway on PATCH
+   workspace, confirm and outcomes.
+6. `classifyFailure` maps 501/503 to "provider"; the board uses its own classifier (reason NOT_IMPLEMENTED or
+   DISABLED, or status 501, is "unavailable").

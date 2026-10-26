@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 
 import type { Api } from "../api/client";
+import { UNAVAILABLE_BOARD_API, type BoardApi } from "../board/boardApi";
+import { useBoard } from "../useBoard";
 import { useChat } from "../useChat";
 import { useLocalSession } from "../useLocalSession";
 import { useServiceWorkerUpdate } from "../sw-register";
@@ -12,13 +14,18 @@ import { DataControls, LocalNoticeCard, OfflineBanner, OutboxStatus, UpdateBanne
 import { LocationControl } from "./LocationControl";
 import { ProblemNotice } from "./ProblemNotice";
 import { UsageMeter } from "./UsageMeter";
+import { PickList } from "./board/PickList";
+import { ReminderBanner } from "./board/ReminderBanner";
+import { TripBoard } from "./board/TripBoard";
 
 /** `local` is the on-device store; null (the default) keeps everything in memory only. */
-export function Chat({ api, local = null }: { api: Api; local?: LocalStore | null }) {
+export function Chat({ api, local = null, boardApi = null }: { api: Api; local?: LocalStore | null; boardApi?: BoardApi | null }) {
   const location = useLocationConsent(api);
   const usage = useUsage(api);
   const session = useLocalSession(local, api);
   const chat = useChat(api, location, usage.update, session);
+  // Without a board API the board stays off (and makes no requests).
+  const board = useBoard(boardApi ?? UNAVAILABLE_BOARD_API, location, session);
   const updateApply = useServiceWorkerUpdate();
   // The server's meter_state decides; the client computes nothing from the counters.
   const gated = usage.view?.meter_state === "GATED";
@@ -67,6 +74,7 @@ export function Chat({ api, local = null }: { api: Api; local?: LocalStore | nul
       <UpdateBanner apply={updateApply} />
       {session ? <OfflineBanner online={session.online} /> : null}
       {session ? <LocalNoticeCard session={session} /> : null}
+      {boardApi ? <ReminderBanner store={local} token={board.reminderToken} onCheckIn={board.addFollowUp} /> : null}
 
       <div className="log" aria-live="polite" aria-label="Conversation">
         {chat.items.length === 0 && !chat.sending ? (
@@ -97,7 +105,12 @@ export function Chat({ api, local = null }: { api: Api; local?: LocalStore | nul
               </div>
             );
           }
-          return <AssistantMessage key={item.id} response={item.response} />;
+          return (
+            <div key={item.id} className="turn">
+              <AssistantMessage response={item.response} />
+              {boardApi && item.response.discovery ? <PickList block={item.response.discovery} board={board} /> : null}
+            </div>
+          );
         })}
         {chat.sending ? (
           <p className="loading" role="status">
@@ -147,6 +160,8 @@ export function Chat({ api, local = null }: { api: Api; local?: LocalStore | nul
           Send
         </button>
       </form>
+
+      {boardApi ? <TripBoard api={boardApi} board={board} location={location} /> : null}
 
       {session ? <DataControls session={session} /> : null}
     </main>
