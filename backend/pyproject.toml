@@ -12,6 +12,10 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+auth = [
+  "PyJWT==2.10.1",  # RS256 verification of Firebase ID and App Check tokens (app/auth_firebase.py)
+  "cryptography==44.0.2",  # x509/JWK public keys for PyJWT RS256
+]
 dev = ["pytest>=8.0,<9.0", "ruff>=0.6"]
 
 [build-system]
