@@ -26,6 +26,15 @@ from decimal import Decimal
 from typing import Literal
 
 from .gateway.types import Usage
+from .stores.memory import MemoryCostStore
+from .stores.protocols import CostEntryDelta, CostStore, SpendBudget, SpendTotals, over_budget
+
+
+def _usd_micros(cost: Decimal | None) -> int:
+    """Whole micro-dollars, rounded UP (a cap is never under-counted); an unpriced entry is 0."""
+    if cost is None or cost <= 0:
+        return 0
+    return int((cost * 1_000_000).to_integral_value(rounding="ROUND_CEILING"))
 
 
 class Attribution(StrEnum):
@@ -66,6 +75,8 @@ class CostLedger:
         retention: timedelta = timedelta(hours=24),
         failure_retention: timedelta = timedelta(hours=1),
         sweep_every: int = 100,
+        store: CostStore | None = None,
+        budget: SpendBudget | None = None,
     ) -> None:
         self._clock: Callable[[], datetime] = clock or (lambda: datetime.now(UTC))
         self._retention = retention
@@ -78,10 +89,12 @@ class CostLedger:
         # consume the allowance, so this is what bounds them. Same retention as the failure marks.
         self._free: dict[str, deque[datetime]] = {}
         self._writes = 0
-        # Process-wide running total of PROVIDER-attributable spend since start (never pruned).
-        # The whole-pilot budget and the shared Firestore ledger (ACCESS-02) will consume this and
-        # the per-principal ``provider_usage_for``; in memory it covers this process only.
-        self._provider_total = Usage(input_tokens=0, output_tokens=0)
+        # The whole-pilot spend counter and the kill switch live in a ``CostStore``: in memory it
+        # covers this process only, the Firestore store is shared by every instance (ACCESS-02,
+        # #35). The per-principal windows above stay per process (tracked under #35).
+        self._store: CostStore = store if store is not None else MemoryCostStore()
+        self._budget = budget
+        self._store_failures = 0
         self._lock = threading.Lock()
 
     # -- writes (prune as they go) --------------------------------------------------------------
@@ -112,10 +125,18 @@ class CostLedger:
     def record(self, entry: CostEntry) -> None:
         now = self._clock()
         stamped = replace(entry, at=now)
+        # The pilot counter first, outside the ledger lock (a store call may block). A store fault
+        # must not fail a turn that already spent money: it is counted, and ``spend_blocked``
+        # fails closed for new paid work while the store is unreadable.
+        try:
+            self._store.add_spend(
+                CostEntryDelta(entry.input_tokens, entry.output_tokens,
+                               _usd_micros(entry.estimated_cost_usd),
+                               provider_attributed=entry.attribution == Attribution.PROVIDER),
+                self._budget, now)
+        except Exception:  # noqa: BLE001
+            self._store_failures += 1
         with self._lock:
-            if entry.attribution == Attribution.PROVIDER:
-                self._provider_total = self._provider_total.plus(
-                    Usage(input_tokens=entry.input_tokens, output_tokens=entry.output_tokens))
             self._by_principal.setdefault(entry.principal_id, deque()).append(stamped)
             self._after_write_locked(entry.principal_id, now)
 
@@ -202,9 +223,25 @@ class CostLedger:
 
     @property
     def provider_total(self) -> Usage:
-        """Process-wide running total of PROVIDER-attributed tokens since start."""
-        with self._lock:
-            return self._provider_total
+        """Whole-pilot running total of PROVIDER-attributed tokens (shared with the store)."""
+        totals = self._store.totals()
+        return Usage(input_tokens=totals.provider_input_tokens,
+                     output_tokens=totals.provider_output_tokens)
+
+    def totals(self) -> SpendTotals:
+        """The whole-pilot spend counters, every attribution (see ``SpendTotals``)."""
+        return self._store.totals()
+
+    def spend_blocked(self) -> bool:
+        """True when new paid work must not start: the pilot budget is reached (the counter that
+        tripped the shared kill switch) or the shared store cannot be read (fails closed). With
+        no budget configured and a readable store this is always False."""
+        if self._budget is None:
+            return False
+        try:
+            return over_budget(self._store.totals(), self._budget)
+        except Exception:  # noqa: BLE001
+            return True
 
     def oldest_usage_at(self, principal_id: str, *, window: timedelta) -> datetime | None:
         """When the oldest USER-attributed token-bearing entry (the ones the ceiling counts) was

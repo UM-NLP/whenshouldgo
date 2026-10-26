@@ -42,6 +42,18 @@ _TELEMETRY_REASON = {
 }
 
 
+def restore_validated(answer: GroundedAnswer, principal_id: str) -> ValidatedAnswer:
+    """Re-wrap an answer that THIS server's own display cache stored after it passed the validator.
+
+    Only the Firestore display cache calls this, after it re-parsed the stored JSON through
+    ``GroundedAnswer`` (which re-checks both hashes against the displayed fields) and re-checked
+    the expiry and the 30-day cap. It adds no authority a stored, self-consistent answer did not
+    already earn; a document that does not parse or hash is never restored."""
+    if not isinstance(answer, GroundedAnswer):
+        raise TypeError("only a GroundedAnswer can be restored")
+    return mint_validated(answer, principal_id)
+
+
 class GroundedAnswerValidator:
     def __init__(
         self,

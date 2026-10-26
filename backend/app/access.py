@@ -63,8 +63,10 @@ def usage_view(quotas: QuotaService, principal: Principal) -> UsageView:
     allowance = policy.for_kind(principal.kind)
     if allowance is None:
         raise AccountUnavailable()
-    quotas.ensure_record(principal.uid)
-    used = quotas.usage_for(principal.uid)
+    used = quotas.current_usage(principal)  # also starts or rolls the principal's window
+    window = quotas.window_for(principal)
+    resets_at = (used.window_started_at + window
+                 if window is not None and used.window_started_at is not None else None)
     state, reason = meter_state(policy, used.successful_turns, used.activated_trips, allowance)
     registered = policy.for_kind(PrincipalKind.REGISTERED_FREE)
     guest = principal.kind == PrincipalKind.GUEST
@@ -74,7 +76,7 @@ def usage_view(quotas: QuotaService, principal: Principal) -> UsageView:
         user_turns_limit=allowance.user_turn_limit,
         activated_trips_used=used.activated_trips,
         activated_trips_limit=allowance.activated_trip_limit,
-        resets_at=None,
+        resets_at=resets_at,
         meter_state=state,
         gate_reason=reason,
         registered_turn_limit=registered.user_turn_limit if guest and registered else None,

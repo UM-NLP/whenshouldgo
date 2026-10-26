@@ -13,6 +13,7 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from .auth import IdentityVerifier, PrincipalResolver
 from .consent import ConsentStore, InMemoryConsentStore, OperationLimiter
+from .stores.protocols import IdempotencyStore, WorkspaceStore
 from .costs import CostLedger
 from .discovery import DisplayCache, GroundingLiteClient
 from .domain import ErrorCode, ErrorReason, RuntimeConfig
@@ -147,6 +148,8 @@ def create_app(
     dev_scaffold: bool = False,
     consent_store: ConsentStore | None = None,
     enable_docs: bool = False,
+    workspace_store: WorkspaceStore | None = None,
+    idempotency_store: IdempotencyStore | None = None,
 ) -> FastAPI:
     """Build the API. With no verifier, every authenticated route fails closed (401).
 
@@ -159,7 +162,7 @@ def create_app(
     ``orchestrator`` cannot be combined with injected parts."""
     ensure_log_guard()
     parts = (gateway, discovery_client, display_cache, runtime_config, quotas, clock, cost_ledger,
-             dev_scaffold or None)
+             dev_scaffold or None, workspace_store, idempotency_store)
     if orchestrator is not None and any(part is not None for part in parts):
         raise ValueError("pass either an orchestrator or the parts to build one, not both")
     # /docs, /redoc and /openapi.json are off unless explicitly enabled; ``app.openapi()`` (used by
@@ -169,7 +172,8 @@ def create_app(
     application.state.orchestrator = orchestrator or TurnOrchestrator(
         quotas, trace_sink, gateway=gateway, discovery_client=discovery_client,
         display_cache=display_cache, runtime_config=runtime_config, cost_ledger=cost_ledger,
-        clock=clock, dev_scaffold=dev_scaffold,
+        clock=clock, dev_scaffold=dev_scaffold, workspace_store=workspace_store,
+        idempotency_store=idempotency_store,
     )
     application.state.sink = (
         trace_sink or getattr(application.state.orchestrator, "sink", None) or get_default_sink()

@@ -1,25 +1,20 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field, replace
-from threading import Lock
+from collections.abc import Callable
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 
 from .domain import Principal
-from .entitlements import Allowance, PolicyRegistry, default_registry
+from .entitlements import Allowance, Period, PolicyRegistry, default_registry
+from .stores.memory import MAX_LEDGER_RECORDS, MemoryQuotaStore
+from .stores.protocols import QuotaLimits, QuotaStore, ReserveOutcome, Usage
 
+# The rolling window of a ``ROLLING_30_DAYS`` allowance (decisions 5 and 27).
+ROLLING_WINDOW = timedelta(days=30)
 
-@dataclass
-class Usage:
-    successful_turns: int = 0
-    activated_trips: int = 0
-    committed_keys: set[str] = field(default_factory=set)
-    reserved_keys: set[str] = field(default_factory=set)
-
-
-# Upper bound on ledger records held in this in-memory development service. When it is exceeded the
-# OLDEST EMPTY records (no committed turns, no trips, no keys) are dropped; a record with real usage
-# is never evicted (that would hand back allowance). Durable, shared ledgers and identity-creation
-# limits are tracked under ACCESS-02 (#35).
-MAX_LEDGER_RECORDS = 100_000
+__all__ = [
+    "MAX_LEDGER_RECORDS", "QuotaService", "ReservationConflict", "TurnReservation", "Usage",
+]
 
 
 class ReservationConflict(Exception):
@@ -35,108 +30,113 @@ class TurnReservation:
 
 
 class QuotaService:
-    """In-memory development implementation; production maps this contract to Firestore.
+    """The quota contract over a ``QuotaStore`` (in-memory by default; Firestore in production).
 
     Limits come from the injected versioned PolicyRegistry, never from constants here.
-    ``reserve`` / ``commit`` / ``release`` are atomic under one lock: a reservation
-    holds one unit of allowance until the turn completes (commit) or fails (release),
-    so concurrent requests can never overspend and a denial happens before any
-    workspace mutation.
+    ``reserve`` / ``commit`` / ``release`` are each one atomic store operation: a reservation
+    holds one unit of allowance until the turn completes (commit) or fails (release), so
+    concurrent requests can never overspend and a denial happens before any workspace mutation.
+    An abandoned reservation (the process died) expires, so it cannot hold allowance forever.
 
-    TODO(#22): enforce the ROLLING_30_DAYS window for registered-free principals and
-    back this contract with Firestore (UsageReservation).
+    A ``ROLLING_30_DAYS`` allowance (registered free) counts in a window that starts at the first
+    use and restarts 30 days later with fresh counts; a ``LIFETIME`` allowance (guest) never
+    resets. ``activate_trip`` counts a workspace's activation once.
     """
 
-    def __init__(self, policies: PolicyRegistry | None = None) -> None:
+    def __init__(
+        self, policies: PolicyRegistry | None = None, store: QuotaStore | None = None,
+        clock: Callable[[], datetime] | None = None,
+    ) -> None:
         self.policies = policies or default_registry()
-        self._usage: dict[str, Usage] = {}
-        self._lock = Lock()
+        self._store: QuotaStore = (
+            store if store is not None else MemoryQuotaStore(max_records=MAX_LEDGER_RECORDS))
+        # The in-memory ledger dict (tests and dev tools inspect it); None for a durable store.
+        self._usage: dict[str, Usage] | None = getattr(self._store, "usage", None)
+        self._clock = clock or (lambda: datetime.now(UTC))
 
-    def _record(self, uid: str) -> Usage:
-        """Get or create the record (caller holds the lock); bounded, see MAX_LEDGER_RECORDS."""
-        usage = self._usage.get(uid)
-        if usage is None:
-            usage = self._usage[uid] = Usage()
-            if len(self._usage) > MAX_LEDGER_RECORDS:
-                empty = [k for k, u in self._usage.items() if k != uid and not (
-                    u.successful_turns or u.activated_trips or u.committed_keys or u.reserved_keys)]
-                for key in empty[: len(self._usage) - MAX_LEDGER_RECORDS]:
-                    del self._usage[key]
-        return usage
-
-    def usage_for(self, uid: str) -> Usage:
-        """Return a snapshot; callers cannot mutate the ledger through it."""
-        with self._lock:
-            usage = self._usage.get(uid) or Usage()
-            return replace(
-                usage,
-                committed_keys=set(usage.committed_keys),
-                reserved_keys=set(usage.reserved_keys),
-            )
-
-    def ensure_record(self, uid: str) -> None:
-        """Idempotently create the principal's ledger record (session bootstrap)."""
-        with self._lock:
-            self._record(uid)
-
+    # -- policy ---------------------------------------------------------------------------------
     def _allowance(self, principal: Principal) -> Allowance | None:
         return self.policies.for_kind(principal.kind, principal.policy_version)
 
-    @staticmethod
-    def _has_room(usage: Usage, allowance: Allowance | None) -> bool:
-        if allowance is None:
-            return False
-        return (
-            usage.successful_turns + len(usage.reserved_keys) < allowance.user_turn_limit
-            and usage.activated_trips < allowance.activated_trip_limit
-        )
+    def window_for(self, principal: Principal) -> timedelta | None:
+        allowance = self._allowance(principal)
+        return ROLLING_WINDOW if allowance and allowance.period == Period.ROLLING_30_DAYS else None
+
+    def _limits(self, principal: Principal) -> QuotaLimits:
+        allowance = self._allowance(principal)
+        if allowance is None:  # no entitlement: nothing is ever allowed
+            return QuotaLimits(0, 0, None)
+        return QuotaLimits(allowance.user_turn_limit, allowance.activated_trip_limit,
+                           self.window_for(principal))
+
+    # -- reads ----------------------------------------------------------------------------------
+    def usage_for(self, uid: str) -> Usage:
+        """Return a snapshot (no window applied); callers cannot mutate the ledger through it."""
+        return self._store.snapshot(uid, self._clock(), None)
+
+    def current_usage(self, principal: Principal) -> Usage:
+        """The principal's usage in its CURRENT window: a registered window that has run its
+        course is restarted (and that is persisted), so ``window_started_at`` is stable."""
+        window = self.window_for(principal)
+        now = self._clock()
+        self._store.ensure(principal.uid, now, window)
+        return self._store.snapshot(principal.uid, now, window)
+
+    def resets_at(self, principal: Principal) -> datetime | None:
+        """When the current rolling window ends; None for a lifetime allowance."""
+        window = self.window_for(principal)
+        if window is None:
+            return None
+        started = self.current_usage(principal).window_started_at
+        return started + window if started is not None else None
+
+    def ensure_record(self, principal_or_uid: Principal | str) -> None:
+        """Idempotently create the principal's ledger record (session bootstrap)."""
+        if isinstance(principal_or_uid, Principal):
+            self._store.ensure(principal_or_uid.uid, self._clock(), self.window_for(principal_or_uid))
+        else:
+            self._store.ensure(principal_or_uid, self._clock(), None)
 
     def allowed(self, principal: Principal) -> bool:
         """Advisory check for UX gating. Enforcement happens in ``reserve``."""
-        with self._lock:
-            usage = self._record(principal.uid)
-            return self._has_room(usage, self._allowance(principal))
+        return self._store.has_room(principal.uid, self._limits(principal), self._clock())
 
+    # -- turns ----------------------------------------------------------------------------------
     def reserve(self, principal: Principal, idempotency_key: str) -> TurnReservation:
         """Atomically check and hold one turn. Raises PermissionError when exhausted."""
-        with self._lock:
-            usage = self._record(principal.uid)
-            if idempotency_key in usage.committed_keys:
-                return TurnReservation(principal.uid, idempotency_key, duplicate=True)
-            if idempotency_key in usage.reserved_keys:
-                raise ReservationConflict("request with this idempotency key is in flight")
-            if not self._has_room(usage, self._allowance(principal)):
-                raise PermissionError("allowance exhausted")
-            usage.reserved_keys.add(idempotency_key)
-            return TurnReservation(principal.uid, idempotency_key)
+        outcome = self._store.reserve(
+            principal.uid, idempotency_key, self._limits(principal), self._clock())
+        if outcome == ReserveOutcome.DUPLICATE:
+            return TurnReservation(principal.uid, idempotency_key, duplicate=True)
+        if outcome == ReserveOutcome.IN_FLIGHT:
+            raise ReservationConflict("request with this idempotency key is in flight")
+        if outcome == ReserveOutcome.EXHAUSTED:
+            raise PermissionError("allowance exhausted")
+        return TurnReservation(principal.uid, idempotency_key)
 
     def commit(self, reservation: TurnReservation) -> Usage:
-        with self._lock:
-            usage = self._record(reservation.uid)
-            if reservation.duplicate or reservation.idempotency_key in usage.committed_keys:
-                usage.reserved_keys.discard(reservation.idempotency_key)
-                return usage
-            if reservation.idempotency_key not in usage.reserved_keys:
-                raise RuntimeError("commit without an active reservation")
-            usage.reserved_keys.discard(reservation.idempotency_key)
-            usage.successful_turns += 1
-            usage.committed_keys.add(reservation.idempotency_key)
-            return usage
+        if reservation.duplicate:
+            return self._store.snapshot(reservation.uid, self._clock(), None)
+        # The window rides on the principal; a commit never changes it, so the stored one is kept.
+        return self._store.commit(reservation.uid, reservation.idempotency_key,
+                                  _KEEP_WINDOW, self._clock())
 
     def release(self, reservation: TurnReservation) -> None:
-        with self._lock:
-            usage = self._usage.get(reservation.uid)
-            if usage is not None and not reservation.duplicate:
-                usage.reserved_keys.discard(reservation.idempotency_key)
+        if not reservation.duplicate:
+            self._store.release(reservation.uid, reservation.idempotency_key)
 
     def commit_turn(self, principal: Principal, idempotency_key: str) -> Usage:
         """Check and count one turn atomically (for callers with no work in between)."""
-        with self._lock:
-            usage = self._record(principal.uid)
-            if idempotency_key in usage.committed_keys:
-                return usage
-            if not self._has_room(usage, self._allowance(principal)):
-                raise PermissionError("allowance exhausted")
-            usage.successful_turns += 1
-            usage.committed_keys.add(idempotency_key)
-            return usage
+        return self._store.commit_turn(
+            principal.uid, idempotency_key, self._limits(principal), self._clock())
+
+    # -- trips ----------------------------------------------------------------------------------
+    def activate_trip(self, principal: Principal, workspace_id: str) -> bool:
+        """Count a trip activation once per workspace. True when this call counted it, False when
+        it was already counted (idempotent). Raises PermissionError at the trip limit."""
+        return self._store.activate_trip(
+            principal.uid, workspace_id, self._limits(principal), self._clock())
+
+
+# ``commit`` has no principal, hence no window: the store treats this as "apply no roll".
+_KEEP_WINDOW = QuotaLimits(0, 0, None)

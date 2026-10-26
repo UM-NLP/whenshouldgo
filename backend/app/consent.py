@@ -7,9 +7,9 @@ withdrawal is a new consent with a new id, and a repeated grant while one is act
 nothing (idempotent). A record holds the purpose, notice version, processors (GOOGLE only for
 location: the model never receives a location), scope and times: never a coordinate.
 
-``InMemoryConsentStore`` is PER PROCESS. Shared, durable ledgers (Firestore) come with issue
-ACCESS-02 (#35); until then a Cloud Run restart or a second instance forgets consent, which fails
-closed (the user is asked to consent again).
+``InMemoryConsentStore`` holds the rules; where entries live is a ``ConsentLedgerStore`` (in memory
+by default and PER PROCESS, so a restart forgets consent and the user is asked again, which fails
+closed; the Firestore ledger in ``app/stores`` is shared and durable, ACCESS-02 / #35).
 
 ``OperationLimiter`` is a small per-principal sliding window over consent endpoint calls.
 """
@@ -17,12 +17,14 @@ from __future__ import annotations
 
 import threading
 import uuid
-from collections import OrderedDict, defaultdict, deque
+from collections import OrderedDict, deque
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from typing import Protocol, runtime_checkable
 
 from .domain import ConsentProcessor, ConsentPurpose, ConsentRecord, ConsentScope, evolve
+from .stores.memory import MemoryConsentLedger
+from .stores.protocols import ConsentLedgerStore
 
 # The notice text the client shows before it calls POST /v1/me/consents. A grant must name this
 # exact version: a stale client cannot record consent to a notice the server no longer serves.
@@ -56,19 +58,29 @@ class ConsentStore(Protocol):
 
 
 class InMemoryConsentStore:
-    def __init__(self, clock: Callable[[], datetime] | None = None) -> None:
-        self._clock = clock or (lambda: datetime.now(UTC))
-        self._ledger: dict[str, list[ConsentRecord]] = defaultdict(list)
-        self._lock = threading.Lock()
+    """The consent rules over a ``ConsentLedgerStore`` (in memory by default; Firestore in
+    production, see ``app/stores``). Despite the name it is the rules, not the storage: every
+    decision runs inside one atomic ledger ``update``, and the ledger can only append."""
 
-    def _latest(self, owner_id: str) -> dict[str, ConsentRecord]:
+    def __init__(
+        self, clock: Callable[[], datetime] | None = None, *,
+        ledger: ConsentLedgerStore | None = None,
+    ) -> None:
+        self._clock = clock or (lambda: datetime.now(UTC))
+        self._ledger: ConsentLedgerStore = ledger if ledger is not None else MemoryConsentLedger()
+
+    @staticmethod
+    def _latest(records: tuple[ConsentRecord, ...]) -> dict[str, ConsentRecord]:
         latest: dict[str, ConsentRecord] = {}
-        for record in self._ledger.get(owner_id, ()):
+        for record in records:
             latest[record.id] = record
         return latest
 
-    def _active_for(self, owner_id: str, purpose: ConsentPurpose) -> ConsentRecord | None:
-        for record in self._latest(owner_id).values():
+    @classmethod
+    def _active_for(
+        cls, records: tuple[ConsentRecord, ...], purpose: ConsentPurpose
+    ) -> ConsentRecord | None:
+        for record in cls._latest(records).values():
             if (record.purpose == purpose and record.withdrawn_at is None
                     and record.notice_version == NOTICE_VERSIONS.get(purpose)):
                 return record
@@ -77,39 +89,43 @@ class InMemoryConsentStore:
     def grant(self, owner_id: str, purpose: ConsentPurpose, notice_version: str) -> ConsentRecord:
         if purpose not in SUPPORTED_PURPOSES or notice_version != NOTICE_VERSIONS[purpose]:
             raise WrongNoticeVersion()
-        with self._lock:
-            existing = self._active_for(owner_id, purpose)
+
+        def decide(records: tuple[ConsentRecord, ...]) -> tuple[tuple[ConsentRecord, ...], ConsentRecord]:
+            existing = self._active_for(records, purpose)
             if existing is not None:
-                return existing
+                return (), existing
             record = ConsentRecord(
                 id=f"consent-{uuid.uuid4().hex[:24]}", owner_id=owner_id, purpose=purpose,
                 notice_version=notice_version, processors=PROCESSORS[purpose],
                 scope=ConsentScope(), granted_at=self._clock(), context=_CONTEXT[purpose])
-            self._ledger[owner_id].append(record)
-            return record
+            return (record,), record
+
+        return self._ledger.update(owner_id, decide)
 
     def withdraw(self, owner_id: str, purpose: ConsentPurpose) -> bool:
-        with self._lock:
-            existing = self._active_for(owner_id, purpose)
+        def decide(records: tuple[ConsentRecord, ...]) -> tuple[tuple[ConsentRecord, ...], bool]:
+            existing = self._active_for(records, purpose)
             if existing is None:
-                return False
+                return (), False
             now = max(self._clock(), existing.granted_at)
-            self._ledger[owner_id].append(evolve(existing, withdrawn_at=now))
-            return True
+            return (evolve(existing, withdrawn_at=now),), True
+
+        return self._ledger.update(owner_id, decide)
 
     def active(self, owner_id: str) -> tuple[ConsentRecord, ...]:
-        with self._lock:
-            return tuple(
-                r for r in self._latest(owner_id).values()
-                if r.withdrawn_at is None and r.notice_version == NOTICE_VERSIONS.get(r.purpose))
+        return tuple(
+            r for r in self._latest(self._ledger.read(owner_id)).values()
+            if r.withdrawn_at is None and r.notice_version == NOTICE_VERSIONS.get(r.purpose))
 
     def has_active(self, owner_id: str, purpose: ConsentPurpose) -> bool:
-        with self._lock:
-            return self._active_for(owner_id, purpose) is not None
+        return self._active_for(self._ledger.read(owner_id), purpose) is not None
 
     def ledger(self, owner_id: str) -> tuple[ConsentRecord, ...]:
-        with self._lock:
-            return tuple(self._ledger.get(owner_id, ()))
+        return self._ledger.read(owner_id)
+
+
+# The same class under a name that says what it is.
+LedgerConsentStore = InMemoryConsentStore
 
 
 class OperationLimiter:

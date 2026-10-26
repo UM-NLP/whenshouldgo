@@ -18,11 +18,22 @@ Rules this module keeps:
   TLS option and never weakens verification.
 * The gateway is built with ``production=True``: placeholder prices are refused.
 
-STATE IS PER PROCESS. The cost ledger, quota service, display cache, kill switch, quota latch,
-idempotent replay store and circuit breakers are in-memory and not shared across Cloud Run
-instances. The shared Firestore-backed state of issue ACCESS-02 (#35) is required before pilot
-traffic, so ``build_runtime`` raises ``ConfigurationError('shared state not implemented')``
-unless the caller passes ``allow_in_memory_state=True`` (the smoke script and tests do).
+STATE (ACCESS-02 / #35, decision 26: code only, no cloud resources). Durable state sits behind
+the protocols in ``app/stores``: quota ledger, consent ledger, workspaces, idempotent replay
+records, display cache, and the whole-pilot spend counter plus the kill switch. ``build_runtime``
+chooses the implementation from its arguments, never silently:
+
+* a Firestore client (``firestore_client``), or a project id (``firestore_project_id`` or
+  ``FIRESTORE_PROJECT_ID`` in ``env``) -> the Firestore adapters. A project id needs the optional
+  ``gcp`` extra (``google-cloud-firestore``); without it the build fails closed. Durable state also
+  REQUIRES a whole-pilot spend budget (``spend_budget``, or ``PILOT_SPEND_MAX_TOKENS`` /
+  ``PILOT_SPEND_MAX_USD`` in ``env``);
+* otherwise ``allow_in_memory_state=True`` (development, tests, the smoke script) -> in-memory;
+* otherwise ``ConfigurationError('shared state not implemented ...')``: production fails closed.
+
+Still per process whatever the choice (tracked under #35): the per-principal cost windows
+(daily ceiling, paid-failure and free-turn limiters), the operation limiters, the quota latch
+and the circuit breakers.
 
 Escalation or fallback: a second model would be a second ``OpenRouterGateway`` (bound to its own
 audited ``RuntimeConfig``, see ``second_model_config``) wrapped in its own ``ResilientGateway``.
@@ -34,6 +45,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from decimal import InvalidOperation
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -43,13 +55,14 @@ from typing import Any
 from fastapi import FastAPI
 
 from .auth import IdentityVerifier
+from .consent import InMemoryConsentStore
 from .costs import CostLedger
 from .discovery import (
     TOOL_SPECS,
-    DisplayCache,
+    DisplayCacheStore,
     GroundingLiteMcpClient,
     HttpxMcpTransport,
-    KillSwitch,
+    KillSwitchProbe,
     McpTransport,
 )
 from .domain import (
@@ -74,6 +87,8 @@ from .gateway.pricing import ModelPrice, PriceTable, UnitPrice
 from .main import create_app
 from .orchestrator import TurnOrchestrator
 from .quota import QuotaService
+from .stores import SpendBudget, StateStores, StoreKillSwitch, firestore_stores, memory_stores
+from .stores import firestore as firestore_adapters
 from .telemetry import TraceSink
 
 OPENROUTER_KEY_VAR = "OPENROUTER_API_KEY"
@@ -97,6 +112,11 @@ GROUNDING_LITE_UNIT_NAME = "grounding_lite_search"
 # against the billing console before pilot traffic.
 GROUNDING_LITE_USD_PER_REQUEST = Decimal("0")
 
+FIRESTORE_PROJECT_VAR = "FIRESTORE_PROJECT_ID"
+SPEND_MAX_TOKENS_VAR = "PILOT_SPEND_MAX_TOKENS"
+SPEND_MAX_USD_VAR = "PILOT_SPEND_MAX_USD"
+_PROJECT_ID = re.compile(r"^[a-z][a-z0-9-]{4,28}[a-z0-9]$")
+
 SECOND_MODEL_ID = "qwen/qwen3-next-80b-a3b-instruct"
 SECOND_MODEL_PRICE = ModelPrice(
     model_id=SECOND_MODEL_ID, provider=PROVIDER_SLUG,
@@ -118,6 +138,46 @@ def _secret(env: Mapping[str, str], name: str) -> str:
     if not _SECRET_SHAPE.fullmatch(value):
         raise ConfigurationError(f"{name} is malformed (whitespace or control characters)")
     return value
+
+
+def _spend_budget(env: Mapping[str, str]) -> SpendBudget | None:
+    """The whole-pilot cap from ``env`` (None when neither variable is set). Malformed, zero or
+    negative values are refused rather than ignored."""
+    tokens, usd = env.get(SPEND_MAX_TOKENS_VAR), env.get(SPEND_MAX_USD_VAR)
+    if tokens is None and usd is None:
+        return None
+    try:
+        return SpendBudget(
+            max_tokens=int(tokens) if tokens is not None else None,
+            max_usd=Decimal(usd) if usd is not None else None)
+    except (ValueError, InvalidOperation):
+        raise ConfigurationError("the pilot spend budget variables are malformed") from None
+
+
+def _choose_state(
+    env: Mapping[str, str], *, firestore_client: Any, firestore_project_id: str | None,
+    allow_in_memory_state: bool, now: Callable[[], datetime],
+) -> StateStores:
+    """Pick the durable-state implementation (see the module docstring); fails closed."""
+    project = firestore_project_id if firestore_project_id is not None else env.get(
+        FIRESTORE_PROJECT_VAR)
+    if firestore_client is None and project is None:
+        if allow_in_memory_state is not True:
+            raise ConfigurationError(
+                "shared state not implemented: configure Firestore or allow in-memory state (dev)")
+        return memory_stores(now)
+    client = firestore_client
+    if client is None:
+        if not isinstance(project, str) or not _PROJECT_ID.fullmatch(project):
+            raise ConfigurationError("the firestore project id is malformed")
+        try:
+            client = firestore_adapters.make_client(project)
+        except ImportError:
+            raise ConfigurationError(
+                "firestore support is not installed (install the gcp extra)") from None
+        except Exception:  # noqa: BLE001 - static text; credentials errors name secrets
+            raise ConfigurationError("the firestore client could not be created") from None
+    return firestore_stores(client, now)
 
 
 def _provider(value: str) -> Callable[[], str]:
@@ -193,14 +253,16 @@ class Runtime:
     app: FastAPI
     gateway: ResilientGateway
     discovery_client: GroundingLiteMcpClient
-    display_cache: DisplayCache
+    display_cache: DisplayCacheStore
     orchestrator: TurnOrchestrator
     costs: CostLedger
     quotas: QuotaService
-    kill_switch: KillSwitch
+    kill_switch: KillSwitchProbe
     quota_latch: QuotaLatch
     config: RuntimeConfig
     price_table: PriceTable
+    stores: StateStores | None = None
+    places_service: Any = None
 
     def __repr__(self) -> str:
         return f"Runtime(model={self.config.model_id!r}, provider={self.config.provider!r})"
@@ -217,24 +279,36 @@ def build_runtime(
     clock: Callable[[], datetime] | None = None,
     sink: TraceSink | None = None,
     allow_in_memory_state: bool = False,
+    firestore_client: Any = None,
+    firestore_project_id: str | None = None,
+    spend_budget: SpendBudget | None = None,
+    places_service: Any = None,
+    app_check_verifier: Any = None,
 ) -> Runtime:
     """Build the production app from ``env`` (a mapping the caller supplies).
 
-    ``identity_verifier`` is required (None raises): the app must fail closed, and there is no
-    production Firebase verifier yet. ``allow_in_memory_state`` must be True because ledgers,
-    quotas, cache and kill switches are per process (see the module docstring). Raises
-    ``ConfigurationError`` (static text, no values) for any refusal."""
+    ``identity_verifier`` is required (None raises): the app must fail closed. The Firebase
+    verifier and the App Check verifier are built elsewhere and passed in (``app_check_verifier``
+    is only attached to ``app.state`` here; ``places_service`` likewise, for the places routes).
+    Durable state is chosen as the module docstring says. Raises ``ConfigurationError`` (static
+    text, no values) for any refusal."""
     if identity_verifier is None:
         raise ConfigurationError("an identity verifier is required (no production verifier yet)")
-    if allow_in_memory_state is not True:
-        raise ConfigurationError("shared state not implemented")
+    now: Callable[[], datetime] = clock if clock is not None else (lambda: datetime.now(UTC))
+    stores = _choose_state(
+        env, firestore_client=firestore_client, firestore_project_id=firestore_project_id,
+        allow_in_memory_state=allow_in_memory_state, now=now)
+    budget = spend_budget if spend_budget is not None else _spend_budget(env)
+    if stores.kind != "memory" and budget is None:
+        # Durable, shared state means real traffic: the whole-pilot cap is mandatory (ACCESS-02).
+        raise ConfigurationError("a pilot spend budget is required with durable state")
     openrouter_key = _secret(env, OPENROUTER_KEY_VAR)
     maps_key = _secret(env, GOOGLE_MAPS_KEY_VAR)
 
     config = pinned_runtime_config()
     prices = pinned_price_table()
     latch = QuotaLatch()
-    kill_switch = KillSwitch()
+    kill_switch = StoreKillSwitch(stores.costs, now)
     try:
         inner = OpenRouterGateway(
             model_transport if model_transport is not None else HttpxTransport(),
@@ -244,7 +318,6 @@ def build_runtime(
         raise ConfigurationError("model gateway configuration refused") from None
     gateway = ResilientGateway(inner, ResiliencePolicy(), price_table=prices)
 
-    now: Callable[[], datetime] = clock if clock is not None else (lambda: datetime.now(UTC))
     client_kwargs: dict[str, Any] = {
         "config": config, "kill_switch": kill_switch, "sink": sink, "now": now}
     try:
@@ -254,14 +327,21 @@ def build_runtime(
     except Exception:  # noqa: BLE001
         raise ConfigurationError("discovery client configuration refused") from None
 
-    ledger = CostLedger(now)
-    cache = DisplayCache(now)
-    quotas = QuotaService()
+    ledger = CostLedger(now, store=stores.costs, budget=budget)
+    cache = stores.display_cache
+    quotas = QuotaService(store=stores.quota, clock=now)
     app = create_app(
         verifier=identity_verifier, trace_sink=sink, gateway=gateway, discovery_client=discovery,
         display_cache=cache, runtime_config=config, quotas=quotas, clock=now,
-        cost_ledger=ledger, dev_scaffold=False)
+        cost_ledger=ledger, dev_scaffold=False, workspace_store=stores.workspaces,
+        idempotency_store=stores.idempotency,
+        consent_store=InMemoryConsentStore(now, ledger=stores.consents))
+    # Hooks other modules fill in (Firebase/App Check verifiers, the places service): None until
+    # the caller passes an object; routes read them from app.state and fail closed on None.
+    app.state.places_service = places_service
+    app.state.app_check_verifier = app_check_verifier
     return Runtime(
         app=app, gateway=gateway, discovery_client=discovery, display_cache=cache,
         orchestrator=app.state.orchestrator, costs=ledger, quotas=quotas, kill_switch=kill_switch,
-        quota_latch=latch, config=config, price_table=prices)
+        quota_latch=latch, config=config, price_table=prices, stores=stores,
+        places_service=places_service)
