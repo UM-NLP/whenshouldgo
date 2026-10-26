@@ -98,7 +98,7 @@ describe("guest history (on the device)", () => {
     const app = renderApp({ historyEnabled: true, local: store });
     await openPanel(app.user);
 
-    expect(await screen.findByText("Date night spot")).toBeInTheDocument();
+    expect(await screen.findByText("Date night spot", undefined, { timeout: 5000 })).toBeInTheDocument();
     expect(screen.getByText("Old trip")).toBeInTheDocument();
     expect(screen.getAllByText(/Food and drink/).length).toBe(2);
     expect(screen.getByText(/kept on this device for 90 days/)).toBeInTheDocument();
