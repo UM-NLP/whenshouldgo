@@ -6,6 +6,8 @@ import threading
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from fs_backend import MEMORY_FAKE_EMULATOR, client_for, txn_for
+
 
 from app.domain import (
     ErrorCode,
@@ -22,7 +24,6 @@ from app.failures import TurnFailure
 from app.orchestrator import TurnOrchestrator
 from app.quota import QuotaService
 from app.stores import firestore_stores, memory_stores
-from app.stores.fake_firestore import FakeFirestoreClient, fake_transactional
 from app.stores.plans_store import memory_plan_stores
 from app.workspaces import WorkspaceConflict, build_workspace_service
 
@@ -34,10 +35,11 @@ def make_state(kind: str):
     clock = lambda: T0  # noqa: E731
     if kind == "memory":
         return memory_stores(clock)
-    return firestore_stores(FakeFirestoreClient(clock), clock, transactional=fake_transactional)
+    client = client_for(kind, clock)
+    return firestore_stores(client, clock, transactional=txn_for(client))
 
 
-@pytest.fixture(params=["memory", "fake-firestore"])
+@pytest.fixture(params=MEMORY_FAKE_EMULATOR)
 def state(request: pytest.FixtureRequest):
     return make_state(request.param)
 
@@ -73,6 +75,7 @@ def test_cas_refuses_another_tenants_workspace(state) -> None:
                                         expected_version=None)
 
 
+@pytest.mark.hot_contention
 def test_racing_increments_never_lose_an_update(state) -> None:
     store = state.workspaces
     writers, rounds = 8, 5

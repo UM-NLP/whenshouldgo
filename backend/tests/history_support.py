@@ -6,6 +6,8 @@ document is synthetic. Canary strings stand in for Maps content, labels and coor
 """
 from __future__ import annotations
 
+from fs_backend import client_for
+
 import dataclasses
 import enum
 import threading
@@ -84,7 +86,7 @@ class HEnv:
             identity_verifier=StaticTokenVerifier(TOKENS), clock=self.clock, sink=self.sink,
             history_enabled=enabled, history_notice_version=notice)
         if kind != "memory":
-            self.fs = FakeFirestoreClient(self.clock)
+            self.fs = client_for(kind, self.clock)
             kwargs.update(firestore_client=self.fs, spend_budget=BUDGET,
                           allow_in_memory_state=False)
         self.runtime = build(**kwargs)

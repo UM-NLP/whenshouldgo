@@ -8,6 +8,8 @@ from __future__ import annotations
 import json
 import threading
 from datetime import datetime, timedelta
+
+from fs_backend import client_for, txn_for
 from typing import Any
 
 from fastapi.testclient import TestClient
@@ -32,7 +34,7 @@ from app.main import create_app
 from app.orchestrator import TurnOrchestrator
 from app.quota import QuotaService
 from app.stores import StateStores, firestore_stores, memory_stores
-from app.stores.fake_firestore import FakeFirestoreClient, fake_transactional
+from app.stores.fake_firestore import FakeFirestoreClient
 from app.telemetry import InMemorySink
 
 POLICY_VERSION = "account-test-1"
@@ -140,9 +142,9 @@ class Env:
         if kind == "memory":
             self.stores: StateStores = memory_stores(self.clock)
         else:
-            self.client = FakeFirestoreClient(self.clock)
+            self.client = client_for(kind, self.clock)
             self.stores = firestore_stores(
-                self.client, self.clock, transactional=fake_transactional)
+                self.client, self.clock, transactional=txn_for(self.client))
         self.policies = registry(guest_turns=guest_turns)
         self.quotas = QuotaService(self.policies, store=self.stores.quota, clock=self.clock)
         self.consents = InMemoryConsentStore(self.clock, ledger=self.stores.consents)

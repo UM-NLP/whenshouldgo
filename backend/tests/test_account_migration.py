@@ -7,12 +7,13 @@ from __future__ import annotations
 import threading
 
 import pytest
+from fs_backend import MEMORY_FAKE_EMULATOR
 from account_support import H, Env, user_fact, workspace
 
 from app.migration import ManifestEntry, WorkspaceSource
 
 
-@pytest.fixture(params=["memory", "fake-firestore"])
+@pytest.fixture(params=MEMORY_FAKE_EMULATOR)
 def env(request: pytest.FixtureRequest) -> Env:
     e = Env(request.param)
     e.seed("g1", turns=40, goal="sunset walk then ramen")
@@ -219,6 +220,7 @@ def test_a_completed_merge_is_replayed_not_repeated(env: Env) -> None:
     assert first == second and second["completed"]
 
 
+@pytest.mark.hot_contention
 def test_racing_runs_complete_once(env: Env) -> None:
     migration = env.start_migration(env.collide()).json()
     codes: list[int] = []

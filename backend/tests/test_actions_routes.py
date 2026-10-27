@@ -7,6 +7,7 @@ from datetime import timedelta
 from pathlib import Path
 
 import pytest
+from fs_backend import MEMORY_FIRESTORE_EMULATOR
 from actions_support import LABEL, PLACE, T0, Env
 from fastapi.testclient import TestClient
 
@@ -48,7 +49,7 @@ def propose(client, effect="LAUNCH_HANDOFF", token="tok-a", key="idem-key-0001",
     return client.post("/v1/actions/propose", json=body, headers=headers(token, key))
 
 
-@pytest.mark.parametrize("kind", ["memory", "firestore"])
+@pytest.mark.parametrize("kind", MEMORY_FIRESTORE_EMULATOR)
 def test_handoff_flow(kind: str) -> None:
     client, env = make(kind)
     proposed = propose(client)

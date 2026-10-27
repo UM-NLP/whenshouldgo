@@ -7,10 +7,11 @@ from __future__ import annotations
 from datetime import timedelta
 
 import pytest
+from fs_backend import MEMORY_FAKE_EMULATOR, client_for, txn_for
+
 from history_support import LABEL_CANARY, PLACE, PLACE2, T0
 
 from app import domain as d
-from app.stores.fake_firestore import FakeFirestoreClient, fake_transactional
 from app.stores.firestore import StoredDataError
 from app.stores.saved_places_store import (
     MAX_SAVED_PLACES,
@@ -29,12 +30,12 @@ K = d.SavedPlaceKind
 def make(kind: str):
     if kind == "memory":
         return MemorySavedPlaceStore(), MemoryAskStateStore(), None
-    client = FakeFirestoreClient(lambda: T0)
-    return (FirestoreSavedPlaceStore(client, transactional=fake_transactional),
-            FirestoreAskStateStore(client, transactional=fake_transactional), client)
+    client = client_for(kind, lambda: T0)
+    return (FirestoreSavedPlaceStore(client, transactional=txn_for(client)),
+            FirestoreAskStateStore(client, transactional=txn_for(client)), client)
 
 
-@pytest.fixture(params=["memory", "fake-firestore"])
+@pytest.fixture(params=MEMORY_FAKE_EMULATOR)
 def kind(request: pytest.FixtureRequest) -> str:
     return request.param
 

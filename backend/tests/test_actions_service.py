@@ -5,6 +5,7 @@ import threading
 from datetime import timedelta
 
 import pytest
+from fs_backend import MEMORY_FIRESTORE_EMULATOR
 from actions_support import (
     GUEST, KEY, LABEL, OTHER, PLACE, REGISTERED, T0, CountingSink, Env, workspace,
 )
@@ -15,7 +16,7 @@ from app.domain import MAX_PENDING_ACTION_TTL, RoundedPosition, SavedPlaceKind
 from app.domain import PendingActionEffect as E
 from app.handoff import build_maps_url
 
-KINDS = ["memory", "firestore"]
+KINDS = MEMORY_FIRESTORE_EMULATOR
 
 
 @pytest.fixture(params=KINDS)
@@ -237,6 +238,7 @@ def test_confirm_after_confirm_with_wrong_nonce_is_still_rejected(env: Env) -> N
         env.service.confirm(GUEST, action.id, "w" * 20)
 
 
+@pytest.mark.hot_contention
 def test_concurrent_confirms_produce_one_effect(env: Env) -> None:
     action = env.propose(E.SET_REMINDER)
     outcomes: list[bool] = []

@@ -9,10 +9,11 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from fs_backend import MEMORY_FAKE_EMULATOR, client_for, txn_for
+
 from history_support import LABEL_CANARY, PLACE, T0
 
 from app import domain as d
-from app.stores.fake_firestore import FakeFirestoreClient, fake_transactional
 from app.stores.firestore import StoredDataError
 from app.stores.history_store import (
     HISTORY_RECORDS,
@@ -26,11 +27,11 @@ from app.stores.history_store import (
 def make(kind: str):
     if kind == "memory":
         return MemoryHistoryStore(), None
-    client = FakeFirestoreClient(lambda: T0)
-    return FirestoreHistoryStore(client, transactional=fake_transactional), client
+    client = client_for(kind, lambda: T0)
+    return FirestoreHistoryStore(client, transactional=txn_for(client)), client
 
 
-@pytest.fixture(params=["memory", "fake-firestore"])
+@pytest.fixture(params=MEMORY_FAKE_EMULATOR)
 def kind(request: pytest.FixtureRequest) -> str:
     return request.param
 

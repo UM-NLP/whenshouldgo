@@ -33,6 +33,54 @@ jobs:
       - run: ruff check .
       - run: python -m pytest -q
 
+  # The store contract suites a third time, against the REAL Firestore emulator (backlog: "fake
+  # does not prove real Firestore"). No secrets and no cloud access: the emulator is a local
+  # container and the client uses anonymous credentials against it.
+  firestore-emulator:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: backend
+    env:
+      FIRESTORE_EMULATOR_HOST: "127.0.0.1:8686"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/pyproject.toml
+      - run: python -m pip install -e ".[dev,auth,gcp]"
+      - name: Start the Firestore emulator (pinned image)
+        working-directory: .
+        run: |
+          docker run -d --name firestore-emulator -p 127.0.0.1:8686:8686 \
+            "$EMULATOR_IMAGE" \
+            gcloud emulators firestore start --host-port=0.0.0.0:8686
+          for _ in $(seq 1 60); do
+            if curl -fsS "http://$FIRESTORE_EMULATOR_HOST/" >/dev/null 2>&1; then exit 0; fi
+            sleep 2
+          done
+          docker logs firestore-emulator
+          echo "emulator did not start"; exit 1
+        env:
+          EMULATOR_IMAGE: "gcr.io/google.com/cloudsdktool/google-cloud-cli@sha256:cced7aefc06898a91efcfc942e6ab98537b3ec2d15d66ec54cffa62ac6d7f19b"
+      - name: Contract suites on the emulator (fail if none ran)
+        run: |
+          python -m pytest -q -rs -k emulator \
+            tests/test_stores_contract.py tests/test_actions_store.py \
+            tests/test_actions_service.py tests/test_actions_routes.py tests/test_account_link.py \
+            tests/test_account_export_delete.py tests/test_account_migration.py \
+            tests/test_history_store.py tests/test_history_routes.py \
+            tests/test_saved_places_store.py tests/test_integration_workspace_cas.py \
+            tests/test_emulator_behaviour.py
+      - if: failure()
+        run: docker logs firestore-emulator | tail -50
+        working-directory: .
+
   web:
     runs-on: ubuntu-latest
     timeout-minutes: 15

@@ -11,6 +11,7 @@ from datetime import datetime, timedelta
 from decimal import Decimal
 
 import pytest
+from fs_backend import MEMORY_FAKE_EMULATOR, client_for, txn_for
 from maps_simulator import NOW
 from maps_simulator import wrap_unvalidated as W
 from test_discovery_contracts import make_answer
@@ -36,7 +37,7 @@ from app.stores import (
     firestore_stores,
     memory_stores,
 )
-from app.stores.fake_firestore import FakeFirestoreClient, fake_transactional
+from app.stores.fake_firestore import FakeFirestoreClient
 
 T0 = NOW  # the synthetic answers are retrieved at this instant
 POLICY_VERSION = "contract-test-1"
@@ -80,15 +81,15 @@ class Env:
         if kind == "memory":
             self.stores: StateStores = memory_stores(self.clock, **cache)
         else:
-            self.client = FakeFirestoreClient(self.clock)
+            self.client = client_for(kind, self.clock)
             self.stores = firestore_stores(
-                self.client, self.clock, transactional=fake_transactional, **cache)
+                self.client, self.clock, transactional=txn_for(self.client), **cache)
 
     def quotas(self, **limits: int) -> QuotaService:
         return QuotaService(registry(**limits), store=self.stores.quota, clock=self.clock)
 
 
-@pytest.fixture(params=["memory", "fake-firestore"])
+@pytest.fixture(params=MEMORY_FAKE_EMULATOR)
 def env(request: pytest.FixtureRequest) -> Env:
     return Env(request.param)
 
@@ -178,6 +179,7 @@ def test_tenants_never_share_a_ledger(env: Env) -> None:
     assert quotas.usage_for("g2").successful_turns == 1
 
 
+@pytest.mark.hot_contention
 @pytest.mark.parametrize("round_", range(3))
 def test_racing_reservations_never_overspend(env: Env, round_: int) -> None:
     quotas = env.quotas(turns=10)
@@ -201,6 +203,7 @@ def test_racing_reservations_never_overspend(env: Env, round_: int) -> None:
     assert used.successful_turns == 10 and len(used.committed_keys) == 10  # no duplicate increment
 
 
+@pytest.mark.hot_contention
 def test_the_same_key_committed_by_many_threads_counts_once(env: Env) -> None:
     quotas = env.quotas(turns=50)
     p = guest()
@@ -209,6 +212,7 @@ def test_the_same_key_committed_by_many_threads_counts_once(env: Env) -> None:
     assert quotas.usage_for(p.uid).successful_turns == 1
 
 
+@pytest.mark.hot_contention
 def test_the_same_key_reserved_by_many_threads_holds_once(env: Env) -> None:
     quotas = env.quotas(turns=50)
     p = guest()
@@ -242,6 +246,7 @@ def test_activate_trip_counts_once_per_workspace(env: Env) -> None:
     assert quotas.usage_for(p.uid).activated_trips == 2
 
 
+@pytest.mark.hot_contention
 def test_racing_activations_of_one_workspace_count_once(env: Env) -> None:
     quotas = env.quotas(trips=5)
     p = guest()
@@ -402,6 +407,7 @@ def test_consent_is_tenant_scoped(env: Env) -> None:
     assert consents.ledger("u2") == ()
 
 
+@pytest.mark.hot_contention
 def test_racing_grants_make_one_active_consent(env: Env) -> None:
     consents = InMemoryConsentStore(env.clock, ledger=env.stores.consents)
     ids: list[str] = []
@@ -427,6 +433,7 @@ def test_spend_totals_separate_provider_attributed_spend(env: Env) -> None:
     assert totals.total_usd_micros == 12_000 and totals.provider_usd_micros == 7_000
 
 
+@pytest.mark.hot_contention
 def test_racing_spend_sums_exactly(env: Env) -> None:
     store = env.stores.costs
     delta = CostEntryDelta(10, 1, 100, provider_attributed=True)
@@ -467,6 +474,7 @@ def test_provider_basis_ignores_user_attributed_spend_but_the_default_counts_eve
     assert store.add_spend(user, SpendBudget(max_tokens=100), env.clock.now).over_budget is True
 
 
+@pytest.mark.hot_contention
 def test_the_spend_cap_holds_under_a_race(env: Env) -> None:
     store = env.stores.costs
     budget = SpendBudget(max_tokens=500, basis=SpendBasis.PROVIDER_ATTRIBUTED)
@@ -496,7 +504,7 @@ def test_the_kill_switch_fails_closed_when_the_store_is_unreadable() -> None:
 
 
 # --- display cache ------------------------------------------------------------------------------
-@pytest.fixture(params=["memory", "fake-firestore"])
+@pytest.fixture(params=MEMORY_FAKE_EMULATOR)
 def cache_env(request: pytest.FixtureRequest) -> Env:
     return Env(request.param, cache_max_per_owner=3)
 
