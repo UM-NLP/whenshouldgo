@@ -41,7 +41,7 @@ def test_the_production_entry_point_requires_app_check(monkeypatch: pytest.Monke
         raise Done
 
     monkeypatch.setattr(server, "build_runtime", fake_build)
-    monkeypatch.setattr(server, "firebase_identity_from_env", lambda env: (object(), set()))
+    monkeypatch.setattr(server, "firebase_identity_from_env", lambda env, revocation=None: (object(), set()))
     with pytest.raises(Done):
         server.create_production_app()
     assert seen["require_app_check"] is True
