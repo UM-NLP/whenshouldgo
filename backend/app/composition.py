@@ -224,14 +224,16 @@ def _choose_state(
     return firestore_stores(client, now)
 
 
-def firebase_identity_from_env(env: Mapping[str, str]) -> tuple[IdentityVerifier, set[str]]:
+def firebase_identity_from_env(
+    env: Mapping[str, str], revocation: Any = None
+) -> tuple[IdentityVerifier, set[str]]:
     """The production identity verifier and the ``disabled_uids`` set it shares with the
     ``PrincipalResolver`` (the SAME set object, so a revoked uid becomes DISABLED).
 
     Fails closed with a static ``ConfigurationError``: without ``FIREBASE_PROJECT_ID``, or when the
     optional ``auth`` extra (PyJWT, cryptography) is not installed. Nothing here calls Google; the
-    signing keys are fetched on the first verification. No revocation checker is wired (it needs
-    Firebase Admin credentials, an owner TODO). When one is, its answer travels on the verified
+    signing keys are fetched on the first verification. ``revocation`` is the optional checker
+    (``firebase_admin_from_env``). When present, its answer travels on the verified
     identity (``VerifiedIdentity.revoked``) and is never written to ``disabled_uids``, which stays
     a static operator-supplied set (decision 28)."""
     project = env.get(FIREBASE_PROJECT_VAR)
@@ -244,7 +246,8 @@ def firebase_identity_from_env(env: Mapping[str, str]) -> tuple[IdentityVerifier
             "firebase auth support is not installed (install the auth extra)") from None
     disabled: set[str] = set()
     try:
-        verifier = FirebaseIdentityVerifier.from_environment(env, disabled_uids=disabled)
+        verifier = FirebaseIdentityVerifier.from_environment(
+            env, disabled_uids=disabled, revocation=revocation)
     except FirebaseConfigError:
         raise ConfigurationError("the firebase verifier configuration is invalid") from None
     return verifier, disabled
@@ -600,3 +603,35 @@ def build_runtime(
         plan_stores=plan_stores, history_service=history_service,
         saved_place_service=saved_place_service, places_kill_switch=places_kill_switch,
         login_deletion_available=firebase_admin is not None)
+
+
+def firebase_admin_from_env(env: Mapping[str, str]) -> tuple[Any, Any]:
+    """(``FirebaseAdminClient``, ``FirebaseRevocationChecker``) or (None, None).
+
+    Built when ``FIREBASE_PROJECT_ID`` is set and ``google-auth`` (the ``gcp`` extra) is importable;
+    ``FIREBASE_ADMIN=disabled`` turns both off, any other value but ``enabled`` is refused. No
+    credential is resolved here (Application Default Credentials, on the first call)."""
+    from .firebase_admin_adapter import (
+        FirebaseAdminClient,
+        FirebaseAdminError,
+        FirebaseRevocationChecker,
+        admin_enabled,
+    )
+
+    try:
+        on = admin_enabled(env)
+    except ValueError:
+        raise ConfigurationError("FIREBASE_ADMIN must be enabled or disabled") from None
+    project = env.get(FIREBASE_PROJECT_VAR)
+    if not on or not isinstance(project, str) or not project.strip():
+        return None, None
+    try:
+        import google.auth  # noqa: F401
+        import google.auth.transport.requests  # noqa: F401
+    except ImportError:
+        return None, None
+    try:
+        client = FirebaseAdminClient(project)
+    except FirebaseAdminError:
+        raise ConfigurationError("the firebase admin configuration is invalid") from None
+    return client, FirebaseRevocationChecker(client)

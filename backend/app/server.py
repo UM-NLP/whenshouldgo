@@ -13,16 +13,20 @@ import os
 
 from fastapi import FastAPI
 
-from .composition import ConfigurationError, build_runtime, firebase_identity_from_env
+from .composition import (
+    ConfigurationError,
+    build_runtime,
+    firebase_admin_from_env,
+    firebase_identity_from_env,
+)
 
 
 def create_production_app() -> FastAPI:
-    # TODO(owner): pass a ``firebase_admin`` (account.FirebaseAdmin) once Firebase Admin credentials
-    # exist: until then link completion is a typed 503 and a deleted account's login is not removed.
     env = dict(os.environ)
-    verifier, disabled_uids = firebase_identity_from_env(env)
+    admin, revocation = firebase_admin_from_env(env)  # (None, None) unless configured
+    verifier, disabled_uids = firebase_identity_from_env(env, revocation)
     return build_runtime(env, identity_verifier=verifier, disabled_uids=disabled_uids,
-                         require_app_check=True).app
+                         firebase_admin=admin, require_app_check=True).app
 
 
 __all__ = ["ConfigurationError", "create_production_app"]

@@ -61,13 +61,17 @@ The production image installs the `auth` extra (PyJWT, cryptography) and the `gc
 ## Firebase Auth, Admin and App Check
 
 - [ ] Everything in [firebase-setup.md](firebase-setup.md).
-- [ ] Firebase Admin credentials (workload identity preferred, never a key file in Git). Until they
-      exist `create_production_app` passes no `firebase_admin`: `POST /v1/account/link-intents/{id}:complete`
-      answers a typed 503 (`SERVER_NOT_CONFIGURED`), and a deleted account's login is not removed
-      (its server data is). The code to write is an adapter implementing `account.FirebaseAdmin`
-      (`get_account`, `delete_user`) and a `RevocationChecker` for `FirebaseIdentityVerifier`.
-- [ ] Decide whether to wire the optional revocation checker (`disabled_uids` is shared with the
-      principal resolver and stays empty until one exists).
+- [x] Adapter built: `backend/app/firebase_admin_adapter.py` (`FirebaseAdminClient` implements
+      `account.FirebaseAdmin`; `FirebaseRevocationChecker` implements `RevocationChecker`, 60 s
+      per-uid cache). `create_production_app` builds both when `FIREBASE_PROJECT_ID` is set and the
+      `gcp` extra (google-auth) is installed. `FIREBASE_ADMIN=disabled` turns both off (emergency);
+      any other value but `enabled` is refused at boot.
+- [ ] Grant the Cloud Run service account a custom role with exactly two permissions,
+      `firebaseauth.users.get` (accounts:lookup) and `firebaseauth.users.delete` (accounts:delete).
+      Do not use `roles/firebaseauth.admin` (it also creates and updates users). Credentials are
+      Application Default Credentials (workload identity); never a key file.
+- [ ] Verify in the pilot project: link completion no longer answers 503 and `me:delete` returns
+      `completed=true`.
 
 ## Places and Routes (display-only features)
 
@@ -105,3 +109,35 @@ The production image installs the `auth` extra (PyJWT, cryptography) and the `gc
 See `docs/legal/open-questions.md`: the privacy notice (#27), DeepInfra's written zero-retention and
 no-training terms (#25), and counsel review of stored saved places (decision 24). History and saved
 places stay dark (`history_enabled` false) until Phase 0 exit and the signed legal checklist.
+
+## Provisioned on 2026-10-27 (done by the assistant with the owner's authorisation)
+
+Project `departure-method-test` (number 568880043351, billing enabled, Firebase project already present).
+No secret value is recorded here. Nothing is deployed and no Cloud Run service exists.
+
+- APIs enabled: Firestore, Firebase, Identity Toolkit, App Check, Firebase Rules, Secret Manager, Cloud Run,
+  Artifact Registry, Cloud Build, IAM, Resource Manager, Cloud Scheduler (Grounding Lite and Routes were already on).
+- Firestore `(default)`, native mode, `northamerica-northeast1` (Montreal), delete protection ON (decision 29).
+- Firestore TTL policies on `expires_at`, all ACTIVE: `workspaces`, `idempotency`, `display_cache`, `plan_heads`,
+  `plan_versions`, `edit_receipts`, `pending_actions`, `account_link_intents`, `history_records`. No TTL on
+  `outcome_ledgers` (one document per user, pruned at write) or the no-TTL collections listed above.
+- Firestore security rules: deny all client access (released as `cloud.firestore`); only the backend service account
+  reaches the data.
+- Firebase Auth (Identity Platform initialised): anonymous ON, email link ON (passwordless), anonymous auto-delete OFF.
+  Google sign-in is NOT enabled: it needs an OAuth consent screen and client ID created in the console (owner).
+- Firebase web app "WhenShouldGo Web". Its public config was written outside the repository; supply the four
+  `VITE_FIREBASE_*` values at web build time. Restrict that browser key (HTTP referrers, Identity Toolkit only)
+  once the hosting domain is known.
+- Secret Manager (user-managed, `northamerica-northeast1`): `openrouter-api-key`, `google-maps-api-key` (copied from the
+  local `.env`; rotate there and add a version).
+- Service account `wsg-backend@departure-method-test.iam.gserviceaccount.com` with `roles/datastore.user`,
+  `secretmanager.secretAccessor` on the two secrets only, and the custom role `wsgFirebaseAuthUsers`
+  (`firebaseauth.users.get`, `firebaseauth.users.delete`) for the Firebase Admin adapter.
+- Artifact Registry Docker repository `wsg` in `northamerica-northeast1`.
+- Budget `whenshouldgo-dev-low` (CA$10) already existed.
+
+Still open for you: Google sign-in OAuth client, App Check provider and keys (needs a reCAPTCHA key), the Places API
+and key restriction extension (feature stays off until prices are reviewed), the owner-chosen
+`PILOT_SPEND_MAX_*` values, Cloud Run deployment (deliberately not done: the privacy notice and legal checklist are
+unsigned), the scheduled purge, and the Firestore-emulator CI job.
+

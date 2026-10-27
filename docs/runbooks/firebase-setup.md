@@ -13,8 +13,9 @@ Fill in values yourself; none are recorded in the repository.
 - [ ] Leave anonymous-account automatic cleanup OFF (docs/access-tiers.md: it would create a
       time-based registration gate the product has not chosen).
 - [ ] Add the production and preview web origins to Auth authorized domains.
-- [ ] Decide the Firebase Admin credential approach for revocation checks (workload identity
-      preferred over a key file). Never commit a key file.
+- [x] Credential approach decided: Application Default Credentials via workload identity on Cloud
+      Run. Never commit a key file. Grant the service account a custom role with
+      `firebaseauth.users.get` and `firebaseauth.users.delete` only.
 
 ## App Check
 
@@ -38,9 +39,11 @@ calls `firebase_identity_from_env` (needs `FIREBASE_PROJECT_ID`; lazy import of 
 passes the verifier and its `disabled_uids` set to `build_runtime`, whose `PrincipalResolver` receives
 the SAME set object. App Check is built from `FIREBASE_PROJECT_NUMBER` and `APP_CHECK_ENFORCE` and
 installed as a router-level gate on every route except `/healthz` (`routes/common.app_check_gate`;
-the web client does not send a token yet). The `RevocationChecker` (`is_revoked(uid, issued_at)`) and
-the `account.FirebaseAdmin` adapter need the Firebase Admin SDK and real credentials and are not
-implemented; see [cloud-resources-todo.md](cloud-resources-todo.md).
+the web client does not send a token yet). The `account.FirebaseAdmin` adapter and the `RevocationChecker`
+(`backend/app/firebase_admin_adapter.py`, Identity Toolkit REST with ADC) are built and wired by
+`firebase_admin_from_env` whenever `FIREBASE_PROJECT_ID` is set and the `gcp` extra is installed;
+`FIREBASE_ADMIN=disabled` is the emergency off switch. IAM needed:
+`firebaseauth.users.get`, `firebaseauth.users.delete`. See [cloud-resources-todo.md](cloud-resources-todo.md).
 
 ## Dependencies
 

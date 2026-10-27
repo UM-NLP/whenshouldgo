@@ -18,7 +18,11 @@ auth = [
 ]
 dev = ["pytest>=8.0,<9.0", "ruff>=0.6"]
 # Optional: the real Firestore adapters (app/stores/firestore.py import it lazily). Tests never need it.
-gcp = ["google-cloud-firestore>=2.16,<3.0"]
+gcp = [
+  "google-cloud-firestore>=2.16,<3.0",
+  "google-auth==2.40.3",  # ADC + AuthorizedSession for the Identity Toolkit admin adapter
+  "requests==2.32.4",  # transport required by google.auth.transport.requests
+]
 
 [build-system]
 requires = ["setuptools>=69"]
