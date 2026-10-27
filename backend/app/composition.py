@@ -127,6 +127,14 @@ from .stores.actions_store import (
     PendingActionStore,
 )
 from .stores.history_store import firestore_history_store, memory_history_store
+from .internal import (
+    OidcVerifier,
+    PurgeConfigError,
+    google_oidc_verifier,
+    mount_purge,
+    purge_settings_from_env,
+)
+from .retention import sweep_firestore
 from .stores.plans_store import PlanStores, firestore_plan_stores, memory_plan_stores
 from .stores.saved_places_store import firestore_saved_place_stores, memory_saved_place_stores
 from .telemetry import TraceSink
@@ -420,16 +428,22 @@ class Runtime:
     places_kill_switch: KillSwitchProbe | None = None
     # Decision 28: False while no FirebaseAdmin is configured (the login cannot be removed).
     login_deletion_available: bool = False
+    clock: Callable[[], datetime] | None = None
 
     def __repr__(self) -> str:
         return f"Runtime(model={self.config.model_id!r}, provider={self.config.provider!r})"
 
     __str__ = __repr__
 
-    def purge_expired(self) -> dict[str, int]:
-        """The retention sweep: expired pending actions and display-cache entries. NO scheduler
-        calls this yet (Cloud Scheduler or Tasks, an owner TODO); Firestore TTL policies are the
-        primary mechanism and this deletes the same records early. Counts only."""
+    def purge_expired(self, limit: int | None = None) -> dict[str, int]:
+        """The retention sweep, counts only. The scheduled trigger is ``POST /internal/purge``
+        (``app/internal.py``). Firestore TTL policies are the primary mechanism and this deletes
+        the same records early. On Firestore it sweeps every collection that holds user data with
+        ``expires_at`` (``app/retention.py``), at most ``limit`` documents in total; the in-memory
+        runtime (dev) sweeps its three stores."""
+        if self.stores is not None and self.stores.kind == "firestore":
+            now = self.clock() if self.clock is not None else datetime.now(UTC)
+            return sweep_firestore(self.stores.client, now, limit)
         return {
             "pending_actions": self.action_service.purge() if self.action_service else 0,
             "display_cache": self.display_cache.purge(),
@@ -458,6 +472,7 @@ def build_runtime(
     history_enabled: bool = False,
     history_notice_version: str | None = None,
     require_app_check: bool = False,
+    purge_oidc_verifier: OidcVerifier | None = None,
 ) -> Runtime:
     """Build the production app from ``env`` (a mapping the caller supplies).
 
@@ -494,6 +509,10 @@ def build_runtime(
             raise ConfigurationError(
                 f"{SPEND_MAX_USD_VAR} (a dollar cap) is required while Places is enabled")
     app_check_policy = _app_check_policy(env, app_check_verifier, required=require_app_check)
+    try:
+        purge_settings = purge_settings_from_env(env)
+    except PurgeConfigError as error:
+        raise ConfigurationError(str(error)) from None
 
     config = pinned_runtime_config()
     if history_enabled or history_notice_version is not None:
@@ -594,7 +613,7 @@ def build_runtime(
         ConsentPurpose.HISTORY_STORE: [history_service.delete_all, plan_stores.outcomes.delete_all],
         ConsentPurpose.SAVED_PLACE: [saved_place_service.delete_all, action_service.delete_save_place_records],
     })
-    return Runtime(
+    runtime = Runtime(
         app=app, gateway=gateway, discovery_client=discovery, display_cache=cache,
         orchestrator=orchestrator, costs=ledger, quotas=quotas, kill_switch=kill_switch,
         quota_latch=latch, config=config, price_table=prices, stores=stores,
@@ -602,7 +621,11 @@ def build_runtime(
         workspace_service=workspace_service, account_service=account_service,
         plan_stores=plan_stores, history_service=history_service,
         saved_place_service=saved_place_service, places_kill_switch=places_kill_switch,
-        login_deletion_available=firebase_admin is not None)
+        login_deletion_available=firebase_admin is not None, clock=now)
+    if purge_settings is not None:
+        oidc = purge_oidc_verifier if purge_oidc_verifier is not None else google_oidc_verifier()
+        mount_purge(app, purge_settings, oidc, runtime.purge_expired, now)
+    return runtime
 
 
 def firebase_admin_from_env(env: Mapping[str, str]) -> tuple[Any, Any]:

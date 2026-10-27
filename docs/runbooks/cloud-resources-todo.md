@@ -26,9 +26,10 @@ The production image installs the `auth` extra (PyJWT, cryptography) and the `gc
 ## Firestore
 
 - [ ] Create the database (the region is a legal and cost decision; see `docs/legal/`).
-- [ ] Run the store contract suite against the Firestore emulator in a separate CI job. The adapters
-      are only tested on an in-process fake, which does not prove real behaviour (see the section at
-      the end of `docs/backlog.md`).
+- [x] The store contract suites also run against the Firestore emulator: CI job `firestore-emulator`
+      (a pinned `google-cloud-cli` emulators image), locally by setting `FIRESTORE_EMULATOR_HOST`
+      (the `emulator` parametrisation is skipped without it). Findings are at the end of
+      `docs/backlog.md`. The emulator does NOT enforce TTL and does not demand composite indexes.
 - [ ] Indexes: the adapters use only automatic single-field indexes (equality on `owner_id`, range on
       `expires_at`). No composite index is declared, which is unverified against real Firestore:
       watch for a "requires an index" error in the emulator run.
@@ -53,10 +54,38 @@ The production image installs the `auth` extra (PyJWT, cryptography) and the `gc
       document has `schema_version`, `kind`, `owner_id` and a hashed id.
 - [ ] Security rules: deny all client access (only the backend's service account reads or writes).
 - [ ] Load-test `cost_totals/pilot` (one hot document; shard the counter if it contends).
-- [ ] Retention sweep: `Runtime.purge_expired()` deletes expired pending actions, display-cache
-      entries and history records early. Nothing calls it yet. Either rely on the TTL policies above or add a Cloud
-      Scheduler job and an internal, OIDC-authenticated trigger (not built; it must not be a public
-      route).
+- [ ] Retention sweep (built, NOT scheduled). `POST /internal/purge` (`backend/app/internal.py`) runs
+      `Runtime.purge_expired(limit)`: on Firestore it deletes expired documents early from every
+      collection that holds user data with `expires_at` (`backend/app/retention.py`: `history_records`,
+      `outcome_ledgers`, `pending_actions` (this is where an expired SAVE_PLACE record holding a
+      position lives), `display_cache`, `plan_heads`, `plan_versions`, `idempotency`, `edit_receipts`,
+      `account_link_intents`, `workspaces`), at most `PURGE_MAX_DOCUMENTS` per call (default 500, max
+      5000), and returns counts only. TTL policies stay the primary mechanism; this is the early,
+      auditable backstop. `saved_places` and `saved_place_asks` have no expiry by design.
+      The route is not mounted (404) unless BOTH variables below are set, is never in the OpenAPI
+      document, is not behind App Check or Firebase auth, and accepts only a Google-signed OIDC ID
+      token (audience and verified email checked), rate limited per process.
+
+      | Variable | Meaning |
+      |---|---|
+      | `PURGE_OIDC_AUDIENCE` | the Cloud Run service URL the scheduler signs for (the token `aud`) |
+      | `PURGE_CALLER_SERVICE_ACCOUNT` | email of the scheduler's service account (the token `email`) |
+      | `PURGE_MAX_DOCUMENTS` | optional, per-call document cap |
+
+      Create after Cloud Run exists (placeholders in angle brackets; NOT run, no service URL yet).
+      The service account needs only `roles/run.invoker` on this service (Cloud Run IAM stays
+      authenticated; the app then re-checks the token itself):
+
+      ```
+      gcloud iam service-accounts create wsg-purge-caller --project=<PROJECT>
+      gcloud run services add-iam-policy-binding <SERVICE> --region=northamerica-northeast1         --member=serviceAccount:wsg-purge-caller@<PROJECT>.iam.gserviceaccount.com         --role=roles/run.invoker --project=<PROJECT>
+      gcloud scheduler jobs create http wsg-purge --project=<PROJECT>         --location=northamerica-northeast1 --schedule="17 */6 * * *" --time-zone=Etc/UTC         --uri="<SERVICE_URL>/internal/purge" --http-method=POST         --oidc-service-account-email=wsg-purge-caller@<PROJECT>.iam.gserviceaccount.com         --oidc-token-audience="<SERVICE_URL>" --attempt-deadline=120s --max-retry-attempts=1
+      ```
+
+      Set `PURGE_OIDC_AUDIENCE=<SERVICE_URL>` and
+      `PURGE_CALLER_SERVICE_ACCOUNT=wsg-purge-caller@<PROJECT>.iam.gserviceaccount.com` on the
+      service. A busy backlog drains over successive runs (each deletes up to the cap); raise the
+      schedule frequency or the cap if the counts stay at the cap.
 
 ## Firebase Auth, Admin and App Check
 
@@ -139,5 +168,6 @@ No secret value is recorded here. Nothing is deployed and no Cloud Run service e
 Still open for you: Google sign-in OAuth client, App Check provider and keys (needs a reCAPTCHA key), the Places API
 and key restriction extension (feature stays off until prices are reviewed), the owner-chosen
 `PILOT_SPEND_MAX_*` values, Cloud Run deployment (deliberately not done: the privacy notice and legal checklist are
-unsigned), the scheduled purge, and the Firestore-emulator CI job.
+unsigned), and creating the scheduled purge job (the trigger is built; the command is under
+"Retention sweep").
 

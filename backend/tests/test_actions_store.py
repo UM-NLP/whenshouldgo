@@ -5,6 +5,7 @@ from dataclasses import replace
 from datetime import timedelta
 
 import pytest
+from fs_backend import MEMORY_FIRESTORE_EMULATOR
 from actions_support import KEY, LABEL, PLACE, T0, make_store
 
 from app.domain import PendingAction, PendingActionEffect
@@ -18,7 +19,7 @@ from app.stores.actions_store import (
 from app.stores.fake_firestore import FakeFirestoreClient, fake_transactional
 from app.stores.firestore import StoredDataError
 
-KINDS = ["memory", "firestore"]
+KINDS = MEMORY_FIRESTORE_EMULATOR
 
 
 def record(owner: str = "guest-a", action_id: str = "act_1", nonce: str = "n" * 20) -> ActionRecord:

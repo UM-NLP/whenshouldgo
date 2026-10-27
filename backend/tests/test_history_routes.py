@@ -8,6 +8,7 @@ import re
 from datetime import timedelta
 
 import pytest
+from fs_backend import MEMORY_FAKE_EMULATOR
 from history_support import (
     LABEL_CANARY,
     MAPS_CANARY,
@@ -26,7 +27,7 @@ COORD = re.compile(r"-?\d{1,3}\.\d{3,}")
 HIST = ConsentPurpose.HISTORY_STORE
 
 
-@pytest.fixture(params=["memory", "fake-firestore"])
+@pytest.fixture(params=MEMORY_FAKE_EMULATOR)
 def env(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> HEnv:
     return HEnv(request.param, monkeypatch)
 

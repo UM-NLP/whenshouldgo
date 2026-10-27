@@ -8,6 +8,7 @@ import json
 import re
 
 import pytest
+from fs_backend import MEMORY_FAKE_EMULATOR
 from account_support import H, MAPS_CANARY, Env, guest, user_fact, workspace
 from maps_simulator import wrap_unvalidated as W
 from test_discovery_contracts import make_answer
@@ -22,7 +23,7 @@ COORDINATE = re.compile(r"-?\d{1,3}\.\d{3,}\s*[,;]\s*-?\d{1,3}\.\d{3,}")
 TURN = {"message": "Plan a quiet cafe visit this evening"}
 
 
-@pytest.fixture(params=["memory", "fake-firestore"])
+@pytest.fixture(params=MEMORY_FAKE_EMULATOR)
 def env(request: pytest.FixtureRequest) -> Env:
     e = Env(request.param)
     e.seed("g1", turns=3, with_maps=True, consent=True)

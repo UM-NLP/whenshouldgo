@@ -1,6 +1,8 @@
 """Builders for the PendingAction tests. Holds no tests. Synthetic only."""
 from __future__ import annotations
 
+from fs_backend import client_for, txn_for
+
 import threading
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -14,7 +16,6 @@ from app.entitlements import Allowance, EntitlementPolicy, Period, PolicyRegistr
 from app.quota import QuotaService
 from app.stores import memory_stores
 from app.stores.actions_store import FirestorePendingActionStore, MemoryPendingActionStore
-from app.stores.fake_firestore import FakeFirestoreClient, fake_transactional
 
 T0 = datetime(2026, 10, 26, 12, 0, tzinfo=UTC)
 VERSION = "actions-test-1"
@@ -63,7 +64,8 @@ class CountingSink:
 def make_store(kind: str):
     if kind == "memory":
         return MemoryPendingActionStore()
-    return FirestorePendingActionStore(FakeFirestoreClient(), transactional=fake_transactional)
+    client = client_for(kind)
+    return FirestorePendingActionStore(client, transactional=txn_for(client))
 
 
 def workspace(owner: str, ws_id: str = "ws1", plan: int | None = None) -> TripWorkspace:

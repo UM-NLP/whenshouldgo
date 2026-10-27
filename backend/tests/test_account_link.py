@@ -7,12 +7,13 @@ from __future__ import annotations
 import threading
 
 import pytest
+from fs_backend import MEMORY_FAKE_EMULATOR
 from account_support import H, Env, guest, registered
 
 from app import telemetry as t
 
 
-@pytest.fixture(params=["memory", "fake-firestore"])
+@pytest.fixture(params=MEMORY_FAKE_EMULATOR)
 def env(request: pytest.FixtureRequest) -> Env:
     e = Env(request.param)
     e.seed("g1", turns=3)
@@ -235,6 +236,7 @@ def run_threads(count: int, target) -> list[BaseException]:
     return errors
 
 
+@pytest.mark.hot_contention
 def test_racing_completions_link_once_and_never_change_the_allowance(env: Env) -> None:
     intent = env.start_intent()
     env.admin.link("g1")
@@ -249,6 +251,7 @@ def test_racing_completions_link_once_and_never_change_the_allowance(env: Env) -
     assert (usage.successful_turns, usage.activated_trips) == (3, 0)  # no allowance was added
 
 
+@pytest.mark.hot_contention
 def test_duplicate_allowance_increments_during_link_are_zero(env: Env) -> None:
     """Gate: duplicate allowance increments < 0.1%. Here the rate must be exactly zero: the same
     idempotency keys committed from many threads while the account is being linked count once."""
