@@ -1,0 +1,20 @@
+{
+  "hosting": {
+    "public": "dist",
+    "ignore": ["firebase.json", "**/.*", "**/node_modules/**"],
+    "rewrites": [
+      { "source": "/v1/**", "run": { "serviceId": "wsg-api", "region": "northamerica-northeast1" } },
+      { "source": "/healthz", "run": { "serviceId": "wsg-api", "region": "northamerica-northeast1" } },
+      { "source": "**", "destination": "/index.html" }
+    ],
+    "headers": [
+      { "source": "/sw.js", "headers": [{ "key": "Cache-Control", "value": "no-cache" }] },
+      { "source": "**", "headers": [
+        { "key": "Content-Security-Policy", "value": "default-src 'self'; connect-src 'self' https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://www.googleapis.com https://apis.google.com; frame-src https://departure-method-test.firebaseapp.com https://accounts.google.com; script-src 'self' https://apis.google.com; img-src 'self' data:; style-src 'self' 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'" },
+        { "key": "Permissions-Policy", "value": "geolocation=(self), camera=(), microphone=()" },
+        { "key": "Referrer-Policy", "value": "no-referrer" },
+        { "key": "X-Content-Type-Options", "value": "nosniff" }
+      ] }
+    ]
+  }
+}
