@@ -39,6 +39,8 @@ from enum import StrEnum
 from typing import Any, Protocol
 
 
+from .stores.busy import StoreBusy
+from .stores.firestore import where
 from .consent import ConsentStore, OperationLimiter, compact_for_export
 from .domain import (
     MAX_LINK_INTENT_TTL,
@@ -310,6 +312,8 @@ class AccountService:
                 return True
         try:
             tombstone = self.store.get_tombstone(uid)
+        except StoreBusy:
+            raise  # retryable 503, not a refusal
         except Exception:  # noqa: BLE001
             return True
         if tombstone is not None:
@@ -545,7 +549,7 @@ def _sweep_owner(client: Any, collection: str) -> Deleter:
     def delete(uid: str) -> int:
         removed = 0
         while True:
-            rows = list(client.collection(collection).where("owner_id", "==", uid).limit(200).stream())
+            rows = list(where(client.collection(collection), "owner_id", "==", uid).limit(200).stream())
             if not rows:
                 return removed
             for snap in rows:

@@ -41,8 +41,8 @@ def kind(request: pytest.FixtureRequest) -> str:
 
 
 def place(pid: str = PLACE, label_kind: K = K.HOME, label: str = LABEL_CANARY) -> d.SavedPlace:
-    return d.SavedPlace(place_id=pid, user_label=label, label_kind=label_kind,
-                        position=d.RoundedPosition(latitude=43.65322, longitude=-79.38318),
+    return d.SavedPlace(record_id="sp_fixedrecordid0001", place_id=pid, user_label=label,
+                        label_kind=label_kind, position=d.RoundedPosition(latitude=43.65322, longitude=-79.38318),
                         created_at=T0)
 
 

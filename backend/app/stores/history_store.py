@@ -32,7 +32,7 @@ from typing import Any, Literal, Protocol, runtime_checkable
 from pydantic import ValidationError
 
 from ..domain import SCHEMA_VERSION, OutingRecord, evolve
-from .firestore import DEFAULT_MAX_ATTEMPTS, StoredDataError, _Base, doc_id
+from .firestore import DEFAULT_MAX_ATTEMPTS, StoredDataError, _Base, doc_id, where
 
 HISTORY_RECORDS = "history_records"
 HISTORY_SETTINGS = "history_settings"
@@ -208,7 +208,7 @@ class FirestoreHistoryStore(_Base):
             "occurred_at": record.occurred_at, "expires_at": record.retention_expires_at}
 
     def _rows(self, owner_id: str, transaction: Any = None) -> list[tuple[Any, StoredHistory]]:
-        query = self._col(HISTORY_RECORDS).where("owner_id", "==", owner_id)
+        query = where(self._col(HISTORY_RECORDS), "owner_id", "==", owner_id)
         snaps = query.stream(transaction=transaction) if transaction is not None else query.stream()
         return [(snap.reference, self._decode(owner_id, snap.to_dict())) for snap in snaps]
 
@@ -278,7 +278,7 @@ class FirestoreHistoryStore(_Base):
 
     def delete_records(self, owner_id: str) -> int:
         count = 0
-        for snap in self._col(HISTORY_RECORDS).where("owner_id", "==", owner_id).stream():
+        for snap in where(self._col(HISTORY_RECORDS), "owner_id", "==", owner_id).stream():
             snap.reference.delete()
             count += 1
         return count
@@ -329,7 +329,7 @@ class FirestoreHistoryStore(_Base):
 
     def purge(self, now: datetime) -> int:
         removed = 0
-        for snap in self._col(HISTORY_RECORDS).where("expires_at", "<=", now).stream():
+        for snap in where(self._col(HISTORY_RECORDS), "expires_at", "<=", now).stream():
             snap.reference.delete()
             removed += 1
         return removed

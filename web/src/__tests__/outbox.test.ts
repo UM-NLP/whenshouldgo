@@ -109,6 +109,22 @@ describe("offline outbox", () => {
     expect(outbox.items()).toEqual([]);
   });
 
+  it("honors Retry-After on a busy store and retries with the SAME key", async () => {
+    let t = 2_000_000;
+    const { outbox, calls } = await setup([fail({ kind: "store_busy", retryAfterSeconds: 2 })], () => t);
+    const item = await outbox.enqueue({ text: "busy" });
+    await outbox.flush();
+    expect(outbox.items()[0]?.state).toBe("queued");
+    expect(outbox.nextAttemptAt()).toBe(2_000_000 + 2_000);
+    t += 500;
+    await outbox.flush();
+    expect(calls).toHaveLength(1);
+    t += 2_000;
+    await outbox.flush();
+    expect(calls.map((c) => c.key)).toEqual([item.key, item.key]);
+    expect(outbox.items()).toEqual([]);
+  });
+
   it("resume gives an expired result a new key", async () => {
     const { outbox, calls } = await setup([fail({ kind: "result_expired" })]);
     const item = await outbox.enqueue({ text: "old" });

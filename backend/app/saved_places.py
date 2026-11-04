@@ -23,6 +23,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from datetime import UTC, datetime
 
+from .stores.busy import StoreBusy
 from .actions import ActionError, ActionFailure
 from .ask_policy import ASK_COOLDOWN, decide, referenced_kinds
 from .consent import ConsentStore
@@ -95,6 +96,8 @@ class SavedPlaceService:
             return
         try:
             self._account_guard(uid)
+        except StoreBusy:
+            raise  # retryable 503, not a refusal
         except Exception:  # noqa: BLE001 - deleted, or the tombstone is unreadable: fail closed
             inactive = True
         else:
@@ -129,6 +132,8 @@ class SavedPlaceService:
         place = SavedPlace(place_id=place_id, user_label=user_label, label_kind=label_kind,
                            position=position, created_at=self._clock())
         outcome = self.places.replace(principal.uid, place, action_id)
+        if outcome == "replayed":
+            place = self.places.get(principal.uid, place_id) or place  # the stored record id
         if outcome == "full":
             raise FeatureError(FeatureFailure.LIMIT)
         if outcome == "saved":
@@ -170,6 +175,19 @@ class SavedPlaceService:
             count = self.places.delete(principal.uid, place_id)
         else:
             count = self.places.delete_all(principal.uid)
+        if count:
+            self._trace(SavedPlaceDeleted, deleted_count=count)
+        return count
+
+    def delete_by_record_id(self, principal: Principal, record_id: str) -> int:
+        """One entry by its server-issued opaque record id (the path id). Never blocked by a
+        missing consent; an id that is not this owner's entry deletes nothing."""
+        self._gate(principal, consent=False)
+        count = 0
+        for place in self.places.list(principal.uid):
+            if place.record_id == record_id:
+                count = self.places.delete(principal.uid, place.place_id)
+                break
         if count:
             self._trace(SavedPlaceDeleted, deleted_count=count)
         return count

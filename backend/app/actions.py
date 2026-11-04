@@ -32,6 +32,7 @@ from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from typing import Protocol
 
+from .stores.busy import StoreBusy
 from . import telemetry
 from .domain import (
     MAX_PENDING_ACTION_TTL,
@@ -220,6 +221,8 @@ class ActionService:
             return
         try:
             self._account_guard(uid)
+        except StoreBusy:
+            raise  # retryable 503, not a refusal
         except Exception:  # noqa: BLE001 - deleted, or the tombstone is unreadable: fail closed
             inactive = True
         else:

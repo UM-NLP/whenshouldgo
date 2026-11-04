@@ -27,6 +27,7 @@ from uuid import uuid4
 
 from pydantic import ValidationError
 
+from .stores.busy import StoreBusy
 from .consent import ConsentStore
 from .domain import (
     Confirmation,
@@ -291,6 +292,8 @@ class WorkspaceService:
             return
         try:
             self._account_guard(uid)
+        except StoreBusy:
+            raise  # retryable 503, not a refusal
         except Exception:  # noqa: BLE001
             inactive = True
         else:

@@ -869,7 +869,8 @@
           "ANONYMOUS_PROVIDER",
           "MIGRATION_INTERRUPTED",
           "GUEST_NOT_ALLOWED",
-          "CONSENT_REQUIRED"
+          "CONSENT_REQUIRED",
+          "STORE_BUSY"
         ],
         "title": "ErrorReason",
         "type": "string"
@@ -2798,6 +2799,11 @@
           "position": {
             "$ref": "#/components/schemas/RoundedPosition"
           },
+          "record_id": {
+            "pattern": "^sp_[A-Za-z0-9_-]{16,64}$",
+            "title": "Record Id",
+            "type": "string"
+          },
           "schema_version": {
             "default": 1,
             "minimum": 1.0,
@@ -2816,7 +2822,8 @@
           "user_label",
           "label_kind",
           "position",
-          "created_at"
+          "created_at",
+          "record_id"
         ],
         "title": "SavedPlace",
         "type": "object"
@@ -7264,7 +7271,8 @@
     },
     "/v1/saved-places": {
       "delete": {
-        "description": "One saved place (``place_id``) or, without it, all of them.",
+        "deprecated": true,
+        "description": "DEPRECATED (one more release) for one place: ``?place_id=`` puts the Google place ID in the\nquery string, which reaches request logs; use ``DELETE /v1/saved-places/{record_id}``. Without\n``place_id`` this still deletes ALL saved places. The query is never logged by the app.",
         "operationId": "delete_saved_places_v1_saved_places_delete",
         "parameters": [
           {
@@ -7982,6 +7990,152 @@
           }
         },
         "summary": "Put Saved Place Ask State"
+      }
+    },
+    "/v1/saved-places/{record_id}": {
+      "delete": {
+        "description": "One saved place by the opaque ``record_id`` the server issued (never the Google place ID,\nwhich would reach request logs in a URL). Idempotent: an unknown id deletes nothing.",
+        "operationId": "delete_saved_place_v1_saved_places__record_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "record_id",
+            "required": true,
+            "schema": {
+              "pattern": "^sp_[A-Za-z0-9_-]{16,64}$",
+              "title": "Record Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": true,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SavedPlaceDeleteResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "POLICY"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "POLICY"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "DISABLED or NOT_FOUND"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "CONFLICT"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "VALIDATION"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "QUOTA",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds to wait before retrying.",
+                "schema": {
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "VALIDATION"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "PROVIDER"
+          },
+          "504": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "PROVIDER"
+          }
+        },
+        "summary": "Delete Saved Place"
       }
     },
     "/v1/session:bootstrap": {

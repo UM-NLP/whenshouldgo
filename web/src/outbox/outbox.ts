@@ -125,7 +125,7 @@ export function createOutbox(deps: OutboxDeps): Outbox {
       }
       const failure = outcome.failure;
       if (TRANSIENT.has(failure.kind)) return;
-      if (failure.kind === "rate_limited") {
+      if (failure.kind === "rate_limited" || failure.kind === "store_busy") {
         head.notBefore = now() + (failure.retryAfterSeconds ?? DEFAULT_RETRY_AFTER_SECONDS) * 1000;
       } else {
         head.state = "stopped";

@@ -15,6 +15,7 @@ base never uses ``model_construct`` or ``model_copy(update=...)`` (a test enforc
 from __future__ import annotations
 
 import re
+import secrets
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from enum import StrEnum
@@ -791,6 +792,9 @@ class ErrorReason(StrEnum):
     # accounts only, and only while the matching consent is held.
     GUEST_NOT_ALLOWED = "GUEST_NOT_ALLOWED"  # guests keep history and saved places on the device
     CONSENT_REQUIRED = "CONSENT_REQUIRED"  # HISTORY_STORE or SAVED_PLACE consent is not held
+    # A durable store was contended or briefly unavailable (503 + Retry-After). Nothing was
+    # applied and no allowance was consumed: retry the SAME request with the SAME idempotency key.
+    STORE_BUSY = "STORE_BUSY"
 
 
 class ErrorBody(Frozen):
@@ -991,15 +995,33 @@ class SavedPlaceKind(StrEnum):
     CUSTOM = "CUSTOM"
 
 
+SAVED_PLACE_RECORD_ID_PATTERN = r"^sp_[A-Za-z0-9_-]{16,64}$"
+SavedPlaceRecordId = Annotated[str, StringConstraints(pattern=SAVED_PLACE_RECORD_ID_PATTERN)]
+
+
+def new_saved_place_record_id() -> str:
+    return "sp_" + secrets.token_urlsafe(16)
+
+
+def _record_id_required(schema: dict) -> None:
+    # The server always sends it (the default only fills in a new entry): a typed client treats it
+    # as present.
+    schema.setdefault("required", []).append("record_id")
+
+
 class SavedPlace(Frozen):
     """User data only (decision 24): a place ID, the label the user typed and a rounded position.
 
     ``kind`` is the schema discriminator, so HOME/WORK/CUSTOM is ``label_kind``."""
 
-    model_config = ConfigDict(extra="forbid", frozen=True, hide_input_in_errors=True)
+    model_config = ConfigDict(extra="forbid", frozen=True, hide_input_in_errors=True,
+                              json_schema_extra=_record_id_required)
 
     schema_version: int = Field(default=SCHEMA_VERSION, ge=1)
     kind: Literal["saved_place"] = "saved_place"
+    # Server-issued, opaque, random: what a client puts in a URL path (DELETE
+    # /v1/saved-places/{record_id}) instead of the Google place ID. Stable for the entry's life.
+    record_id: SavedPlaceRecordId = Field(default_factory=new_saved_place_record_id)
     place_id: PlaceId
     user_label: _LabelText
     label_kind: SavedPlaceKind

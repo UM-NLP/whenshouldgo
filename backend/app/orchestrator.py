@@ -37,6 +37,7 @@ from .guard import OUT_OF_SCOPE_REPLY, SAFETY_REPLY, classify, estimate_tokens, 
 from .location import RoundedLocation
 from .pipeline import DiscoveryRef, TurnPipeline, to_api_block
 from .entitlements import workspace_ttl
+from .stores.busy import StoreBusy
 from .quota import QuotaService
 from .stores.memory import MemoryIdempotencyStore, MemoryWorkspaceStore
 from .stores.protocols import IdempotencyStore, WorkspaceStore
@@ -248,6 +249,8 @@ class TurnOrchestrator:
             return False
         try:
             self._account_guard(uid)
+        except StoreBusy:
+            raise  # not a refusal: a retryable 503 (the caller releases or rolls back first)
         except Exception:  # noqa: BLE001 - any refusal means: write nothing for this uid
             return True
         return False
@@ -462,7 +465,12 @@ class TurnOrchestrator:
                     raise
                 if lost_race:
                     raise TurnFailure(409, ErrorCode.CONFLICT, ErrorReason.TURN_IN_PROGRESS)
-                if self._account_inactive(principal.uid):
+                try:
+                    inactive = self._account_inactive(principal.uid)
+                except StoreBusy:
+                    self._undo(principal, idempotency_key, current, workspace)
+                    raise
+                if inactive:
                     # The deletion landed between the check and the write: take both writes back
                     # (the tombstone was written first, so the check above now sees it).
                     try:
@@ -489,7 +497,10 @@ class TurnOrchestrator:
                 self._commit_replay(principal, idempotency_key)
         except BaseException:
             if not committed:
-                self.quotas.release(reservation)
+                try:
+                    self.quotas.release(reservation)
+                except StoreBusy:
+                    pass  # best effort: the hold expires (RESERVATION_TTL); the original error wins
                 quota_event(QuotaOutcome.RELEASED)
             raise
         # Emitted after the reservation try block: a telemetry fault cannot release a

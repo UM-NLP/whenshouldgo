@@ -252,7 +252,9 @@ class MemoryCostStore:
         self._switches: dict[str, KillSwitchState] = {}
         self._lock = threading.Lock()
 
-    def add_spend(self, delta: CostEntryDelta, budget: SpendBudget | None, now: datetime) -> SpendTotals:
+    def add_spend(self, delta: CostEntryDelta, budget: SpendBudget | None, now: datetime,
+                  *, shard_key: str = "") -> SpendTotals:
+        _ = shard_key  # one in-process counter: nothing to shard
         with self._lock:
             t = self._totals
             t = replace(

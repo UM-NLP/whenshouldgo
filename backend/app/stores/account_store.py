@@ -31,7 +31,7 @@ from enum import StrEnum
 from typing import Any, Protocol, runtime_checkable
 
 from ..domain import SCHEMA_VERSION, LinkProvider, MigrationState
-from .firestore import StoredDataError, _Base, doc_id
+from .firestore import StoredDataError, _Base, doc_id, where
 
 ACCOUNTS = "accounts"
 LINK_INTENTS = "account_link_intents"
@@ -536,7 +536,7 @@ class FirestoreAccountStore(_Base):
     def create_migration(self, candidate: MigrationRecord) -> tuple[MigrationRecord, bool]:
         ref = self._ref(MIGRATIONS, candidate.id)
         key_ref = self._ref(MIGRATION_KEYS, candidate.dst_uid, candidate.key_hash)
-        unfinished = self._col(MIGRATIONS).where("src_uid", "==", candidate.src_uid)
+        unfinished = where(self._col(MIGRATIONS), "src_uid", "==", candidate.src_uid)
 
         def body(txn: Any) -> tuple[MigrationRecord, bool]:
             key_snap = key_ref.get(transaction=txn)
@@ -560,7 +560,7 @@ class FirestoreAccountStore(_Base):
         return _migration_from_doc(snap.to_dict()) if snap.exists else None
 
     def migrations_for_dst(self, dst_uid: str) -> tuple[MigrationRecord, ...]:
-        rows = self._col(MIGRATIONS).where("owner_id", "==", dst_uid).stream()
+        rows = where(self._col(MIGRATIONS), "owner_id", "==", dst_uid).stream()
         return tuple(_migration_from_doc(s.to_dict()) for s in rows)
 
     def update_migration(
@@ -618,7 +618,7 @@ class FirestoreAccountStore(_Base):
     def _sweep(self, collection: str, field: str, value: str) -> int:
         removed = 0
         while True:
-            rows = list(self._col(collection).where(field, "==", value).limit(200).stream())
+            rows = list(where(self._col(collection), field, "==", value).limit(200).stream())
             if not rows:
                 return removed
             for snap in rows:

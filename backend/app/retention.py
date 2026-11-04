@@ -14,6 +14,8 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
+from .stores.firestore import where
+
 # Most sensitive first (user text, labels and positions), then derived and replay state.
 SWEPT_COLLECTIONS: tuple[str, ...] = (
     "history_records", "outcome_ledgers", "pending_actions", "display_cache",
@@ -25,7 +27,7 @@ COUNT_NAMES = {"history_records": "history"}
 
 
 def _sweep_one(client: Any, collection: str, now: datetime, limit: int | None) -> int:
-    query = client.collection(collection).where("expires_at", "<=", now)
+    query = where(client.collection(collection), "expires_at", "<=", now)
     if limit is not None:
         query = query.limit(limit)
     removed = 0

@@ -27,7 +27,7 @@ export interface Position {
 }
 
 export interface SavedEntry {
-  /** Stable key for the list: the place ID (server) or the record id (device). */
+  /** Stable key for the list and the delete call: the server's opaque saved-place record id, or the device record id. */
   id: string;
   placeId: string;
   label: string;

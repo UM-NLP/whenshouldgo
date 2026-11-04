@@ -34,6 +34,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import ValidationError
 
+from .stores.busy import StoreBusy
 from .consent import ConsentStore
 from .domain import (
     HISTORY_DEFAULT_RETENTION_DAYS,
@@ -178,6 +179,8 @@ class HistoryService:
             return
         try:
             self._account_guard(uid)
+        except StoreBusy:
+            raise  # retryable 503, not a refusal
         except Exception:  # noqa: BLE001 - deleted, or the tombstone is unreadable: fail closed
             inactive = True
         else:

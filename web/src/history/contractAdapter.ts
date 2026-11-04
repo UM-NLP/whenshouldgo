@@ -73,7 +73,7 @@ function serverOuting(record: OutingRecord): OutingEntry {
 
 function serverSaved(place: SavedPlace): SavedEntry {
   return {
-    id: place.place_id,
+    id: place.record_id,
     placeId: place.place_id,
     label: place.user_label,
     kind: place.label_kind,
@@ -135,7 +135,7 @@ export function createServerSavedRepo(api: Phase1Api): SavedRepo {
       return o.ok ? { ok: true, data: null } : o;
     },
     remove: async (entry) => {
-      const o = await api.deleteSaved(entry.placeId);
+      const o = await api.deleteSaved(entry.id);
       return o.ok ? { ok: true, data: null } : o;
     },
   };
