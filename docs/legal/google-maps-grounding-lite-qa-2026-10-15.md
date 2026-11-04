@@ -54,3 +54,9 @@ Walking routes are in beta and might sometimes be missing clear sidewalks or ped
 - Visual: display the disclosure whenever Maps grounding supports a voice interaction on a screened device.
 - Spoken: announce it at the first supported interaction and at least every six months.
    A persistent explanation must also remain accessible. The documentation does not require both disclosure methods in every case.
+
+Shape drift note (2026-11-04, shape description only): search_places now also returns a
+top-level `contentToken`, an opaque printable-ASCII string of about 165 characters, next to
+`places` and `summary`. It is validated for shape, then discarded: never displayed, hashed into
+the display hash, cached or logged. Any other extra top-level key is still refused. A refusal now
+records a content-free `GroundedRule` enum on the `ValidationRejection` trace event.

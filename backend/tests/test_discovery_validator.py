@@ -260,3 +260,4 @@ def test_a_rejection_emits_a_content_free_telemetry_event() -> None:
     [event] = sink.events
     assert isinstance(event, ValidationRejection) and event.phase == Phase.TOOL
     assert "SYNTH" not in event.model_dump_json()
+    assert event.rule is not None and event.rule.value == "V_HASH"

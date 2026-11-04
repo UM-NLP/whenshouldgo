@@ -79,6 +79,7 @@ class GroundedAnswerValidator:
                 telemetry.ValidationRejection, self._sink,
                 trace_id=telemetry.current_trace_id(),
                 reason=_TELEMETRY_REASON[reason], phase=telemetry.Phase.TOOL,
+                rule=telemetry.GroundedRule("V_" + reason.value),
             )
             raise GroundedAnswerRejected(reason)
         return mint_validated(answer, principal_id)

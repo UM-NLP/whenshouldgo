@@ -307,8 +307,9 @@ class TurnPipeline:
         telemetry.trace(event_cls, self._sink, trace_id=telemetry.current_trace_id(),
                         runtime_config_version=self._config.version, **fields)
 
-    def _reject(self, reason: telemetry.ValidationReason, phase: telemetry.Phase) -> None:
-        self._trace(telemetry.ValidationRejection, reason=reason, phase=phase)
+    def _reject(self, reason: telemetry.ValidationReason, phase: telemetry.Phase,
+                rule: telemetry.GroundedRule | None = None) -> None:
+        self._trace(telemetry.ValidationRejection, reason=reason, phase=phase, rule=rule)
 
     def _deny(self, tool: telemetry.ToolName) -> None:
         self._trace(telemetry.ToolCall, tool=tool, outcome=telemetry.ToolOutcome.DENIED,
@@ -723,15 +724,18 @@ class TurnPipeline:
                                  validated.answer.retrieved_at)
             ref = DiscoveryRef(cache_key, framing, validated.content_hash, validated.display_hash,
                                validated.answer.cache_expires_at)
-        except GroundedParseError:
-            self._reject(telemetry.ValidationReason.SCHEMA, telemetry.Phase.TOOL)
+        except GroundedParseError as parse_error:
+            self._reject(telemetry.ValidationReason.SCHEMA, telemetry.Phase.TOOL, parse_error.rule)
             failure = _rejected()
-        except (GroundedAnswerRejected, VerbatimViolation):
+        except GroundedAnswerRejected:  # the validator already emitted its own event with the rule
+            failure = _rejected()
+        except VerbatimViolation:
+            self._reject(telemetry.ValidationReason.OTHER, telemetry.Phase.TOOL, telemetry.GroundedRule.RENDER)
             failure = _rejected()
         except CacheError:
             failure = _fault()
         except ValueError:  # includes pydantic ValidationError from the block or a renderer check
-            self._reject(telemetry.ValidationReason.SCHEMA, telemetry.Phase.TOOL)
+            self._reject(telemetry.ValidationReason.SCHEMA, telemetry.Phase.TOOL, telemetry.GroundedRule.RENDER)
             failure = _rejected()
         if failure is not None:
             return failure
