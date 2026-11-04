@@ -45,6 +45,7 @@ from ..domain import (
     PlaceId,
     RuntimeTTLs,
 )
+from ..telemetry import GroundedRule
 from ._mint import IssuedToken
 from .errors import DiscoveryError
 from .ids import ToolId
@@ -180,12 +181,27 @@ class GroundedAnswer(GroundFrozen):
 class GroundedParseError(DiscoveryError):
     default_message = "tool payload is not a grounded answer"
 
+    def __init__(self, rule: GroundedRule = GroundedRule.OTHER) -> None:
+        super().__init__()
+        self.rule = rule  # enum only; never text
+
+
+class _RuleViolation(ValueError):
+    def __init__(self, rule: GroundedRule) -> None:
+        super().__init__(rule.value)
+        self.rule = rule
+
 
 # --- the documented search_places payload (and nothing else) --------------------------------------
 # Verified live 2026-10-15: output keys are camelCase (googleMapsLinks, placeUrl, ...), the payload
 # has exactly {places, summary}, and each place has {place, id, location, googleMapsLinks,
 # attribution}. The snake_case spellings of the same keys are still accepted (never mixed).
 _PAYLOAD_KEYS = frozenset({"summary", "places"})
+# Observed live 2026-11-04: Grounding Lite added a top-level ``contentToken`` (an opaque string,
+# 165 chars). It is accepted only as a bounded printable-ASCII string, never used, shown, hashed
+# into the display hash or stored, and any other extra key is still refused.
+_OPTIONAL_PAYLOAD_KEYS = frozenset({"contentToken"})
+_CONTENT_TOKEN = re.compile(r"^[!-~]{1,1024}$")
 _PLACE_ALIASES = {
     "place": "place", "id": "id", "attribution": "attribution", "location": "location",
     "googleMapsLinks": "links", "google_maps_links": "links",
@@ -227,7 +243,10 @@ def extract_search_places(payload: object) -> tuple[str, tuple[PlaceFields, ...]
     shape, else None. Coordinates are parsed and dropped; links other than ``placeUrl`` are
     returned only so the parser can validate them. No content rules are applied here (hidden
     characters, url shapes): the ledger uses this too."""
-    if not isinstance(payload, dict) or set(payload) != _PAYLOAD_KEYS:
+    if not isinstance(payload, dict) or not _PAYLOAD_KEYS <= set(payload) <= _PAYLOAD_KEYS | _OPTIONAL_PAYLOAD_KEYS:
+        return None
+    token = payload.get("contentToken", "")
+    if "contentToken" in payload and not (isinstance(token, str) and _CONTENT_TOKEN.fullmatch(token)):
         return None
     summary, raw_places = payload["summary"], payload["places"]
     if not isinstance(summary, str) or not isinstance(raw_places, list):
@@ -268,17 +287,27 @@ def _build_answer(result: Any, ttls: RuntimeTTLs) -> GroundedAnswer:
         raise ValueError("result was not issued by the discovery client")
     if result.tool != ToolId.SEARCH_PLACES:
         raise ValueError("only search_places produces a grounded answer")
-    extracted = extract_search_places(result.payload)
+    payload = result.payload
+    extracted = extract_search_places(payload)
     if extracted is None:
-        raise ValueError("payload shape")
+        rule = GroundedRule.PLACE_SHAPE
+        if not isinstance(payload, dict) or not _PAYLOAD_KEYS <= set(payload) <= _PAYLOAD_KEYS | _OPTIONAL_PAYLOAD_KEYS:
+            rule = GroundedRule.PAYLOAD_KEYS
+        elif "contentToken" in payload and not (
+                isinstance(payload["contentToken"], str) and _CONTENT_TOKEN.fullmatch(payload["contentToken"])):
+            rule = GroundedRule.CONTENT_TOKEN
+        raise _RuleViolation(rule)
     summary, fields, others = extracted
     if has_lone_surrogate(summary) or any(has_lone_surrogate(f) for place in fields for f in place):
-        raise ValueError("lone surrogate")
+        raise _RuleViolation(GroundedRule.TEXT_CHARS)
     for (_, _, _, place_url), extras in zip(fields, others, strict=True):
         for link_field, value in extras:  # every other link must match ITS field and the same place
-            check_link(link_field, value)
+            try:
+                check_link(link_field, value)
+            except ValueError:
+                raise _RuleViolation(GroundedRule.LINK_SHAPE) from None
             if data_token(value) != data_token(place_url):
-                raise ValueError("a link belongs to a different place")
+                raise _RuleViolation(GroundedRule.LINK_SHAPE)
     flags = cited_flags(summary, len(fields))
     places = tuple(
         GroundedPlace(
@@ -299,12 +328,15 @@ def parse_grounded_answer(result: Any, ttls: RuntimeTTLs) -> GroundedAnswer:
     Only a result the client issued (private token) and only the search_places tool qualify.
     Every error is typed and static; no payload text or code point reaches a message."""
     answer: GroundedAnswer | None = None
+    rule = GroundedRule.ANSWER_BUILD
     try:
         answer = _build_answer(result, ttls)
+    except _RuleViolation as violation:
+        rule = violation.rule
     except (ValueError, TypeError, KeyError, AttributeError, ValidationError):
         answer = None
     if answer is None:
-        raise GroundedParseError()
+        raise GroundedParseError(rule)
     return answer
 
 

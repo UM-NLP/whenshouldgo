@@ -339,3 +339,32 @@ def test_a_utf8_charset_json_content_type_is_accepted() -> None:
     http = HttpxMcpTransport.for_tests(httpx.MockTransport(lambda r: httpx.Response(
         200, content=json.dumps(RPC).encode(), headers={"content-type": "application/json; charset=UTF-8"})))
     assert http.send(good_request(), Credential(SECRET)).body == RPC
+
+
+# --- 2026-11-04 drift: a top-level ``contentToken`` appeared next to ``places`` and ``summary`` ---
+def test_an_optional_content_token_is_accepted_and_never_enters_the_answer() -> None:
+    token = "SYNTH-TOKEN_" + "a" * 150
+    answer = make_answer(synthetic_payload() | {"contentToken": token})
+    assert answer.text == make_answer().text and answer.display_hash == make_answer().display_hash
+    assert token not in answer.model_dump_json()
+
+
+@pytest.mark.parametrize("bad", ["", "has space", "tab\there", "café", "x" * 1025, 5, None, ["x"]])
+def test_a_malformed_content_token_is_still_refused_with_its_own_rule(bad) -> None:
+    from app.telemetry import GroundedRule
+
+    with pytest.raises(GroundedParseError) as caught:
+        make_answer(synthetic_payload() | {"contentToken": bad})
+    assert caught.value.rule == GroundedRule.CONTENT_TOKEN
+
+
+def test_parse_failures_carry_an_enum_rule_and_no_text() -> None:
+    from app.telemetry import GroundedRule
+
+    with pytest.raises(GroundedParseError) as extra:
+        make_answer(synthetic_payload() | {"somethingNew": "x"})
+    assert extra.value.rule == GroundedRule.PAYLOAD_KEYS
+    with pytest.raises(GroundedParseError) as place:
+        make_answer({"summary": "t", "places": [synthetic_place(1) | {"rating": 4.5}]})
+    assert place.value.rule == GroundedRule.PLACE_SHAPE
+    assert "rating" not in str(place.value) and "t" not in {str(place.value)}

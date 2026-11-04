@@ -201,6 +201,27 @@ class ValidationReason(StrEnum):
     OTHER = "OTHER"
 
 
+class GroundedRule(StrEnum):
+    """Which grounded-answer rule refused a discovery result. Enum only: no text, no field values."""
+
+    PAYLOAD_KEYS = "PAYLOAD_KEYS"  # top-level keys differ from the documented set
+    PLACE_SHAPE = "PLACE_SHAPE"  # a place, its links, attribution or location differs
+    CONTENT_TOKEN = "CONTENT_TOKEN"  # the optional contentToken is not a bounded printable string
+    TEXT_CHARS = "TEXT_CHARS"  # lone surrogate in the summary or a short field
+    LINK_SHAPE = "LINK_SHAPE"  # an extra link failed its field-pinned shape or place token
+    ANSWER_BUILD = "ANSWER_BUILD"  # not issued by the client, wrong tool, or contract build failed
+    V_FORMAT = "V_FORMAT"  # validator: format, hidden characters, id, title or citation flags
+    V_CLASS = "V_CLASS"
+    V_STORAGE = "V_STORAGE"
+    V_SIZE = "V_SIZE"
+    V_HASH = "V_HASH"
+    V_URI = "V_URI"  # validator: place or attribution link shape or token pairing
+    V_CACHE_EXPIRY = "V_CACHE_EXPIRY"
+    V_PROVENANCE = "V_PROVENANCE"
+    RENDER = "RENDER"  # verbatim render check, or the block contract
+    OTHER = "OTHER"
+
+
 class AllowanceOutcome(StrEnum):
     ALLOWED = "ALLOWED"
     EXHAUSTED = "EXHAUSTED"
@@ -279,6 +300,7 @@ class ValidationRejection(TraceEvent):
     event: Literal[EventType.VALIDATION_REJECTION] = EventType.VALIDATION_REJECTION
     reason: ValidationReason
     phase: Phase
+    rule: GroundedRule | None = None  # the grounded-answer rule, when one applies
 
 
 class QuotaEvent(TraceEvent):
