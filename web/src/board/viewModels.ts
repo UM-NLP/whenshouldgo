@@ -1,7 +1,7 @@
 // Pure view-models for the Trip Board: fixed copy and formatting, no I/O. Every string a user sees
 // from a failure is chosen here by kind; server message text never reaches the screen.
 import type { DiscoveryPlace } from "../api/client";
-import { GUEST_NOT_ALLOWED_TEXT, HISTORY_CONSENT_TEXT } from "../api/failures";
+import { GUEST_NOT_ALLOWED_TEXT, HISTORY_CONSENT_TEXT, STORE_BUSY_TEXT } from "../api/failures";
 import type { BoardFailure, ConfirmActionResponse, Fact, OutcomeValue, RouteCheck, Workspace } from "./boardApi";
 import type { OutingOutcome } from "../storage";
 
@@ -59,6 +59,8 @@ export function boardFailureText(failure: BoardFailure, area: BoardArea): string
       return failure.retryAfterSeconds === null
         ? "Too many requests. Wait a moment and try again."
         : `Too many requests. Try again in ${failure.retryAfterSeconds} seconds.`;
+    case "store_busy":
+      return STORE_BUSY_TEXT;
     case "auth":
       return "You are not signed in to the service, so this was refused. Reload the page and try again.";
     case "provider":
@@ -74,7 +76,7 @@ export function boardFailureText(failure: BoardFailure, area: BoardArea): string
 
 /** Retrying the same request is safe for these. */
 export function canRetry(failure: BoardFailure): boolean {
-  return ["network", "provider", "rate_limited", "unknown"].includes(failure.kind);
+  return ["network", "provider", "rate_limited", "store_busy", "unknown"].includes(failure.kind);
 }
 
 /** "About 25 minutes by car": rounded, never false precision. Only DRIVE is a normal result. */

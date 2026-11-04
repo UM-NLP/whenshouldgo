@@ -418,7 +418,10 @@ export interface paths {
         post?: never;
         /**
          * Delete Saved Places
-         * @description One saved place (``place_id``) or, without it, all of them.
+         * @deprecated
+         * @description DEPRECATED (one more release) for one place: ``?place_id=`` puts the Google place ID in the
+         *     query string, which reaches request logs; use ``DELETE /v1/saved-places/{record_id}``. Without
+         *     ``place_id`` this still deletes ALL saved places. The query is never logged by the app.
          */
         delete: operations["delete_saved_places_v1_saved_places_delete"];
         options?: never;
@@ -463,6 +466,27 @@ export interface paths {
         put: operations["put_saved_place_ask_state_v1_saved_places_ask_state_put"];
         post?: never;
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/saved-places/{record_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Delete Saved Place
+         * @description One saved place by the opaque ``record_id`` the server issued (never the Google place ID,
+         *     which would reach request logs in a URL). Idempotent: an unknown id deletes nothing.
+         */
+        delete: operations["delete_saved_place_v1_saved_places__record_id__delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -958,7 +982,7 @@ export interface components {
          *     the message. Additive: a client must treat an unknown reason like its ``ErrorCode``.
          * @enum {string}
          */
-        ErrorReason: "RESULT_EXPIRED" | "TURN_IN_PROGRESS" | "SERVER_NOT_CONFIGURED" | "PROVIDER_RATE_LIMITED" | "PROVIDER_TIMEOUT" | "PROVIDER_UNAVAILABLE" | "OUTPUT_TRUNCATED" | "OUTPUT_REJECTED" | "OVER_BUDGET" | "RATE_LIMITED" | "DISCOVERY_UNAVAILABLE" | "LOCATION_CONSENT_REQUIRED" | "NOT_IMPLEMENTED" | "DISABLED" | "LINK_INTENT_EXPIRED" | "LINK_INTENT_CONSUMED" | "ACCOUNT_COLLISION" | "WRONG_UID" | "ANONYMOUS_PROVIDER" | "MIGRATION_INTERRUPTED" | "GUEST_NOT_ALLOWED" | "CONSENT_REQUIRED";
+        ErrorReason: "RESULT_EXPIRED" | "TURN_IN_PROGRESS" | "SERVER_NOT_CONFIGURED" | "PROVIDER_RATE_LIMITED" | "PROVIDER_TIMEOUT" | "PROVIDER_UNAVAILABLE" | "OUTPUT_TRUNCATED" | "OUTPUT_REJECTED" | "OVER_BUDGET" | "RATE_LIMITED" | "DISCOVERY_UNAVAILABLE" | "LOCATION_CONSENT_REQUIRED" | "NOT_IMPLEMENTED" | "DISABLED" | "LINK_INTENT_EXPIRED" | "LINK_INTENT_CONSUMED" | "ACCOUNT_COLLISION" | "WRONG_UID" | "ANONYMOUS_PROVIDER" | "MIGRATION_INTERRUPTED" | "GUEST_NOT_ALLOWED" | "CONSENT_REQUIRED" | "STORE_BUSY";
         /**
          * ExportBundle
          * @description Everything the server holds about the caller: user data and place IDs only. Never Maps
@@ -1810,6 +1834,8 @@ export interface components {
             /** Place Id */
             place_id: string;
             position: components["schemas"]["RoundedPosition"];
+            /** Record Id */
+            record_id: string;
             /**
              * Schema Version
              * @default 1
@@ -5330,6 +5356,113 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AskStateView"];
+                };
+            };
+            /** @description POLICY */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description POLICY */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description DISABLED or NOT_FOUND */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description CONFLICT */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description VALIDATION */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description QUOTA */
+            429: {
+                headers: {
+                    /** @description Seconds to wait before retrying. */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description VALIDATION */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description PROVIDER */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description PROVIDER */
+            504: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    delete_saved_place_v1_saved_places__record_id__delete: {
+        parameters: {
+            query?: never;
+            header: {
+                authorization: string | null;
+            };
+            path: {
+                record_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SavedPlaceDeleteResult"];
                 };
             };
             /** @description POLICY */

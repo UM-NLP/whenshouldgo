@@ -27,6 +27,7 @@ from __future__ import annotations
 import hashlib
 import logging
 from collections.abc import Callable
+from dataclasses import replace
 from datetime import datetime, timedelta
 from typing import Any, TypeVar
 
@@ -39,6 +40,7 @@ from ..discovery.errors import CacheError
 from ..discovery.validator import restore_validated
 from ..domain import MAX_MAPS_CACHE, SCHEMA_VERSION, ConsentRecord, TripWorkspace
 from . import quota_logic as logic
+from .busy import StoreBusy, is_busy_failure
 from .protocols import (
     PENDING_REPLAY_TTL,
     REPLAY_RETENTION,
@@ -75,6 +77,23 @@ DEFAULT_MAX_ATTEMPTS = 30
 class StoredDataError(Exception):
     """A stored document does not match the tenant or the schema it should have. Static text:
     never document content."""
+
+class _Filter:
+    """Stand-in with the attributes the real ``FieldFilter`` has, for when the optional ``gcp``
+    extra is not installed (only the in-process fake ever sees it)."""
+
+    def __init__(self, field_path: str, op_string: str, value: Any) -> None:
+        self.field_path, self.op_string, self.value = field_path, op_string, value
+
+
+def where(query: Any, field: str, op: str, value: Any) -> Any:
+    """``query.where(filter=FieldFilter(...))``: the keyword form, since the positional
+    ``where(field, op, value)`` warns (UserWarning) in current google-cloud-firestore."""
+    try:
+        from google.cloud.firestore_v1.base_query import FieldFilter  # type: ignore[import-not-found]
+    except ImportError:
+        FieldFilter = _Filter  # noqa: N806
+    return query.where(filter=FieldFilter(field, op, value))
 
 
 def make_client(project_id: str) -> Any:
@@ -120,7 +139,14 @@ class _Base:
             transactional = getattr(self._client, "transactional", None) or default_transactional()
             self._transactional = transactional
         body = transactional(fn)
-        return body(self._client.transaction(max_attempts=self._max_attempts))
+        try:
+            return body(self._client.transaction(max_attempts=self._max_attempts))
+        except Exception as exc:  # noqa: BLE001 - classified, everything else is re-raised as is
+            if not is_busy_failure(exc):
+                raise
+        # Raised outside the except block: no chained exception (its text could hold a document
+        # path) and a static message.
+        raise StoreBusy()
 
 
 # --- quota ---------------------------------------------------------------------------------------
@@ -411,19 +437,34 @@ class FirestoreIdempotencyStore(_Base):
 
 
 # --- cost: spend counter and kill switch ---------------------------------------------------------
-_TOTALS_ID = "pilot"
+_TOTALS_ID = "pilot"  # the LEGACY single counter document: still read, never written
+COST_SHARDS = 16
+
+
+def shard_id(shard_key: str) -> str:
+    """``pilot-NN`` for a request key (stable: the same key always lands on the same shard)."""
+    digest = hashlib.sha256(shard_key.encode("utf-8")).digest()
+    return f"{_TOTALS_ID}-{digest[0] % COST_SHARDS:02d}"
 _SWITCH_ID = "global"
 _TOTAL_FIELDS = ("total_input_tokens", "total_output_tokens", "total_usd_micros",
                  "provider_input_tokens", "provider_output_tokens", "provider_usd_micros")
 
 
 class FirestoreCostStore(_Base):
-    """Two small documents. HAZARD: the totals document is one hot document (Firestore sustains
-    about one write per second per document); at pilot volume that is acceptable, a later load
-    would shard the counter."""
+    """The whole-pilot spend counter is SHARDED over ``COST_SHARDS`` sub-documents
+    (``pilot-NN``), the shard chosen by a hash of the request key, so concurrent turns rarely
+    write the same document (Firestore sustains about one write per second per document).
+    ``totals()`` reads the whole collection (one query) and sums the shards PLUS the legacy single
+    ``pilot`` document, so counts written before sharding still count (no migration).
 
-    def _totals_ref(self) -> Any:
-        return self._col(COST_TOTALS).document(_TOTALS_ID)
+    BOUNDED EVENTUAL CONSISTENCY: ``add_spend`` increments its own shard in a transaction, then
+    reads the sum (plain reads, not part of the transaction) to evaluate the cap. Two turns
+    finishing together may each see a sum without the other, so the cap can be overshot by at
+    most the turns in flight at that moment; the next call sees both. The kill-switch trip stays
+    atomic (its own transaction, first reason wins) and the next paid-work check reads the sum."""
+
+    def _totals_ref(self, shard_key: str = "") -> Any:
+        return self._col(COST_TOTALS).document(shard_id(shard_key))
 
     def _switch_ref(self, path: str = KILL_PATH_GLOBAL) -> Any:
         # One document per provider path; the whole-pilot switch keeps its original id "global".
@@ -450,13 +491,13 @@ class FirestoreCostStore(_Base):
                 "reason": state.reason.value if state.reason else None,
                 "tripped_at": state.tripped_at, "updated_at": now}
 
-    def add_spend(self, delta: CostEntryDelta, budget: SpendBudget | None, now: datetime) -> SpendTotals:
-        totals_ref, switch_ref = self._totals_ref(), self._switch_ref()
+    def add_spend(self, delta: CostEntryDelta, budget: SpendBudget | None, now: datetime,
+                  *, shard_key: str = "") -> SpendTotals:
+        ref = self._totals_ref(shard_key)
 
-        def body(txn: Any) -> SpendTotals:
-            totals_snap = totals_ref.get(transaction=txn)
-            switch_snap = switch_ref.get(transaction=txn)
-            t = self._totals_from(totals_snap.to_dict() if totals_snap.exists else None)
+        def body(txn: Any) -> None:
+            snap = ref.get(transaction=txn)
+            t = self._totals_from(snap.to_dict() if snap.exists else None)
             values = {name: getattr(t, name) for name in _TOTAL_FIELDS}
             values["total_input_tokens"] += delta.input_tokens
             values["total_output_tokens"] += delta.output_tokens
@@ -465,21 +506,23 @@ class FirestoreCostStore(_Base):
                 values["provider_input_tokens"] += delta.input_tokens
                 values["provider_output_tokens"] += delta.output_tokens
                 values["provider_usd_micros"] += delta.usd_micros
-            new = SpendTotals(**values)
-            txn.set(totals_ref, {"schema_version": SCHEMA_VERSION, "kind": "cost_totals",
-                                 **values, "updated_at": now})
-            over = over_budget(new, budget)
-            if over and not self._switch_from(
-                    switch_snap.to_dict() if switch_snap.exists else None).tripped:
-                txn.set(switch_ref, self._switch_doc(
-                    KillSwitchState(True, KillSwitchReason.SPEND_CAP, now), now))
-            return SpendTotals(**values, over_budget=over)
+            txn.set(ref, {"schema_version": SCHEMA_VERSION, "kind": "cost_totals",
+                          **values, "updated_at": now})
 
-        return self._transact(body)
+        self._transact(body)
+        total = self.totals()  # the sum of every shard and the legacy document
+        over = over_budget(total, budget)
+        if over:
+            self.trip_kill_switch(KillSwitchReason.SPEND_CAP, now)  # atomic; first reason stays
+        return replace(total, over_budget=over)
 
     def totals(self) -> SpendTotals:
-        snap = self._totals_ref().get()
-        return self._totals_from(snap.to_dict() if snap.exists else None)
+        sums = dict.fromkeys(_TOTAL_FIELDS, 0)
+        for snap in self._col(COST_TOTALS).stream():
+            doc = snap.to_dict() or {}
+            for name in _TOTAL_FIELDS:
+                sums[name] += int(doc.get(name, 0))
+        return SpendTotals(**sums)
 
     def kill_switch(self, path: str = KILL_PATH_GLOBAL) -> KillSwitchState:
         snap = self._switch_ref(path).get()
@@ -541,7 +584,7 @@ class FirestoreDisplayCache(_Base):
         answer = validated.answer
         expires = min(answer.cache_expires_at, answer.retrieved_at + MAX_MAPS_CACHE)
         ref = self._ref(owner_id, key)
-        owned = self._col(DISPLAY_CACHE).where("owner_id", "==", owner_id)
+        owned = where(self._col(DISPLAY_CACHE), "owner_id", "==", owner_id)
         doc = {
             "schema_version": SCHEMA_VERSION, "kind": "display_cache_entry", "owner_id": owner_id,
             "key": key, "principal_id": validated.principal_id,
@@ -587,7 +630,7 @@ class FirestoreDisplayCache(_Base):
             return frozenset()
         now = self._now()
         found: set[str] = set()
-        for snap in self._col(DISPLAY_CACHE).where("owner_id", "==", owner_id).stream():
+        for snap in where(self._col(DISPLAY_CACHE), "owner_id", "==", owner_id).stream():
             doc = snap.to_dict()
             if doc.get("owner_id") != owner_id:
                 continue
@@ -604,7 +647,7 @@ class FirestoreDisplayCache(_Base):
     def purge(self) -> int:
         now = self._now()
         removed = 0
-        for snap in self._col(DISPLAY_CACHE).where("expires_at", "<=", now).stream():
+        for snap in where(self._col(DISPLAY_CACHE), "expires_at", "<=", now).stream():
             snap.reference.delete()
             removed += 1
         return removed
@@ -612,7 +655,7 @@ class FirestoreDisplayCache(_Base):
     def delete_owner(self, owner_id: str) -> int:
         DisplayCache._key(owner_id, "k")  # noqa: SLF001 - validates the owner id shape
         count = 0
-        for snap in self._col(DISPLAY_CACHE).where("owner_id", "==", owner_id).stream():
+        for snap in where(self._col(DISPLAY_CACHE), "owner_id", "==", owner_id).stream():
             snap.reference.delete()
             count += 1
         return count

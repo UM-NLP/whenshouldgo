@@ -82,3 +82,15 @@ describe("contract adapter", () => {
     expect(ownLabelOf(undefined)).toBeNull();
   });
 });
+
+describe("STORE_BUSY", () => {
+  it("is a retryable 503 with fixed copy that honors Retry-After and never shows server text", () => {
+    expect(classifyFailure(503, body("STORE_BUSY"), "2")).toEqual({ kind: "store_busy", retryAfterSeconds: 2 });
+    expect(classifyFailure(503, body("STORE_BUSY"), null)).toEqual({ kind: "store_busy", retryAfterSeconds: null });
+    expect(retryFor({ kind: "store_busy", retryAfterSeconds: 1 })).toBe("same_key");
+    const text = failureText({ kind: "store_busy", retryAfterSeconds: 1 });
+    expect(text).toBe("Busy, try again in a moment.");
+    expect(classifyBoardFailure(503, body("STORE_BUSY"), "1")).toEqual({ kind: "store_busy", retryAfterSeconds: 1 });
+    expect(boardFailureText({ kind: "store_busy", retryAfterSeconds: 1 }, "action")).toBe(text);
+  });
+});

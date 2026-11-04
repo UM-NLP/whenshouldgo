@@ -17,6 +17,8 @@ export type Failure =
   | { kind: "quota" }
   | { kind: "auth" }
   | { kind: "busy" }
+  /** 503 STORE_BUSY: a durable store was contended. Nothing was applied; retry with the SAME key. */
+  | { kind: "store_busy"; retryAfterSeconds: number | null }
   | { kind: "result_expired" }
   | { kind: "discovery_unavailable" }
   | { kind: "not_configured" }
@@ -42,6 +44,7 @@ export function classifyFailure(
   if (reason === "LOCATION_CONSENT_REQUIRED") return { kind: "location_consent_required" };
   if (reason === "GUEST_NOT_ALLOWED") return { kind: "guest_not_allowed" };
   if (reason === "CONSENT_REQUIRED") return { kind: "history_consent_required" };
+  if (reason === "STORE_BUSY") return { kind: "store_busy", retryAfterSeconds: parseRetryAfter(retryAfterHeader) };
   // A planned route (501) or a feature the server switched off: "not available yet", not an error.
   if (status === 501 || reason === "NOT_IMPLEMENTED" || reason === "DISABLED") return { kind: "unavailable" };
   if (status === 401 || status === 403) return { kind: "auth" };
@@ -69,6 +72,7 @@ export function retryFor(failure: Failure): Retry {
     case "network":
     case "provider":
     case "busy":
+    case "store_busy":
     case "rate_limited":
     case "discovery_unavailable":
     case "location_consent_required":
@@ -85,6 +89,8 @@ export const GUEST_NOT_ALLOWED_TEXT =
   "Sign in with a free account to use this. Until then, history and saved places stay on this device only.";
 export const HISTORY_CONSENT_TEXT =
   "This needs your OK to save it to your account first. Agree in the history section, then try again.";
+
+export const STORE_BUSY_TEXT = "Busy, try again in a moment.";
 
 export function failureText(failure: Failure): string {
   switch (failure.kind) {
@@ -106,6 +112,8 @@ export function failureText(failure: Failure): string {
       return "You are not signed in to the service, so this request was refused. Reload the page and try again.";
     case "busy":
       return "Your previous request is still running. Try again in a moment.";
+    case "store_busy":
+      return STORE_BUSY_TEXT;
     case "result_expired":
       return "That answer is no longer available. Send the request again for a fresh one.";
     case "discovery_unavailable":

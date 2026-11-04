@@ -29,7 +29,7 @@ from ..domain import (
     OutcomeValue,
     PlanVersion,
 )
-from .firestore import DEFAULT_MAX_ATTEMPTS, StoredDataError, _Base, doc_id
+from .firestore import DEFAULT_MAX_ATTEMPTS, StoredDataError, _Base, doc_id, where
 
 MAX_OUTCOMES = 500  # per owner; the oldest are dropped first
 RECEIPT_RETENTION = timedelta(days=7)
@@ -230,7 +230,7 @@ class FirestorePlanVersionStore(_Base):
         removed = 0
         for collection in (PLAN_VERSIONS, PLAN_HEADS):
             while True:
-                rows = list(self._col(collection).where("owner_id", "==", owner_id).limit(200).stream())
+                rows = list(where(self._col(collection), "owner_id", "==", owner_id).limit(200).stream())
                 if not rows:
                     break
                 for snap in rows:
@@ -462,7 +462,7 @@ class FirestoreOutcomeStore(_Base):
 
     def purge(self, now: datetime) -> int:
         removed = 0
-        for snap in self._col(OUTCOME_LEDGERS).where("expires_at", "<=", now).stream():
+        for snap in where(self._col(OUTCOME_LEDGERS), "expires_at", "<=", now).stream():
             owner = snap.to_dict().get("owner_id")
             if isinstance(owner, str):
                 removed += self._rewrite(owner, now, lambda rows: [e for e in rows if e.alive(now)])
@@ -528,7 +528,7 @@ class FirestoreEditReceiptStore(_Base):
             "created_at": now, "expires_at": now + RECEIPT_RETENTION})
 
     def delete_owner(self, owner_id: str) -> None:
-        for snap in self._col(EDIT_RECEIPTS).where("owner_id", "==", owner_id).stream():
+        for snap in where(self._col(EDIT_RECEIPTS), "owner_id", "==", owner_id).stream():
             snap.reference.delete()
 
 

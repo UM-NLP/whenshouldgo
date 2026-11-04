@@ -171,8 +171,11 @@ class FakeQuery:
         self._filters = filters
         self._limit = limit
 
-    def where(self, field: str, op: str, value: Any) -> FakeQuery:
-        if op not in _OPS:
+    def where(self, field: str | None = None, op: str | None = None, value: Any = None,
+              *, filter: Any = None) -> FakeQuery:  # noqa: A002 - the real client's keyword
+        if filter is not None:  # a FieldFilter: field_path / op_string / value
+            field, op, value = filter.field_path, filter.op_string, filter.value
+        if not isinstance(field, str) or op not in _OPS:
             raise ValueError("unsupported operator")
         _check_value(value)
         return FakeQuery(self._client, self._collection, (*self._filters, (field, op, value)),

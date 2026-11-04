@@ -11,10 +11,11 @@ silently. The fixed "near home" question and its ask-state are server-authored (
 """
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, Path, Query, Request
 
 from ..auth import current_principal
 from ..domain import (
+    SAVED_PLACE_RECORD_ID_PATTERN,
     AskCheckRequest,
     AskStateUpdate,
     AskStateView,
@@ -80,14 +81,32 @@ def put_saved_place(
         raise feature_error(failure) from None
 
 
+@router.delete("/v1/saved-places/{record_id}", response_model=SavedPlaceDeleteResult,
+               responses=_RESPONSES, dependencies=_GATE)
+def delete_saved_place(
+    request: Request,
+    record_id: str = Path(pattern=SAVED_PLACE_RECORD_ID_PATTERN),
+    principal: Principal = Depends(current_principal),
+) -> SavedPlaceDeleteResult:
+    """One saved place by the opaque ``record_id`` the server issued (never the Google place ID,
+    which would reach request logs in a URL). Idempotent: an unknown id deletes nothing."""
+    service = _service(request, principal)
+    try:
+        return SavedPlaceDeleteResult(deleted=service.delete_by_record_id(principal, record_id))
+    except FeatureError as failure:
+        raise feature_error(failure) from None
+
+
 @router.delete("/v1/saved-places", response_model=SavedPlaceDeleteResult, responses=_RESPONSES,
-               dependencies=_GATE)
+               dependencies=_GATE, deprecated=True)
 def delete_saved_places(
     request: Request,
     place_id: str | None = Query(default=None, pattern=r"^[A-Za-z0-9_-]{1,300}$"),
     principal: Principal = Depends(current_principal),
 ) -> SavedPlaceDeleteResult:
-    """One saved place (``place_id``) or, without it, all of them."""
+    """DEPRECATED (one more release) for one place: ``?place_id=`` puts the Google place ID in the
+    query string, which reaches request logs; use ``DELETE /v1/saved-places/{record_id}``. Without
+    ``place_id`` this still deletes ALL saved places. The query is never logged by the app."""
     service = _service(request, principal)
     try:
         return SavedPlaceDeleteResult(deleted=service.delete(principal, place_id))

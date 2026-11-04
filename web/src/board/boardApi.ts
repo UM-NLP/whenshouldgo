@@ -31,6 +31,7 @@ export type BoardFailure =
   | { kind: "history_consent_required" }
   | { kind: "quota" }
   | { kind: "rate_limited"; retryAfterSeconds: number | null }
+  | { kind: "store_busy"; retryAfterSeconds: number | null }
   | { kind: "auth" }
   | { kind: "provider" }
   | { kind: "network" }
@@ -55,6 +56,7 @@ export function classifyBoardFailure(
     case "unavailable":
       return { kind: "unavailable" };
     case "rate_limited":
+    case "store_busy":
       return base;
     case "quota":
     case "over_budget":

@@ -5,11 +5,14 @@
 FROM python:3.12-slim@sha256:a0f57064cbdcd6285fa45f51237ab0b35ea8ebaed06a1f5973e89e19dfb86704 AS builder
 ENV PIP_NO_CACHE_DIR=1 PIP_DISABLE_PIP_VERSION_CHECK=1
 WORKDIR /build
-COPY pyproject.toml ./
+COPY pyproject.toml requirements.lock ./
 COPY app ./app
-# The optional extras production needs: ``auth`` (PyJWT, cryptography: Firebase ID and App Check
-# token verification) and ``gcp`` (the Firestore client; production refuses in-memory state).
-RUN python -m venv /opt/venv && /opt/venv/bin/pip install ".[auth,gcp]"
+# Third-party packages come ONLY from the hash-locked requirements.lock (the ``auth`` and ``gcp``
+# extras production needs: Firebase token verification and the Firestore client; production
+# refuses in-memory state). ``--require-hashes`` refuses any package whose hash is not listed.
+# The application itself is then installed WITHOUT resolving anything. Refresh the lock with the
+# steps in docs/runbooks/dependency-lock.md.
+RUN python -m venv /opt/venv     && /opt/venv/bin/pip install --require-hashes -r requirements.lock     && /opt/venv/bin/pip install --no-deps .
 
 FROM python:3.12-slim@sha256:a0f57064cbdcd6285fa45f51237ab0b35ea8ebaed06a1f5973e89e19dfb86704 AS runtime
 ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 PATH="/opt/venv/bin:$PATH"

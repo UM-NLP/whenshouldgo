@@ -30,7 +30,7 @@ export interface Phase1Api {
   listSaved(): Promise<Phase1Outcome<SavedPlace[]>>;
   putSaved(place: SavedPlaceUpsert): Promise<Phase1Outcome<SavedPlace>>;
   /** Deletes one saved place by its place ID. */
-  deleteSaved(placeId: string): Promise<Phase1Outcome<number>>;
+  deleteSaved(recordId: string): Promise<Phase1Outcome<number>>;
   hasConsent(purpose: ConsentPurpose): Promise<Phase1Outcome<boolean>>;
   grantConsent(purpose: ConsentPurpose, noticeVersion: string): Promise<Phase1Outcome<null>>;
   withdrawConsent(purpose: ConsentPurpose): Promise<Phase1Outcome<null>>;
@@ -94,9 +94,10 @@ export function createPhase1Api(options: CallerOptions): Phase1Api {
     },
     putSaved: (place) =>
       call((authorization) => client.PUT("/v1/saved-places", { params: { header: { authorization } }, body: place })),
-    deleteSaved: async (placeId) => {
+    // The server-issued opaque record id goes in the PATH: a Google place ID in a query string reaches request logs.
+    deleteSaved: async (recordId) => {
       const o = await call((authorization) =>
-        client.DELETE("/v1/saved-places", { params: { header: { authorization }, query: { place_id: placeId } } }),
+        client.DELETE("/v1/saved-places/{record_id}", { params: { header: { authorization }, path: { record_id: recordId } } }),
       );
       return o.ok ? { ok: true, data: o.data.deleted } : o;
     },

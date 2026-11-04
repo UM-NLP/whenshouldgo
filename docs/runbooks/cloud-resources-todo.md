@@ -44,7 +44,8 @@ The production image installs the `auth` extra (PyJWT, cryptography) and the `gc
       ceiling), the Phase 1 collections `history_settings` (the user's retention choice, deleted on
       consent withdrawal), `saved_places` and `saved_place_asks` (kept until the user deletes them,
       withdraws SAVED_PLACE or deletes the account), `accounts`, `account_link_keys`, `account_migrations`, `account_migration_keys`,
-      `account_tombstones`, `cost_totals`, `kill_switch`.
+      `account_tombstones` (NO TTL, kept on purpose so a late job cannot recreate a deleted user;
+      owner decision pending on a long expiry), `cost_totals`, `kill_switch`.
 - [ ] Phase 1 collections (code only, DARK until `history_enabled` and an approved notice):
       `history_records` (one doc per OutingRecord: place ID, the user's label, tag, timestamps,
       outcome, feedback; no Maps content), `history_settings`, `saved_places` (place ID, label,
@@ -53,7 +54,9 @@ The production image installs the `auth` extra (PyJWT, cryptography) and the `gc
       range on `expires_at` for `history_records`); no composite index is declared. Every
       document has `schema_version`, `kind`, `owner_id` and a hashed id.
 - [ ] Security rules: deny all client access (only the backend's service account reads or writes).
-- [ ] Load-test `cost_totals/pilot` (one hot document; shard the counter if it contends).
+- [ ] Load-test the sharded spend counter (`cost_totals/pilot-00..15`, plus the legacy `pilot` document, which is
+      still read and summed; see docs/backlog.md for what the test must check). NEVER against the real project
+      without the owner's approval.
 - [ ] Retention sweep (built, NOT scheduled). `POST /internal/purge` (`backend/app/internal.py`) runs
       `Runtime.purge_expired(limit)`: on Firestore it deletes expired documents early from every
       collection that holds user data with `expires_at` (`backend/app/retention.py`: `history_records`,
@@ -157,7 +160,8 @@ No secret value is recorded here. Nothing is deployed and no Cloud Run service e
 - Firebase web app "WhenShouldGo Web". Its public config was written outside the repository; supply the four
   `VITE_FIREBASE_*` values at web build time. Restrict that browser key (HTTP referrers, Identity Toolkit only)
   once the hosting domain is known.
-- Secret Manager (user-managed, `northamerica-northeast1`): `openrouter-api-key`, `google-maps-api-key` (copied from the
+- Secret Manager (secrets are GLOBAL resources; replication is user-managed, with one replica in
+  `northamerica-northeast1`, not a regional secret): `openrouter-api-key`, `google-maps-api-key` (copied from the
   local `.env`; rotate there and add a version).
 - Service account `wsg-backend@departure-method-test.iam.gserviceaccount.com` with `roles/datastore.user`,
   `secretmanager.secretAccessor` on the two secrets only, and the custom role `wsgFirebaseAuthUsers`

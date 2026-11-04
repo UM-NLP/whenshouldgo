@@ -29,7 +29,7 @@ from ..domain import (
     RoundedPosition,
     SavedPlaceKind,
 )
-from .firestore import StoredDataError, _Base, doc_id
+from .firestore import StoredDataError, _Base, doc_id, where
 
 T = TypeVar("T")
 
@@ -202,21 +202,21 @@ class FirestorePendingActionStore(_Base):
 
     def purge(self, now: datetime) -> int:
         removed = 0
-        for snap in self._col(PENDING_ACTIONS).where("expires_at", "<=", now).stream():
+        for snap in where(self._col(PENDING_ACTIONS), "expires_at", "<=", now).stream():
             snap.reference.delete()
             removed += 1
         return removed
 
     def delete_owner(self, owner_id: str) -> int:
         count = 0
-        for snap in self._col(PENDING_ACTIONS).where("owner_id", "==", owner_id).stream():
+        for snap in where(self._col(PENDING_ACTIONS), "owner_id", "==", owner_id).stream():
             snap.reference.delete()
             count += 1
         return count
 
     def delete_save_place_records(self, owner_id: str) -> int:
         count = 0
-        for snap in self._col(PENDING_ACTIONS).where("owner_id", "==", owner_id).stream():
+        for snap in where(self._col(PENDING_ACTIONS), "owner_id", "==", owner_id).stream():
             if snap.to_dict().get("action", {}).get("effect") == PendingActionEffect.SAVE_PLACE.value:
                 snap.reference.delete()
                 count += 1

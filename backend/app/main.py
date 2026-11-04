@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import random
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 
@@ -21,6 +22,7 @@ from .gateway import ModelGateway
 from .orchestrator import TurnOrchestrator
 from .quota import QuotaService
 from .routes import ROUTERS
+from .stores.busy import StoreBusy
 from .routes.common import app_check_gate
 from .routes.common import error_response as _error_response
 from .routes.turns import TurnRequest  # noqa: F401  (kept importable from here)
@@ -36,6 +38,8 @@ from .telemetry import (
     get_default_sink,
     trace,
 )
+
+STORE_BUSY_MESSAGE = "the service is busy; try again in a moment"
 
 # OWNER-TUNABLE PLACEHOLDERS. Per principal per minute, per process.
 PAID_ROUTE_PER_MINUTE = 30
@@ -226,6 +230,15 @@ def create_app(
         _trace_error(request, code, _phase_for(exc.status_code), exc.status_code)
         return _error_response(exc.status_code, code, message, headers, reason,
                                version if isinstance(version, int) else None)
+
+    @application.exception_handler(StoreBusy)
+    async def _store_busy(request: Request, _exc: StoreBusy) -> JSONResponse:
+        # One mapping for every store on a request path: typed 503, static text, jittered
+        # Retry-After (1-2 s). Never an untyped 500 and never a document id.
+        _trace_error(request, ErrorCode.PROVIDER, Phase.REQUEST, 503)
+        return _error_response(
+            503, ErrorCode.PROVIDER, STORE_BUSY_MESSAGE,
+            {"Retry-After": str(random.randint(1, 2))}, ErrorReason.STORE_BUSY)
 
     @application.exception_handler(RequestValidationError)
     async def _invalid_request(request: Request, __: RequestValidationError) -> JSONResponse:

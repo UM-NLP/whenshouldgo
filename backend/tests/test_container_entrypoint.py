@@ -67,8 +67,14 @@ def test_dockerfile_copies_no_env_and_sets_no_key_like_env() -> None:
 
 
 def test_image_installs_the_auth_extra_production_needs() -> None:
-    installs = [line for line in INSTRUCTIONS if "pip install" in line and "venv" in line]
-    assert installs and all("auth" in line for line in installs)  # Firebase and App Check verifiers
+    # Third-party packages come from the hash-locked file only, then the app without resolving.
+    joined = " ".join(INSTRUCTIONS)
+    assert "pip install --require-hashes -r requirements.lock" in joined
+    assert "pip install --no-deps ." in joined
+    lock = (BACKEND / "requirements.lock").read_text(encoding="utf-8").lower()
+    for needed in ("pyjwt==", "cryptography==", "google-cloud-firestore==", "fastapi==", "uvicorn=="):
+        assert needed in lock, needed  # the auth and gcp extras plus the core dependencies
+    assert lock.count("--hash=sha256:") >= lock.count("==")  # every pin carries hashes
 
 
 def test_ci_installs_the_auth_extra_so_the_verifier_tests_run() -> None:

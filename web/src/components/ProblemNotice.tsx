@@ -24,7 +24,7 @@ function useCountdown(seconds: number | null): number {
 
 export function ProblemNotice({ problem, sending, onRetry, onUseLocation }: Props) {
   const waitFor =
-    problem.type === "api" && problem.failure.kind === "rate_limited"
+    problem.type === "api" && (problem.failure.kind === "rate_limited" || problem.failure.kind === "store_busy")
       ? problem.failure.retryAfterSeconds
       : null;
   const left = useCountdown(waitFor);

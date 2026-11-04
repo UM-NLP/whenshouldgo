@@ -50,7 +50,7 @@ function serverOuting(over: Record<string, unknown> = {}) {
   };
 }
 function serverSaved(over: Record<string, unknown> = {}) {
-  return { schema_version: 1, kind: "saved_place", place_id: "saved-home", user_label: "Home", label_kind: "HOME", position: { latitude: 48.858, longitude: 2.294 }, created_at: iso(-DAY), ...over };
+  return { schema_version: 1, kind: "saved_place", record_id: "sp_homehomehomehome1234", place_id: "saved-home", user_label: "Home", label_kind: "HOME", position: { latitude: 48.858, longitude: 2.294 }, created_at: iso(-DAY), ...over };
 }
 
 const SETTINGS = (days = 90) => ({
@@ -415,7 +415,7 @@ describe("saved places", () => {
     await waitFor(async () => expect(await store.getAll("saved_places")).toEqual([]));
   });
 
-  it("registered: lists from the server, renames with the same position, deletes by place ID", async () => {
+  it("registered: lists from the server, renames with the same position, deletes by the opaque path id, never the place ID", async () => {
     let places = [serverSaved()];
     const app = renderApp({
       historyEnabled: true,
@@ -428,7 +428,7 @@ describe("saved places", () => {
           places = [serverSaved({ user_label: (r.body as { user_label: string }).user_label })];
           return json(places[0]);
         },
-        "DELETE /v1/saved-places": () => {
+        "DELETE /v1/saved-places/sp_homehomehomehome1234": () => {
           places = [];
           return json({ schema_version: 1, kind: "saved_place_delete_result", deleted: 1 });
         },
@@ -451,8 +451,11 @@ describe("saved places", () => {
     });
     await app.user.click(screen.getByRole("button", { name: "Delete" }));
     await app.user.click(screen.getByRole("button", { name: "Yes, delete Flat" }));
-    await waitFor(() => expect(app.calls("DELETE", "/v1/saved-places")).toHaveLength(1));
-    expect(app.calls("DELETE", "/v1/saved-places")[0]?.url).toContain("place_id=saved-home");
+    await waitFor(() => expect(app.calls("DELETE", "/v1/saved-places/sp_homehomehomehome1234")).toHaveLength(1));
+    const url = app.calls("DELETE", "/v1/saved-places/sp_homehomehomehome1234")[0]!.url;
+    expect(url).not.toContain("place_id");
+    expect(url).not.toContain("saved-home");
+    expect(app.calls("DELETE", "/v1/saved-places")).toHaveLength(0); // the deprecated query route is not used
     expect(await screen.findByText(/No saved places yet/)).toBeInTheDocument();
   });
 });

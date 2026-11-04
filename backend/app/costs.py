@@ -133,7 +133,7 @@ class CostLedger:
                 CostEntryDelta(entry.input_tokens, entry.output_tokens,
                                _usd_micros(entry.estimated_cost_usd),
                                provider_attributed=entry.attribution == Attribution.PROVIDER),
-                self._budget, now)
+                self._budget, now, shard_key=entry.run_id)
         except Exception:  # noqa: BLE001
             self._store_failures += 1
         with self._lock:

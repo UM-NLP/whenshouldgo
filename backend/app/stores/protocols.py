@@ -218,10 +218,13 @@ class KillSwitchState:
 @runtime_checkable
 class CostStore(Protocol):
     def add_spend(
-        self, delta: CostEntryDelta, budget: SpendBudget | None, now: datetime
+        self, delta: CostEntryDelta, budget: SpendBudget | None, now: datetime,
+        *, shard_key: str = "",
     ) -> SpendTotals:
-        """Add to the counters and, in the SAME transaction, trip the kill switch when ``budget``
-        is reached."""
+        """Add to the counters and trip the kill switch when ``budget`` is reached. ``shard_key``
+        (a request key) picks the counter shard in a sharded store; ``totals`` is always the sum.
+        Memory: atomic. Firestore: the shard write is a transaction and the cap is checked on the
+        sum read right after, so the cap may overshoot by the turns in flight (bounded)."""
         ...
 
     def totals(self) -> SpendTotals: ...

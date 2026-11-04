@@ -28,7 +28,7 @@ from typing import Any, Literal, Protocol, runtime_checkable
 from pydantic import ValidationError
 
 from ..domain import SCHEMA_VERSION, SavedPlace, SavedPlaceKind, evolve
-from .firestore import DEFAULT_MAX_ATTEMPTS, StoredDataError, _Base, doc_id
+from .firestore import DEFAULT_MAX_ATTEMPTS, StoredDataError, _Base, doc_id, where
 
 SAVED_PLACES = "saved_places"
 SAVED_PLACE_ASKS = "saved_place_asks"
@@ -180,7 +180,11 @@ class FirestoreSavedPlaceStore(_Base):
         if doc.get("owner_id") != owner_id or doc.get("kind") != "saved_place_doc":
             raise StoredDataError("saved place does not belong to this tenant")
         try:
-            place = SavedPlace.model_validate(doc["place"])
+            raw = dict(doc["place"])
+            # A document written before record ids existed gets a STABLE derived one (the digest
+            # that is already its document id), never a fresh random id per read.
+            raw.setdefault("record_id", "sp_" + doc_id(owner_id, "place", raw["place_id"])[:32])
+            place = SavedPlace.model_validate(raw)
             action_id = doc.get("action_id")
         except (ValidationError, KeyError, TypeError):
             raise StoredDataError("saved place does not match the schema") from None
@@ -195,7 +199,7 @@ class FirestoreSavedPlaceStore(_Base):
             "updated_at": row.place.created_at}
 
     def _rows(self, owner_id: str, transaction: Any = None) -> list[tuple[Any, StoredPlace]]:
-        query = self._col(SAVED_PLACES).where("owner_id", "==", owner_id)
+        query = where(self._col(SAVED_PLACES), "owner_id", "==", owner_id)
         snaps = query.stream(transaction=transaction) if transaction is not None else query.stream()
         return [(snap.reference, self._decode(owner_id, snap.to_dict())) for snap in snaps]
 
@@ -249,7 +253,7 @@ class FirestoreSavedPlaceStore(_Base):
 
     def delete_all(self, owner_id: str) -> int:
         count = 0
-        for snap in self._col(SAVED_PLACES).where("owner_id", "==", owner_id).stream():
+        for snap in where(self._col(SAVED_PLACES), "owner_id", "==", owner_id).stream():
             snap.reference.delete()
             count += 1
         return count
